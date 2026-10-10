@@ -998,30 +998,41 @@ export default function CohortReview() {
               Rendered only when there IS something, so the single-clan majority
               sees no new chrome on a screen whose job is stepping through. */}
           {elsewhere.length > 0 && (
-            <section className="rounded-2xl border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-900 dark:bg-amber-950/30">
-              <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
-                Also working on {elsewhere.length} thing{elsewhere.length === 1 ? '' : 's'} in another clan
-              </p>
-              <ul className="mt-1.5 space-y-1">
+            <section className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3.5 dark:border-slate-800 dark:bg-slate-900/50" aria-label="Work in other clans">
+              <div className="flex items-start gap-2.5">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-card text-slate-500 dark:border-slate-700">
+                  <ListTodo className="h-4 w-4" aria-hidden />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-xs font-semibold text-slate-900 dark:text-slate-100">Work in other clans</h3>
+                    <span className="rounded-full border border-slate-200 bg-card px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:border-slate-700 dark:text-slate-400">Context only</span>
+                  </div>
+                  <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+                    {elsewhere.length} active item{elsewhere.length === 1 ? '' : 's'} shown to help you avoid assigning duplicate work.
+                  </p>
+                </div>
+              </div>
+              <ul className="mt-3 space-y-1.5">
                 {elsewhere.slice(0, 4).map((t) => (
-                  <li key={t.id} className="flex flex-wrap items-center gap-1.5 text-[11px] text-amber-900/90 dark:text-amber-200/80">
-                    <span className="font-medium">{t.title}</span>
-                    <span className="capitalize opacity-75">· {t.status.replace(/_/g, ' ')}</span>
-                    <span className="opacity-75">· {t.clanName}</span>
-                    {t.assignedByViewer && <span className="opacity-75">· you assigned this</span>}
+                  <li key={t.id} className="flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-200/80 bg-card px-2.5 py-2 text-[11px] dark:border-slate-800">
+                    <span className="min-w-0 flex-1 font-medium text-slate-800 dark:text-slate-200">{t.title}</span>
+                    <span className="rounded-full bg-sky-50 px-1.5 py-0.5 font-medium capitalize text-sky-700 dark:bg-sky-500/10 dark:text-sky-300">{t.status.replace(/_/g, ' ')}</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t.clanName}</span>
+                    {t.assignedByViewer && <span className="text-slate-400">· assigned by you</span>}
                   </li>
                 ))}
               </ul>
               {elsewhere.length > 4 && (
-                <p className="mt-1 text-[11px] text-amber-900/70 dark:text-amber-200/60">
-                  and {elsewhere.length - 4} more
+                <p className="mt-1.5 text-[11px] text-slate-500">
+                  +{elsewhere.length - 4} more active item{elsewhere.length - 4 === 1 ? '' : 's'}
                 </p>
               )}
               <Link
                 href={`/mentor/mentees/${mentee.id}`}
-                className="mt-2 inline-block text-[11px] font-semibold text-amber-900 underline dark:text-amber-200"
+                className="mt-2.5 inline-flex items-center gap-1 text-[11px] font-semibold text-brand-700 hover:text-brand-800 dark:text-brand-300"
               >
-                See their full record
+                See full record <ArrowUpRight className="h-3 w-3" aria-hidden />
               </Link>
             </section>
           )}

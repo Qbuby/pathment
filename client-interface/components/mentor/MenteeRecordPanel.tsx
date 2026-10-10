@@ -65,19 +65,30 @@ export function MenteeRecordPanel({ menteeId }: { menteeId: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-        <span className="inline-flex items-center gap-1.5 font-semibold text-foreground">
-          <History className="h-3.5 w-3.5" aria-hidden />
-          Across {record.totals.clans} clan{record.totals.clans === 1 ? '' : 's'}
-        </span>
-        <span>{record.totals.tasksCompleted} of {record.totals.tasksAssigned} tasks done</span>
-        {record.totals.tasksUnfinished > 0 && <span>{record.totals.tasksUnfinished} unfinished</span>}
-        {record.totals.openBlockers > 0 && <span>{record.totals.openBlockers} open blockers</span>}
-        {record.certificate && (
-          <span className="rounded-full bg-amber-100 px-2 py-0.5 font-medium capitalize text-amber-700 dark:bg-amber-500/15 dark:text-amber-400">
-            {record.certificate.tier}
-          </span>
-        )}
+      <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-900/50">
+        <div className="flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-card text-slate-500 dark:border-slate-700">
+            <History className="h-4 w-4" aria-hidden />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-sm font-semibold text-foreground">Work history</h3>
+              <span className="rounded-full border border-slate-200 bg-card px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500 dark:border-slate-700 dark:text-slate-400">Read only</span>
+            </div>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Previous work stays with the clan where it happened and does not count toward current-clan activity.
+            </p>
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-200/80 pt-3 text-xs text-muted-foreground dark:border-slate-800">
+          <span className="font-medium text-foreground">{record.totals.clans} clan{record.totals.clans === 1 ? '' : 's'}</span>
+          <span>{record.totals.tasksCompleted} of {record.totals.tasksAssigned} tasks done</span>
+          {record.totals.tasksUnfinished > 0 && <span>{record.totals.tasksUnfinished} unfinished</span>}
+          {record.totals.openBlockers > 0 && <span>{record.totals.openBlockers} open blockers</span>}
+          {record.certificate && (
+            <span className="font-medium capitalize text-brand-700 dark:text-brand-300">Certificate · {record.certificate.tier}</span>
+          )}
+        </div>
       </div>
 
       {Object.entries(record.sectionErrors || {}).map(([section, message]) => (

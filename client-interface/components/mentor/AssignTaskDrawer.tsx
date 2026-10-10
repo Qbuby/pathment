@@ -798,7 +798,7 @@ export function AssignTaskDrawer({
                                     className={`text-[10px] px-1.5 py-0.5 rounded-full border border-dashed shrink-0 ${
                                       s.otherClanStatus.status === 'completed'
                                         ? 'border-emerald-300 text-emerald-700'
-                                        : 'border-amber-300 text-amber-700'
+                                        : 'border-sky-300 bg-sky-50/60 text-sky-700 dark:border-sky-700 dark:bg-sky-500/10 dark:text-sky-300'
                                     }`}
                                   >
                                     {s.otherClanStatus.status === 'completed' ? 'done' : 'in progress'} in {s.otherClanStatus.clanName ?? 'another clan'}

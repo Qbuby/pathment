@@ -1352,21 +1352,21 @@ function AddMenteesDrawer({ clanId, clanName, standing = false, onClose, onChang
 
           {/* ── Unfinished work, offered after adding ─────────────────── */}
           {carryOver.length > 0 && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-900 dark:bg-amber-950/30">
-              <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
-                Bring unfinished work across?
-              </p>
-              <p className="mt-1 text-xs leading-relaxed text-amber-800/90 dark:text-amber-200/80">
+            <div className="rounded-xl border border-sky-200 bg-sky-50/60 p-3.5 dark:border-sky-900/60 dark:bg-sky-950/20">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Continue unfinished work?</p>
+                <span className="rounded-full border border-sky-200 bg-card px-2 py-0.5 text-[10px] font-medium text-sky-700 dark:border-sky-800 dark:text-sky-300">Optional next step</span>
+              </div>
+              <p className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
                 {/* Said plainly, because the alternative people expect is a move. */}
-                Their completed-program record stays exactly where it is — this
-                assigns the unfinished items again here, as new work.
+                Previous records stay read-only in the completed clan. Continuing
+                creates fresh assignments here; it never moves or edits history.
               </p>
-              <ul className="mt-2 space-y-1">
+              <ul className="mt-3 space-y-1.5">
                 {carryOver.map((entry) => (
-                  <li key={entry.menteeId} className="text-xs text-amber-900 dark:text-amber-200">
-                    <span className="font-medium">{entry.menteeName}</span>
-                    {' · '}
-                    {entry.tasks.length} unfinished
+                  <li key={entry.menteeId} className="flex items-center justify-between gap-3 rounded-lg border border-sky-100 bg-card px-2.5 py-2 text-xs dark:border-sky-900/60">
+                    <span className="font-medium text-slate-800 dark:text-slate-200">{entry.menteeName}</span>
+                    <span className="shrink-0 text-slate-500">{entry.tasks.length} unfinished</span>
                   </li>
                 ))}
               </ul>
@@ -1391,7 +1391,7 @@ function AddMenteesDrawer({ clanId, clanName, standing = false, onClose, onChang
                       setCarrying(false);
                     }
                   }}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
                 >
                   {carrying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                   Assign here as new work
@@ -1400,7 +1400,7 @@ function AddMenteesDrawer({ clanId, clanName, standing = false, onClose, onChang
                   type="button"
                   disabled={carrying}
                   onClick={() => setCarryOver([])}
-                  className="rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:text-amber-200"
+                  className="rounded-lg border border-slate-300 bg-card px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
                 >
                   Start fresh
                 </button>
@@ -1437,17 +1437,20 @@ function PriorRecordLine({ record }: {
   }
 
   return (
-    <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500">
-      <History className="h-3 w-3 shrink-0 text-slate-400" aria-hidden />
-      <span className="font-medium">Before this clan</span>
-      {prior?.clanName && <span>· {prior.clanName}</span>}
-      {bits.length > 0 && <span>· {bits.join(' · ')}</span>}
-      {record.certificate && (
-        <span className="rounded-full bg-amber-100 px-1.5 py-0.5 font-medium text-amber-700 capitalize dark:bg-amber-500/15 dark:text-amber-400">
-          {record.certificate.tier}
-        </span>
-      )}
-    </p>
+    <div className="mt-1.5 rounded-lg border border-slate-100 bg-slate-50/80 px-2 py-1.5 text-[10px] dark:border-slate-800 dark:bg-slate-900/50">
+      <div className="flex flex-wrap items-center gap-1.5 text-slate-500 dark:text-slate-400">
+        <History className="h-3 w-3 shrink-0 text-slate-400" aria-hidden />
+        <span className="font-semibold text-slate-700 dark:text-slate-300">Previous program</span>
+        <span className="rounded-full border border-slate-200 bg-card px-1.5 py-px text-[9px] font-medium uppercase tracking-wide text-slate-400 dark:border-slate-700">Read only</span>
+        {prior?.clanName && <span className="truncate">{prior.clanName}</span>}
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-slate-500 dark:text-slate-400">
+        {bits.map((bit) => <span key={bit}>{bit}</span>)}
+        {record.certificate && (
+          <span className="font-medium capitalize text-brand-700 dark:text-brand-300">Certificate · {record.certificate.tier}</span>
+        )}
+      </div>
+    </div>
   );
 }
 
