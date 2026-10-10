@@ -73,6 +73,21 @@ router.post(
   clanController.carryForwardWork
 );
 
+router.get(
+  '/:id/mentees/:menteeId/continuation-preview',
+  authenticate,
+  validateParams(clanSchemas.continuationParams),
+  clanController.getContinuationPreview
+);
+
+router.post(
+  '/:id/mentees/:menteeId/continue-work',
+  authenticate,
+  validateParams(clanSchemas.continuationParams),
+  validateBody(clanSchemas.continueWorkBody),
+  clanController.continueWork
+);
+
 const canEditAvatar = catchAsync(async (req, res, next) => { await avatarService.editableClan(req.params.id, req.user); next(); });
 
 // Crop → upload file → receive URL → save URL (add and change).

@@ -25,6 +25,17 @@ module.exports = {
     id: Joi.string().uuid().required()
   }),
 
+  continuationParams: Joi.object({
+    id: Joi.string().uuid().required(),
+    menteeId: Joi.string().uuid().required(),
+  }),
+
+  continueWorkBody: Joi.object({
+    roadmapIds: Joi.array().items(Joi.string().uuid()).min(1).max(20).optional(),
+    taskIds: Joi.array().items(Joi.string().uuid()).min(1).max(50).optional(),
+    dueDate: Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).optional().allow('', null),
+  }).or('roadmapIds', 'taskIds'),
+
   // Admin only toggles permission — join window is set by the lead on generate/regenerate.
   publicJoinAccess: Joi.object({
     allowed: Joi.boolean().required()

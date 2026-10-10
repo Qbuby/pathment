@@ -422,6 +422,412 @@ class StandingClanService {
   }
 
   /**
+   * Resolve the completed clan this standing clan continues. Newer standing
+   * clans have an exact source on their approved request; older rows fall back
+   * to completed cohort clans in the same program so the feature remains
+   * usable after an upgrade.
+   */
+  async _continuationSourceClanIds(clan) {
+    const request = await models.StandingClanRequest.findOne({
+      where: { createdClanId: clan.id, status: 'approved', sourceClanId: { [Op.ne]: null } },
+      attributes: ['sourceClanId'],
+      order: [['reviewedAt', 'DESC'], ['createdAt', 'DESC']],
+    });
+    if (request?.sourceClanId) return [request.sourceClanId];
+    const fallback = await models.Clan.findAll({
+      where: { programId: clan.programId, kind: 'cohort', id: { [Op.ne]: clan.id } },
+      attributes: ['id'],
+    });
+    return fallback.map((row) => row.id);
+  }
+
+  async _assertContinuationAccess(clanId, menteeId, actor) {
+    const clan = await models.Clan.findByPk(clanId);
+    if (!clan || clan.kind !== 'standing') throw new ValidationError('Work can only be continued into a standing clan');
+    const resource = await authz.scopeOfClan(clanId);
+    if (!(await authz.can(actor, PERMISSIONS.TASK_ASSIGN, resource))
+      && !(await authz.can(actor, PERMISSIONS.CLAN_MANAGE_MEMBERS, resource))) {
+      throw new ForbiddenError('You cannot assign work in this clan');
+    }
+    const membership = await models.ClanMembership.findOne({
+      where: { clanId, userId: menteeId, role: 'mentee', status: { [Op.in]: ['active', 'paused'] } },
+    });
+    if (!membership) throw new ValidationError('That mentee is not in this standing clan');
+    return clan;
+  }
+
+  /**
+   * A review model for the shared "Continue work" drawer.
+   *
+   * Roadmaps are grouped and offered at their FIRST unfinished step. Completed
+   * steps stay exclusively in history. One-off custom work is offered
+   * individually. Structured quiz/interview assignments are shown but disabled
+   * because their per-attempt kit snapshot cannot safely be cloned as a plain
+   * task.
+   */
+  async continuationPreview(clanId, menteeId, actor) {
+    const clan = await this._assertContinuationAccess(clanId, menteeId, actor);
+    const sourceClanIds = await this._continuationSourceClanIds(clan);
+    if (!sourceClanIds.length) return { roadmaps: [], customTasks: [], sourceClans: [] };
+
+    const sourceClans = await models.Clan.findAll({
+      where: { id: { [Op.in]: sourceClanIds } }, attributes: ['id', 'name'], raw: true,
+    });
+    const sourceNameById = new Map(sourceClans.map((row) => [row.id, row.name]));
+    const assignments = await models.AssignedTask.findAll({
+      where: {
+        clanId: { [Op.in]: sourceClanIds }, menteeId,
+        status: { [Op.ne]: 'cancelled' },
+      },
+      attributes: [
+        'id', 'clanId', 'roadmapTaskId', 'status', 'assignedAt', 'isCustomTask', 'pointsBase',
+        'typeOverride', 'titleOverride', 'descriptionOverride', 'deliverableOverride',
+        'acceptanceCriteriaOverride', 'resourcesOverride', 'openSourceOrgIds',
+      ],
+      include: [{
+        model: models.RoadmapTask, as: 'roadmapTask', required: true,
+        attributes: [
+          'id', 'roadmapId', 'title', 'description', 'type', 'difficulty', 'taskOrder',
+          'deliverable', 'acceptanceCriteria', 'estimatedHours', 'effort', 'dueOffsetDays',
+          'isMandatory', 'isCustomTask', 'pointsBase', 'openSourceOrgIds',
+        ],
+        include: [{ model: models.Roadmap, as: 'roadmap', attributes: ['id', 'name'], required: false }],
+      }],
+      order: [['assignedAt', 'DESC']],
+    });
+
+    // Newest source assignment wins if a historical step was assigned twice.
+    const byStepId = new Map();
+    for (const assignment of assignments) {
+      if (!byStepId.has(assignment.roadmapTaskId)) byStepId.set(assignment.roadmapTaskId, assignment);
+    }
+
+    const roadmapIds = [...new Set(assignments
+      .map((row) => row.roadmapTask?.roadmapId)
+      .filter(Boolean))];
+    const steps = roadmapIds.length ? await models.RoadmapTask.findAll({
+      where: { roadmapId: { [Op.in]: roadmapIds } },
+      attributes: ['id', 'roadmapId', 'title', 'taskOrder', 'dueOffsetDays'],
+      include: [{ model: models.Roadmap, as: 'roadmap', attributes: ['id', 'name'], required: true }],
+      order: [['roadmapId', 'ASC'], ['taskOrder', 'ASC']],
+    }) : [];
+    const stepsByRoadmap = new Map();
+    for (const step of steps) {
+      const rows = stepsByRoadmap.get(step.roadmapId) || [];
+      rows.push(step);
+      stepsByRoadmap.set(step.roadmapId, rows);
+    }
+
+    const [targetProgress, targetAssignments] = await Promise.all([
+      roadmapIds.length ? models.RoadmapProgress.findAll({
+        where: { clanId, menteeId, roadmapId: { [Op.in]: roadmapIds } }, attributes: ['roadmapId'], raw: true,
+      }) : [],
+      models.AssignedTask.findAll({
+        where: { clanId, menteeId, status: { [Op.ne]: 'cancelled' } },
+        attributes: ['roadmapTaskId', 'continuedFromTaskId'], raw: true,
+      }),
+    ]);
+    const startedRoadmaps = new Set(targetProgress.map((row) => row.roadmapId));
+    const targetStepIds = new Set(targetAssignments.map((row) => row.roadmapTaskId));
+    const continuedSourceIds = new Set(targetAssignments.map((row) => row.continuedFromTaskId).filter(Boolean));
+
+    const roadmaps = [];
+    for (const roadmapId of roadmapIds) {
+      if (startedRoadmaps.has(roadmapId)) continue;
+      const roadmapSteps = stepsByRoadmap.get(roadmapId) || [];
+      const resumeIndex = roadmapSteps.findIndex((step) => byStepId.get(step.id)?.status !== 'completed');
+      if (resumeIndex < 0) continue;
+      const resumeStep = roadmapSteps[resumeIndex];
+      if (targetStepIds.has(resumeStep.id)) continue;
+      const source = byStepId.get(resumeStep.id) || null;
+      roadmaps.push({
+        roadmapId,
+        name: resumeStep.roadmap?.name || 'Roadmap',
+        totalSteps: roadmapSteps.length,
+        completedSteps: roadmapSteps.filter((step) => byStepId.get(step.id)?.status === 'completed').length,
+        resumeIndex,
+        resumeStep: {
+          stepId: resumeStep.id,
+          title: resumeStep.title,
+          previousStatus: source?.status || null,
+          sourceTaskId: source?.id || null,
+        },
+        sourceClanName: source ? (sourceNameById.get(source.clanId) || null) : null,
+      });
+    }
+
+    const customTasks = assignments
+      .filter((row) => row.isCustomTask || !row.roadmapTask?.roadmapId)
+      .filter((row) => !continuedSourceIds.has(row.id) && !targetStepIds.has(row.roadmapTaskId))
+      .map((row) => {
+        const type = row.typeOverride || row.roadmapTask.type;
+        const supported = !['quiz', 'interview'].includes(type);
+        return {
+          sourceTaskId: row.id,
+          title: row.titleOverride || row.roadmapTask.title,
+          type,
+          status: row.status,
+          sourceClanName: sourceNameById.get(row.clanId) || null,
+          supported,
+          unavailableReason: supported ? null : `Create a new ${type} assignment so its kit and attempt settings are current.`,
+        };
+      });
+
+    return { roadmaps, customTasks, sourceClans };
+  }
+
+  async _continuationDueDate(menteeId, requestedDate, offsetDays = 7) {
+    if (requestedDate) return require('./taskService')._resolveDueDate(menteeId, requestedDate);
+    const date = new Date();
+    date.setUTCDate(date.getUTCDate() + (Number.isFinite(Number(offsetDays)) ? Number(offsetDays) : 7));
+    return require('./taskService')._resolveDueDate(menteeId, date.toISOString().slice(0, 10));
+  }
+
+  /**
+   * Continue selected historical work as fresh standing-clan work.
+   *
+   * The target membership row is locked for the transaction, serialising
+   * double-clicks/retries. The provenance unique index is the final guard.
+   */
+  async continueWork(clanId, menteeId, input, actor) {
+    const clan = await this._assertContinuationAccess(clanId, menteeId, actor);
+    const preview = await this.continuationPreview(clanId, menteeId, actor);
+    const requestedRoadmapIds = [...new Set(Array.isArray(input.roadmapIds) ? input.roadmapIds : [])];
+    const requestedTaskIds = [...new Set(Array.isArray(input.taskIds) ? input.taskIds : [])];
+    const roadmapById = new Map(preview.roadmaps.map((row) => [row.roadmapId, row]));
+    const customById = new Map(preview.customTasks.filter((row) => row.supported).map((row) => [row.sourceTaskId, row]));
+    const selectedRoadmaps = requestedRoadmapIds.map((id) => roadmapById.get(id)).filter(Boolean);
+    const selectedCustom = requestedTaskIds.map((id) => customById.get(id)).filter(Boolean);
+
+    // A browser or proxy can retry after the first request committed but before
+    // its response arrived. Preview intentionally hides already-continued work,
+    // so recover those rows here and return them as reused instead of turning a
+    // successful first request into a confusing validation error.
+    const [existingCustomRows, existingRoadmapRows] = await Promise.all([
+      requestedTaskIds.length ? models.AssignedTask.findAll({
+        where: {
+          clanId,
+          menteeId,
+          continuedFromTaskId: { [Op.in]: requestedTaskIds },
+          status: { [Op.ne]: 'cancelled' },
+        },
+        attributes: ['id', 'continuedFromTaskId', 'titleOverride'],
+        include: [{ model: models.RoadmapTask, as: 'roadmapTask', attributes: ['title'] }],
+      }) : [],
+      requestedRoadmapIds.length ? models.AssignedTask.findAll({
+        where: { clanId, menteeId, status: { [Op.ne]: 'cancelled' } },
+        attributes: ['id', 'assignedAt', 'titleOverride'],
+        include: [{
+          model: models.RoadmapTask,
+          as: 'roadmapTask',
+          required: true,
+          attributes: ['title', 'roadmapId'],
+          where: { roadmapId: { [Op.in]: requestedRoadmapIds } },
+        }],
+        order: [['assignedAt', 'DESC']],
+      }) : [],
+    ]);
+    const existingCustomBySource = new Map(existingCustomRows.map((row) => [row.continuedFromTaskId, row]));
+    const existingRoadmapById = new Map();
+    for (const row of existingRoadmapRows) {
+      if (!existingRoadmapById.has(row.roadmapTask.roadmapId)) {
+        existingRoadmapById.set(row.roadmapTask.roadmapId, row);
+      }
+    }
+    const unresolvedRoadmapIds = requestedRoadmapIds.filter((id) => !roadmapById.has(id) && !existingRoadmapById.has(id));
+    const unresolvedTaskIds = requestedTaskIds.filter((id) => !customById.has(id) && !existingCustomBySource.has(id));
+    if (unresolvedRoadmapIds.length || unresolvedTaskIds.length) {
+      throw new ValidationError('Some selected work is no longer available to continue');
+    }
+    if (!requestedRoadmapIds.length && !requestedTaskIds.length) throw new ValidationError('Select at least one roadmap or custom task');
+
+    const sourceTaskIds = [
+      ...selectedRoadmaps.map((row) => row.resumeStep.sourceTaskId).filter(Boolean),
+      ...selectedCustom.map((row) => row.sourceTaskId),
+    ];
+    const sources = sourceTaskIds.length ? await models.AssignedTask.findAll({
+      where: { id: { [Op.in]: sourceTaskIds } },
+      include: [{
+        model: models.RoadmapTask, as: 'roadmapTask', required: true,
+        include: [{ model: models.TaskResource, as: 'resources', required: false }],
+      }],
+    }) : [];
+    const sourceById = new Map(sources.map((row) => [row.id, row]));
+
+    const roadmapDueDates = new Map();
+    for (const row of selectedRoadmaps) {
+      const step = await models.RoadmapTask.findByPk(row.resumeStep.stepId, { attributes: ['dueOffsetDays'] });
+      roadmapDueDates.set(row.roadmapId, await this._continuationDueDate(menteeId, input.dueDate, step?.dueOffsetDays));
+    }
+    const customDueDate = selectedCustom.length
+      ? await this._continuationDueDate(menteeId, input.dueDate, 7)
+      : null;
+
+    const saved = await sequelize.transaction(async (transaction) => {
+      const membership = await models.ClanMembership.findOne({
+        where: { clanId, userId: menteeId, role: 'mentee', status: { [Op.in]: ['active', 'paused'] } },
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!membership) throw new ValidationError('That mentee is no longer in this standing clan');
+
+      const continued = [
+        ...requestedRoadmapIds.filter((id) => !roadmapById.has(id)).map((id) => {
+          const assignment = existingRoadmapById.get(id);
+          return {
+            kind: 'roadmap', id: assignment.id,
+            title: assignment.titleOverride || assignment.roadmapTask.title,
+            roadmapId: id, created: false,
+          };
+        }),
+        ...requestedTaskIds.filter((id) => !customById.has(id)).map((id) => {
+          const assignment = existingCustomBySource.get(id);
+          return {
+            kind: 'custom', id: assignment.id,
+            title: assignment.titleOverride || assignment.roadmapTask.title,
+            sourceTaskId: id, created: false,
+          };
+        }),
+      ];
+      let createdCount = 0;
+      for (const row of selectedRoadmaps) {
+        const source = row.resumeStep.sourceTaskId ? sourceById.get(row.resumeStep.sourceTaskId) : null;
+        let progress = await models.RoadmapProgress.findOne({
+          where: { roadmapId: row.roadmapId, menteeId, clanId }, transaction,
+        });
+        if (!progress) {
+          progress = await models.RoadmapProgress.create({
+            roadmapId: row.roadmapId, menteeId, clanId, enrollmentId: null,
+            currentStep: row.resumeIndex, completed: false,
+          }, { transaction });
+        }
+
+        let assignment = await models.AssignedTask.findOne({
+          where: { clanId, menteeId, roadmapTaskId: row.resumeStep.stepId }, transaction,
+        });
+        let wasCreated = false;
+        if (!assignment) {
+          assignment = await models.AssignedTask.create({
+            organizationId: clan.organizationId,
+            clanId,
+            menteeId,
+            mentorId: actor.id,
+            enrollmentId: null,
+            roadmapTaskId: row.resumeStep.stepId,
+            continuedFromTaskId: source?.id || null,
+            status: 'assigned',
+            assignedAt: new Date(),
+            dueDate: roadmapDueDates.get(row.roadmapId),
+            pointsBase: source?.pointsBase ?? source?.roadmapTask?.pointsBase ?? null,
+            isCustomTask: false,
+            typeOverride: source?.typeOverride || null,
+            titleOverride: source?.titleOverride || null,
+            descriptionOverride: source?.descriptionOverride || null,
+            deliverableOverride: source?.deliverableOverride || null,
+            acceptanceCriteriaOverride: source?.acceptanceCriteriaOverride || null,
+            resourcesOverride: source?.resourcesOverride || null,
+            openSourceOrgIds: source?.openSourceOrgIds || source?.roadmapTask?.openSourceOrgIds || [],
+          }, { transaction });
+          createdCount += 1;
+          wasCreated = true;
+        }
+        continued.push({
+          kind: 'roadmap', id: assignment.id, title: row.resumeStep.title,
+          roadmapId: row.roadmapId, created: wasCreated,
+        });
+      }
+
+      for (const row of selectedCustom) {
+        const source = sourceById.get(row.sourceTaskId);
+        if (!source) throw new ValidationError('A selected custom task no longer exists');
+        let assignment = await models.AssignedTask.findOne({
+          where: { clanId, menteeId, continuedFromTaskId: source.id }, transaction,
+        });
+        let wasCreated = false;
+        if (!assignment) {
+          const template = source.roadmapTask;
+          const copiedTask = await models.RoadmapTask.create({
+            title: source.titleOverride || template.title,
+            description: source.descriptionOverride || template.description,
+            type: source.typeOverride || template.type,
+            difficulty: template.difficulty,
+            taskOrder: 0,
+            deliverable: source.deliverableOverride || template.deliverable,
+            acceptanceCriteria: source.acceptanceCriteriaOverride || template.acceptanceCriteria || [],
+            estimatedHours: template.estimatedHours,
+            effort: template.effort,
+            dueOffsetDays: template.dueOffsetDays,
+            isMandatory: false,
+            isCustomTask: true,
+            pointsBase: source.pointsBase ?? template.pointsBase,
+            openSourceOrgIds: source.openSourceOrgIds || template.openSourceOrgIds || [],
+          }, { transaction });
+
+          const overrideResources = Array.isArray(source.resourcesOverride) ? source.resourcesOverride : null;
+          const resources = overrideResources || (template.resources || []).map((resource) => ({
+            title: resource.title, url: resource.url, resourceType: resource.resourceType,
+            description: resource.description, displayOrder: resource.displayOrder,
+          }));
+          if (resources.length) {
+            await models.TaskResource.bulkCreate(resources
+              .filter((resource) => resource?.url)
+              .map((resource, index) => ({
+                roadmapTaskId: copiedTask.id,
+                title: resource.title || resource.label || resource.url,
+                url: resource.url,
+                resourceType: resource.resourceType || 'link',
+                description: resource.description || null,
+                displayOrder: resource.displayOrder ?? index,
+              })), { transaction });
+          }
+          assignment = await models.AssignedTask.create({
+            organizationId: clan.organizationId,
+            clanId,
+            menteeId,
+            mentorId: actor.id,
+            enrollmentId: null,
+            roadmapTaskId: copiedTask.id,
+            continuedFromTaskId: source.id,
+            status: 'assigned',
+            assignedAt: new Date(),
+            dueDate: customDueDate,
+            pointsBase: source.pointsBase ?? copiedTask.pointsBase,
+            isCustomTask: true,
+            openSourceOrgIds: source.openSourceOrgIds || copiedTask.openSourceOrgIds || [],
+          }, { transaction });
+          createdCount += 1;
+          wasCreated = true;
+        }
+        continued.push({
+          kind: 'custom', id: assignment.id, title: row.title,
+          sourceTaskId: source.id, created: wasCreated,
+        });
+      }
+      return { continued, createdCount, reusedCount: continued.length - createdCount };
+    });
+
+    const firstCreated = saved.continued.find((item) => item.created);
+    if (saved.createdCount > 0 && firstCreated) {
+      const mentor = await models.User.findByPk(actor.id, { attributes: ['firstName'] });
+      notificationOrchestrator.dispatch({
+        eventKey: NOTIFICATION_EVENTS.TASK_ASSIGNED,
+        recipients: [{ userId: menteeId }],
+        payload: {
+          title: `${mentor?.firstName || 'Your mentor'} continued your learning plan`,
+          message: `${saved.createdCount} item${saved.createdCount === 1 ? '' : 's'} from your previous plan ${saved.createdCount === 1 ? 'is' : 'are'} ready here as new work.`,
+          actionUrl: `/mentee/tasks/${firstCreated.id}`,
+          actionLabel: 'Open work',
+          relatedEntityType: 'continued_work',
+          relatedEntityId: firstCreated.id,
+          clanId,
+        },
+        dedupe: { relatedEntityType: 'continued_work', relatedEntityId: firstCreated.id },
+      }).catch((error) => console.warn('standingClanService: continuation notification failed', error?.message || error));
+    }
+    return saved;
+  }
+
+  /**
    * Who mentors the source clan right now: the lead, and the co-mentors.
    *
    * The lead is taken from a live membership rather than `clan.leadMentorId`

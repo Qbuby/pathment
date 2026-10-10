@@ -26,6 +26,28 @@ export interface FinalResults {
   history: { id: string; closedAt: string; reopenedAt: string | null; reopenReason: string | null }[];
   snapshots: FinalSnapshot[];
 }
+
+export interface ContinuationPreview {
+  roadmaps: Array<{
+    roadmapId: string;
+    name: string;
+    totalSteps: number;
+    completedSteps: number;
+    resumeIndex: number;
+    resumeStep: { stepId: string; title: string; previousStatus: string | null; sourceTaskId: string | null };
+    sourceClanName: string | null;
+  }>;
+  customTasks: Array<{
+    sourceTaskId: string;
+    title: string;
+    type: string;
+    status: string;
+    sourceClanName: string | null;
+    supported: boolean;
+    unavailableReason: string | null;
+  }>;
+  sourceClans: Array<{ id: string; name: string }>;
+}
 export interface StandingRequest {
   id: string; name: string; description: string | null; status: 'pending' | 'approved' | 'rejected'; decisionNote: string | null;
   createdClanId: string | null; program: { id: string; name: string }; mentor: { firstName: string; lastName: string };
@@ -69,4 +91,12 @@ export const completionApi = {
   /** Carry it forward as NEW assignments here; the originals are untouched. */
   carryForward: (clanId: string, menteeId: string, taskIds: string[]) =>
     apiClient.post(`/clans/${clanId}/mentees/${menteeId}/carry-forward`, { taskIds }),
+
+  continuationPreview: (clanId: string, menteeId: string) =>
+    apiClient.get<{ data: ContinuationPreview }>(`/clans/${clanId}/mentees/${menteeId}/continuation-preview`).then(r => r.data),
+
+  continueWork: (clanId: string, menteeId: string, input: { roadmapIds?: string[]; taskIds?: string[]; dueDate?: string }) =>
+    apiClient.post<{ data: { continued: Array<{ id: string; kind: 'roadmap' | 'custom'; title: string }>; createdCount: number; reusedCount: number } }>(
+      `/clans/${clanId}/mentees/${menteeId}/continue-work`, input,
+    ).then(r => r.data),
 };

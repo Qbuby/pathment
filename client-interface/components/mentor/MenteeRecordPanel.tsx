@@ -5,6 +5,8 @@ import { ChevronDown, History, Loader2, Lock, Users2 } from 'lucide-react';
 import { mentorApi } from '@/lib/services/mentor-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import type { MenteeRecord, RecordClan, RecordTask } from '@/lib/types/mentee-record';
+import { useClan, resolveActiveMentorClan } from '@/lib/context/ClanContext';
+import { ContinueWorkLauncher } from '@/components/mentor/ContinueWorkLauncher';
 
 /**
  * Everything this mentee has done in the organisation, clan by clan.
@@ -19,6 +21,8 @@ import type { MenteeRecord, RecordClan, RecordTask } from '@/lib/types/mentee-re
  * hides anything, because anything hidden here would still have been sent.
  */
 export function MenteeRecordPanel({ menteeId }: { menteeId: string }) {
+  const { clans, activeClanId } = useClan();
+  const activeClan = resolveActiveMentorClan(clans, activeClanId);
   const [record, setRecord] = useState<MenteeRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -74,6 +78,11 @@ export function MenteeRecordPanel({ menteeId }: { menteeId: string }) {
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-sm font-semibold text-foreground">Work history</h3>
               <span className="rounded-full border border-slate-200 bg-card px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500 dark:border-slate-700 dark:text-slate-400">Read only</span>
+              {activeClan?.kind === 'standing' && (
+                <span className="ml-auto">
+                  <ContinueWorkLauncher clanId={activeClan.id} menteeId={menteeId} />
+                </span>
+              )}
             </div>
             <p className="mt-0.5 text-xs text-muted-foreground">
               Previous work stays with the clan where it happened and does not count toward current-clan activity.

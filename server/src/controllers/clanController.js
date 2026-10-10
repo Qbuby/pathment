@@ -476,10 +476,26 @@ const carryForwardWork = catchAsync(async (req, res) => {
   res.status(201).json(successResponse(`Carried ${tasks.length} task(s) forward as new work`, tasks, 201));
 });
 
+/** GET /api/clans/:id/mentees/:menteeId/continuation-preview */
+const getContinuationPreview = catchAsync(async (req, res) => {
+  const preview = await standingClanService.continuationPreview(req.params.id, req.params.menteeId, req.user);
+  res.status(200).json(successResponse('Work available to continue', preview));
+});
+
+/** POST /api/clans/:id/mentees/:menteeId/continue-work */
+const continueWork = catchAsync(async (req, res) => {
+  const result = await standingClanService.continueWork(
+    req.params.id, req.params.menteeId, req.body || {}, req.user,
+  );
+  res.status(201).json(successResponse('Work continued in this plan', result, 201));
+});
+
 module.exports = {
   getStandingPriorRecord,
   getUnfinishedPriorWork,
   carryForwardWork,
+  getContinuationPreview,
+  continueWork,
   listClanInvites,
   resendClanInvite,
   revokeClanInvite,

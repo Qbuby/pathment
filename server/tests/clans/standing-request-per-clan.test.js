@@ -252,7 +252,7 @@ describe('standing clan requests are per clan', () => {
  */
 describe('carrying a mentee into a standing clan', () => {
   const { models: m } = require('../../src/db');
-  let admin2, lead2, mentee2, program2, cohort, standing;
+  let admin2, lead2, mentee2, program2, cohort, standing, roadmap;
 
   beforeEach(async () => {
     await cleanDb();
@@ -272,7 +272,7 @@ describe('carrying a mentee into a standing clan', () => {
     // Two finished, one left open, in the COHORT clan. Every assignment points
     // at a roadmap task — the column is NOT NULL.
     const { createRoadmap, createRoadmapTask } = require('../helpers/seed');
-    const roadmap = await createRoadmap({ programId: program2.id, createdBy: admin2.id });
+    roadmap = await createRoadmap({ programId: program2.id, createdBy: admin2.id });
     let order = 0;
     for (const status of ['completed', 'completed', 'in_progress']) {
       order += 1;
@@ -388,5 +388,78 @@ describe('carrying a mentee into a standing clan', () => {
     const done = await m.AssignedTask.findOne({ where: { clanId: cohort.id, status: 'completed' } });
     await expect(standingClanService.carryForward(standing.id, mentee2.id, [done.id], lead2))
       .rejects.toThrow(/unfinished work/i);
+  });
+
+  it('previews a roadmap at its first unfinished step', async () => {
+    const preview = await standingClanService.continuationPreview(standing.id, mentee2.id, lead2);
+
+    expect(preview.roadmaps).toHaveLength(1);
+    expect(preview.roadmaps[0]).toMatchObject({
+      roadmapId: roadmap.id,
+      totalSteps: 3,
+      completedSteps: 2,
+      resumeIndex: 2,
+      resumeStep: { title: 'Task in_progress 3', previousStatus: 'in_progress' },
+      sourceClanName: 'Cohort A',
+    });
+  });
+
+  it('continues a roadmap with fresh progress and is safe to retry', async () => {
+    const source = await m.AssignedTask.findOne({ where: { clanId: cohort.id, status: 'in_progress' } });
+    const first = await standingClanService.continueWork(
+      standing.id, mentee2.id, { roadmapIds: [roadmap.id] }, lead2,
+    );
+    const retry = await standingClanService.continueWork(
+      standing.id, mentee2.id, { roadmapIds: [roadmap.id] }, lead2,
+    );
+
+    expect(first).toMatchObject({ createdCount: 1, reusedCount: 0 });
+    expect(retry).toMatchObject({ createdCount: 0, reusedCount: 1 });
+    const continued = await m.AssignedTask.findOne({
+      where: { clanId: standing.id, menteeId: mentee2.id, continuedFromTaskId: source.id },
+    });
+    expect(continued).toMatchObject({ status: 'assigned', enrollmentId: null, roadmapTaskId: source.roadmapTaskId });
+    expect(await m.AssignedTask.count({ where: { clanId: standing.id, menteeId: mentee2.id } })).toBe(1);
+    expect(await m.RoadmapProgress.findOne({ where: { clanId: standing.id, menteeId: mentee2.id, roadmapId: roadmap.id } }))
+      .toMatchObject({ currentStep: 2, completed: false, enrollmentId: null });
+    expect(await source.reload()).toMatchObject({ clanId: cohort.id, status: 'in_progress' });
+    // Once continued, the preview deliberately stops offering the same roadmap,
+    // while an identical network retry safely returns the existing assignment.
+    expect(await standingClanService.continuationPreview(standing.id, mentee2.id, lead2))
+      .toMatchObject({ roadmaps: [] });
+  });
+
+  it('copies a custom task definition and resources without touching history', async () => {
+    const template = await m.RoadmapTask.create({
+      title: 'Original title', description: 'Original brief', type: 'project', difficulty: 'hard',
+      taskOrder: 0, deliverable: 'Repository', acceptanceCriteria: ['Tests pass'], estimatedHours: 8,
+      isMandatory: false, isCustomTask: true, pointsBase: 20,
+    });
+    await m.TaskResource.create({
+      roadmapTaskId: template.id, title: 'Reference', resourceType: 'link', url: 'https://example.com', displayOrder: 0,
+    });
+    const source = await m.AssignedTask.create({
+      clanId: cohort.id, menteeId: mentee2.id, mentorId: lead2.id, roadmapTaskId: template.id,
+      isCustomTask: true, status: 'completed', titleOverride: 'Tailored title', pointsBase: 20,
+    });
+
+    const preview = await standingClanService.continuationPreview(standing.id, mentee2.id, lead2);
+    expect(preview.customTasks.find((task) => task.sourceTaskId === source.id)).toMatchObject({
+      title: 'Tailored title', status: 'completed', supported: true,
+    });
+    await standingClanService.continueWork(
+      standing.id, mentee2.id, { taskIds: [source.id], dueDate: '2030-01-15' }, lead2,
+    );
+
+    const continued = await m.AssignedTask.findOne({
+      where: { clanId: standing.id, menteeId: mentee2.id, continuedFromTaskId: source.id },
+      include: [{ model: m.RoadmapTask, as: 'roadmapTask', include: [{ model: m.TaskResource, as: 'resources' }] }],
+    });
+    expect(continued.id).not.toBe(source.id);
+    expect(continued.roadmapTaskId).not.toBe(template.id);
+    expect(continued.roadmapTask).toMatchObject({ title: 'Tailored title', description: 'Original brief', isCustomTask: true });
+    expect(continued.roadmapTask.resources).toHaveLength(1);
+    expect(continued.roadmapTask.resources[0]).toMatchObject({ title: 'Reference', url: 'https://example.com' });
+    expect(await source.reload()).toMatchObject({ clanId: cohort.id, status: 'completed', roadmapTaskId: template.id });
   });
 });

@@ -40,6 +40,7 @@ import { ReviewScheduleDrawer } from '@/components/mentor/ReviewScheduleDrawer';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { getViewerTimeZone } from '@/lib/utils/datetime';
 import { MobileReviewActionBar } from '@/components/mentor/MobileReviewActionBar';
+import { ContinueWorkLauncher } from '@/components/mentor/ContinueWorkLauncher';
 
 type Attendance = 'present' | 'absent' | 'excused';
 type EntryStatus = 'pending' | 'reviewed' | 'deferred';
@@ -1035,6 +1036,16 @@ export default function CohortReview() {
                 See full record <ArrowUpRight className="h-3 w-3" aria-hidden />
               </Link>
             </section>
+          )}
+
+          {activeClan?.kind === 'standing' && mentee && (
+            <div className="flex justify-end">
+              <ContinueWorkLauncher
+                clanId={activeClan.id}
+                menteeId={mentee.id}
+                onContinued={refresh}
+              />
+            </div>
           )}
 
           {/* State of this mentee - same read as the profile (AI summary + signals). */}
