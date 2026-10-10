@@ -1,5 +1,7 @@
 const { models, sequelize } = require('../../src/db');
-const { cleanDb, createAdmin, createMentor, createMentee, createProgram } = require('../helpers/seed');
+const {
+  cleanDb, createAdmin, createMentor, createMentee, createProgram, createRoadmap, createRoadmapTask,
+} = require('../helpers/seed');
 const { runWithRequestContext } = require('../../src/utils/auditContext');
 const lifecycle = require('../../src/services/programLifecycleService');
 const standing = require('../../src/services/standingClanService');
@@ -7,6 +9,7 @@ const clans = require('../../src/services/clanService');
 const tasks = require('../../src/services/taskService');
 const performance = require('../../src/services/performanceService');
 const community = require('../../src/services/communityService');
+const roadmaps = require('../../src/services/linearRoadmapService');
 
 describe('formal completion and independent standing clans', () => {
   let organization, admin, mentor, sara, bilal, alpha, beta, cohort, original, other, template;
@@ -129,6 +132,39 @@ describe('formal completion and independent standing clans', () => {
     expect(report.mentees.find(m => m.id === bilal.id).tasksCompleted).toBe(1);
     const scores = await performance.scoreMentees([bilal.id], { programId: beta.id });
     expect(scores.mentees[0].evidence.tasksCompleted).toBe(0);
+  }));
+
+  it('assigns the same roadmap afresh in a standing clan without changing historical work', () => within(async () => {
+    const roadmap = await createRoadmap({ programId: alpha.id, createdBy: admin.id });
+    const step = await createRoadmapTask({ roadmapId: roadmap.id, title: 'Continue the roadmap' });
+    const historicalProgress = await roadmaps.assignToMentee(
+      mentor.id, roadmap.id, sara.id, 0, null, null, null, null, original.id,
+    );
+    const historicalTask = await models.AssignedTask.findOne({
+      where: { roadmapTaskId: step.id, menteeId: sara.id, clanId: original.id },
+    });
+
+    await lifecycle.closeProgram(alpha.id, admin);
+    const request = await standing.request({ programId: alpha.id, name: 'Roadmap continuation' }, mentor);
+    const approved = await standing.decide(request.id, 'approved', '', admin);
+    await standing.addMenteesToStandingClan(approved.createdClanId, [sara.id], mentor);
+
+    const assignmentResults = await roadmaps.bulkAssign(
+      mentor.id, roadmap.id, [sara.id], 0, null, null, null, approved.createdClanId,
+    );
+    const standingProgress = await models.RoadmapProgress.findOne({
+      where: { roadmapId: roadmap.id, menteeId: sara.id, clanId: approved.createdClanId },
+    });
+    const standingTask = await models.AssignedTask.findOne({
+      where: { roadmapTaskId: step.id, menteeId: sara.id, clanId: approved.createdClanId },
+    });
+
+    expect(assignmentResults).toEqual([{ menteeId: sara.id, ok: true }]);
+    expect(standingProgress.id).not.toBe(historicalProgress.id);
+    expect(standingProgress.enrollmentId).toBeNull();
+    expect(standingTask).toMatchObject({ clanId: approved.createdClanId, enrollmentId: null, status: 'assigned' });
+    expect(standingTask.id).not.toBe(historicalTask.id);
+    expect(await historicalTask.reload()).toMatchObject({ clanId: original.id, enrollmentId: expect.any(String) });
   }));
 
   it('rejects without creating a clan, and rejects non-admin decisions', () => within(async () => {
