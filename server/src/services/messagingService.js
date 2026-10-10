@@ -7,6 +7,7 @@ const {
 } = require('../utils/errors/errorTypes');
 const schedulingService = require('./schedulingService');
 const { VISIBLE_MEMBERSHIP_STATUSES } = require('../config/membership');
+const { getRequestContext } = require('../utils/auditContext');
 const logger = require('../utils/logger');
 
 // Clan roles that mean "I mentor the people in this clan". Mirrors
@@ -16,34 +17,116 @@ const MENTOR_CLAN_ROLES = ['lead_mentor', 'co_mentor', 'core_team'];
 
 class MessagingService {
   /**
-   * Who a user is allowed to message. Returns `null` for privileged users
-   * (admin/mentor) meaning "unrestricted". For a mentee-only user, returns the
-   * set of allowed recipient ids = their mentor(s) (matches + clan leads/co) +
-   * co-members of every clan they belong to.
+   * Who this user is allowed to discover and start a direct conversation with
+   * in the portal they currently have open.
+   *
+   * The ids are resolved here, at the API boundary. A client-side filter would
+   * still download people from other clans and would make a crafted direct
+   * conversation request an authorization bypass.
+   *
+   * `null` only exists for legacy calls with no workspace context. Every real
+   * request has a workspace and therefore gets an explicit tenant-scoped set.
    */
   async getAllowedRecipientIds(userId) {
     const user = await models.User.findByPk(userId, { attributes: ['id', 'role', 'capabilities'] });
     if (!user) return [];
+
+    const context = getRequestContext();
+    const organizationId = context.organizationId || null;
     const caps = await require('./authzService').getCapabilities(user);
-    if (caps.includes('admin') || caps.includes('mentor')) return null; // unrestricted
+    const requestedPortal = ['admin', 'mentor', 'mentee'].includes(context.portalRole)
+      ? context.portalRole
+      : null;
+    const portal = requestedPortal && caps.includes(requestedPortal)
+      ? requestedPortal
+      : (caps.includes(user.role) ? user.role : caps[0]);
+
+    let workspaceUserIds = null;
+    let adminIds = [];
+    if (organizationId) {
+      const memberships = await models.OrganizationMembership.findAll({
+        where: { organizationId, status: 'active' },
+        attributes: ['userId', 'role']
+      });
+      workspaceUserIds = memberships.map((membership) => membership.userId);
+      adminIds = memberships
+        .filter((membership) => ['owner', 'admin'].includes(membership.role))
+        .map((membership) => membership.userId);
+    }
+
+    if (portal === 'admin') {
+      if (workspaceUserIds === null) return null;
+      return workspaceUserIds.filter((id) => id !== userId);
+    }
 
     const allowed = new Set();
-    const mentorIds = await schedulingService.getMenteeMentorIds(userId); // matches + clan lead/co mentors
-    mentorIds.forEach((id) => allowed.add(id));
+    adminIds.forEach((id) => allowed.add(id));
 
-    // Paused counts: a paused mentee is still in their clan, so they keep access
-    // to their clan-mates as well as their mentors.
-    const myClans = await models.ClanMembership.findAll({
-      where: { userId, status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES } },
-      attributes: ['clanId']
-    });
-    const clanIds = myClans.map((c) => c.clanId);
-    if (clanIds.length) {
-      const members = await models.ClanMembership.findAll({
-        where: { clanId: { [Op.in]: clanIds }, status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES } },
-        attributes: ['userId']
+    if (portal === 'mentor') {
+      const mentorProfiles = await models.MentorProfile.findAll({ attributes: ['userId'] });
+      const workspaceSet = workspaceUserIds === null ? null : new Set(workspaceUserIds);
+      mentorProfiles.forEach((profile) => {
+        if (!workspaceSet || workspaceSet.has(profile.userId)) allowed.add(profile.userId);
       });
-      members.forEach((m) => allowed.add(m.userId));
+
+      const [mentoredMemberships, directMatches] = await Promise.all([
+        models.ClanMembership.findAll({
+          where: {
+            userId,
+            status: 'active',
+            role: { [Op.in]: MENTOR_CLAN_ROLES }
+          },
+          attributes: ['clanId']
+        }),
+        models.MentorMenteeMatch.findAll({
+          where: { mentorId: userId, status: 'active' },
+          attributes: ['menteeId']
+        })
+      ]);
+      directMatches.forEach((match) => allowed.add(match.menteeId));
+
+      const clanIds = mentoredMemberships.map((membership) => membership.clanId);
+      if (clanIds.length) {
+        const mentees = await models.ClanMembership.findAll({
+          where: {
+            clanId: { [Op.in]: clanIds },
+            status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES },
+            role: 'mentee'
+          },
+          attributes: ['userId']
+        });
+        mentees.forEach((membership) => allowed.add(membership.userId));
+      }
+    } else {
+      const mentorIds = await schedulingService.getMenteeMentorIds(userId);
+      mentorIds.forEach((id) => allowed.add(id));
+
+      // A paused mentee is still part of their clan and must still be able to
+      // reach the people supporting them there.
+      const myClans = await models.ClanMembership.findAll({
+        where: {
+          userId,
+          status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES },
+          role: 'mentee'
+        },
+        attributes: ['clanId']
+      });
+      const clanIds = myClans.map((membership) => membership.clanId);
+      if (clanIds.length) {
+        const members = await models.ClanMembership.findAll({
+          where: {
+            clanId: { [Op.in]: clanIds },
+            status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES }
+          },
+          attributes: ['userId']
+        });
+        members.forEach((membership) => allowed.add(membership.userId));
+      }
+    }
+
+    if (workspaceUserIds !== null) {
+      const workspaceSet = new Set(workspaceUserIds);
+      for (const id of allowed) if (!workspaceSet.has(id)) allowed.delete(id);
     }
     allowed.delete(userId);
     return [...allowed];
@@ -169,7 +252,7 @@ class MessagingService {
     // A mentee may only start conversations with their mentor(s) + clan members.
     const allowed = await this.getAllowedRecipientIds(userId);
     if (allowed !== null && !allowed.includes(participantId)) {
-      throw new ForbiddenError('You can only message your mentor or members of your clan');
+      throw new ForbiddenError('You can only message people available in your workspace directory');
     }
 
     const directKey = [userId, participantId].sort().join(':');
@@ -987,7 +1070,8 @@ class MessagingService {
     const requestedLimit = options.limit ? Number(options.limit) : null;
     const isSearchMode = Boolean(query && query.trim());
 
-    // Mentee allowed set (null for unrestricted mentor/admin)
+    // Explicit role-scoped, tenant-scoped directory. `null` is only possible
+    // for an old admin caller outside a workspace request.
     const allowed = await this.getAllowedRecipientIds(currentUserId);
     const clanMemberIds = await this.getClanMemberUserIds(currentUserId);
 
