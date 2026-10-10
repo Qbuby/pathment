@@ -117,11 +117,11 @@ function ContinueWorkDrawer({
     if (!selectedCount || saving) return;
     setSaving(true);
     try {
-      const result = await completionApi.continueWork(clanId, menteeId, {
-        roadmapIds: [...roadmapIds],
-        taskIds: [...taskIds],
-        dueDate: dueDate || undefined,
-      });
+      const payload: { roadmapIds?: string[]; taskIds?: string[]; dueDate?: string } = {};
+      if (roadmapIds.size) payload.roadmapIds = [...roadmapIds];
+      if (taskIds.size) payload.taskIds = [...taskIds];
+      if (dueDate) payload.dueDate = dueDate;
+      const result = await completionApi.continueWork(clanId, menteeId, payload);
       const readyCount = result.createdCount + result.reusedCount;
       toast.success(`${readyCount} item${readyCount === 1 ? '' : 's'} ready in this plan`);
       onContinued();

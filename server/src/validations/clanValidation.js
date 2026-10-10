@@ -31,10 +31,18 @@ module.exports = {
   }),
 
   continueWorkBody: Joi.object({
-    roadmapIds: Joi.array().items(Joi.string().uuid()).min(1).max(20).optional(),
-    taskIds: Joi.array().items(Joi.string().uuid()).min(1).max(50).optional(),
+    // Either category may be present as an empty array. The drawer submits two
+    // independent selection groups, so selecting only roadmaps naturally means
+    // `taskIds: []` (and vice versa).
+    roadmapIds: Joi.array().items(Joi.string().uuid()).max(20).optional(),
+    taskIds: Joi.array().items(Joi.string().uuid()).max(50).optional(),
     dueDate: Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).optional().allow('', null),
-  }).or('roadmapIds', 'taskIds'),
+  }).custom((value, helpers) => {
+    if ((value.roadmapIds?.length || 0) + (value.taskIds?.length || 0) === 0) {
+      return helpers.message({ custom: 'Select at least one roadmap or custom task' });
+    }
+    return value;
+  }),
 
   // Admin only toggles permission — join window is set by the lead on generate/regenerate.
   publicJoinAccess: Joi.object({

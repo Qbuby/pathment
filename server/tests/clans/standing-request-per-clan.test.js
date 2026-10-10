@@ -252,6 +252,7 @@ describe('standing clan requests are per clan', () => {
  */
 describe('carrying a mentee into a standing clan', () => {
   const { models: m } = require('../../src/db');
+  const clanValidation = require('../../src/validations/clanValidation');
   let admin2, lead2, mentee2, program2, cohort, standing, roadmap;
 
   beforeEach(async () => {
@@ -284,6 +285,19 @@ describe('carrying a mentee into a standing clan', () => {
       });
     }
     await clanService.addMember(standing.id, { userId: mentee2.id, role: 'mentee' });
+  });
+
+  it('accepts a roadmap-only continuation payload with an empty custom-task group', () => {
+    const result = clanValidation.continueWorkBody.validate({
+      roadmapIds: ['a656649f-0f3b-4000-84f1-ce2eb884c9fc'],
+      taskIds: [],
+    });
+    expect(result.error).toBeUndefined();
+  });
+
+  it('rejects a continuation payload when both selection groups are empty', () => {
+    const result = clanValidation.continueWorkBody.validate({ roadmapIds: [], taskIds: [] });
+    expect(result.error?.message).toMatch(/select at least one/i);
   });
 
   /**
