@@ -1,4 +1,5 @@
 const { catchAsync } = require('../middlewares/errorHandler');
+const { requestedClanId } = require('../middlewares/portalScope');
 const { successResponse } = require('../utils/responses');
 const clanRequestsService = require('../services/clanRequestsService');
 const standingClanService = require('../services/standingClanService');
@@ -70,7 +71,15 @@ const listStandingRequests = catchAsync(async (req, res) => {
 
 /** POST /api/clan-requests/standing */
 const createStandingRequest = catchAsync(async (req, res) => {
-  const request = await standingClanService.request(req.body, req.user);
+  // The sidebar's clan, as a fallback for `sourceClanId`. The client and the
+  // API deploy separately, so a frontend that predates that field would
+  // otherwise be asked to choose a clan its UI never offered — while the
+  // selected clan was on screen the whole time. The service only honours it
+  // when it is one of the mentor's eligible clans.
+  const request = await standingClanService.request(
+    { ...req.body, activeClanId: req.body?.sourceClanId || requestedClanId(req) },
+    req.user,
+  );
   res.status(201).json(successResponse('Request submitted', request, 201));
 });
 

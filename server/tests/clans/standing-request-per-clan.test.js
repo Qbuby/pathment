@@ -186,6 +186,39 @@ describe('standing clan requests are per clan', () => {
       expect(request.sourceClanId).toBe(coreTeam.id);
     });
 
+    /**
+     * The real-world case: the mentor runs two clans, the client has not been
+     * redeployed with `sourceClanId`, and the banner they pressed was already
+     * labelled with the clan they have selected. Asking them to choose is
+     * asking about something on screen.
+     */
+    it('uses the clan selected in the sidebar when the form sends none', async () => {
+      const request = await standingClanService.request({
+        programId: program.id, activeClanId: viralLoop.id,
+        name: 'Viral Loop Clan 2026 · Standing', description: '',
+      }, mentor);
+      expect(request.sourceClanId).toBe(viralLoop.id);
+    });
+
+    it('lets an explicit choice win over the sidebar', async () => {
+      const request = await standingClanService.request({
+        programId: program.id, sourceClanId: coreTeam.id, activeClanId: viralLoop.id,
+        name: 'Core Team 2026 · Standing', description: '',
+      }, mentor);
+      expect(request.sourceClanId).toBe(coreTeam.id);
+    });
+
+    it('ignores a sidebar clan the mentor does not mentor', async () => {
+      const strangerClan = await models.Clan.create({
+        programId: program.id, name: 'Not mine', kind: 'cohort', createdBy: admin.id,
+      });
+      // Falls through to "ask", rather than silently using a clan they have
+      // no claim on — the sidebar is a hint, never a grant.
+      await expect(standingClanService.request({
+        programId: program.id, activeClanId: strangerClan.id, name: 'Nope', description: '',
+      }, mentor)).rejects.toThrow(/which clan this standing clan continues/i);
+    });
+
     it('still refuses somebody who mentors no eligible clan', async () => {
       await expect(standingClanService.request({
         programId: program.id, name: 'Not mine', description: '',

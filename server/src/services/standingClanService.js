@@ -92,7 +92,22 @@ class StandingClanService {
     const candidates = input.programId
       ? eligible.filter(c => c.program.id === input.programId)
       : eligible;
+
+    /**
+     * In order: what the form said, then the clan the mentor has SELECTED in
+     * the sidebar, then the only possibility.
+     *
+     * The sidebar clan is the strongest signal after an explicit choice — the
+     * banner this is opened from names that clan ("continue Viral Loop Clan
+     * 2026"), so asking again which clan they mean is asking about something
+     * already on screen. It is only honoured when it is genuinely one of their
+     * eligible clans, so it can never widen anything.
+     */
+    const fromSidebar = candidates.some(c => c.clanId === input.activeClanId)
+      ? input.activeClanId
+      : null;
     const sourceClanId = input.sourceClanId
+      || fromSidebar
       || (candidates.length === 1 ? candidates[0].clanId : null);
 
     if (!sourceClanId) {
