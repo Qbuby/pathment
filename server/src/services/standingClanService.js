@@ -1,10 +1,12 @@
 const { Op } = require('sequelize');
 const { models, sequelize } = require('../db');
 const authz = require('./authzService');
+const menteeRecordService = require('./menteeRecordService');
 const organizationService = require('./organizationService');
 const workspaceRecipients = require('./workspaceRecipients');
 const notificationOrchestrator = require('./notificationOrchestrator');
 const { PERMISSIONS } = require('../config/permissions');
+const { HISTORICAL_MEMBERSHIP_STATUSES } = require('../config/membership');
 const { NOTIFICATION_EVENTS } = require('../config/notificationMatrix');
 const { getRequestContext } = require('../utils/auditContext');
 const { NotFoundError, ForbiddenError, ValidationError, ConflictError } = require('../utils/errors/errorTypes');
@@ -75,14 +77,33 @@ class StandingClanService {
     const name = String(input.name || '').trim();
     if (!name || name.length > 150) throw new ValidationError('Choose a clan name of 1–150 characters');
 
-    /**
-     * The request belongs to a clan. Without one it would land against the
-     * programme again and reappear on every clan the mentor runs in it.
-     */
-    const sourceClanId = input.sourceClanId || null;
-    if (!sourceClanId) throw new ValidationError('Choose which clan this standing clan continues');
-
     const eligible = await this.eligibleClans(actor);
+
+    /**
+     * The request belongs to a clan — without one it lands against the
+     * programme and reappears on every clan the mentor runs in it.
+     *
+     * But refusing outright when it is absent is wrong twice over. A mentor who
+     * runs ONE eligible clan has nothing to choose, and the client and the API
+     * deploy separately, so a frontend that predates this field would be told
+     * to pick something its UI never offered. Infer when there is only one
+     * answer; ask only when there is genuinely more than one.
+     */
+    const candidates = input.programId
+      ? eligible.filter(c => c.program.id === input.programId)
+      : eligible;
+    const sourceClanId = input.sourceClanId
+      || (candidates.length === 1 ? candidates[0].clanId : null);
+
+    if (!sourceClanId) {
+      if (!candidates.length) {
+        throw new ForbiddenError('You can request a standing clan for a clan you mentor, once its program has been formally closed');
+      }
+      throw new ValidationError(
+        `Choose which clan this standing clan continues: ${candidates.map(c => c.clanName).join(', ')}`,
+      );
+    }
+
     const match = eligible.find(c => c.clanId === sourceClanId);
     if (!match) {
       throw new ForbiddenError('You can request a standing clan for a clan you mentor, once its program has been formally closed');
@@ -243,7 +264,11 @@ class StandingClanService {
 
     // The cohort clans these people came from, in this clan's programme.
     const priorMemberships = await models.ClanMembership.findAll({
-      where: { userId: { [Op.in]: menteeIds }, role: 'mentee' },
+      // HISTORICAL, deliberately: a mentee who left a cohort has a 'removed'
+      // row there, and that row is the record. This read already included them
+      // by having no status filter at all; saying so stops the next person
+      // "tidying" it to VISIBLE_MEMBERSHIP_STATUSES and emptying the panel.
+      where: { userId: { [Op.in]: menteeIds }, role: 'mentee', status: { [Op.in]: HISTORICAL_MEMBERSHIP_STATUSES } },
       attributes: ['userId', 'clanId', 'status'],
       include: [{
         model: models.Clan, as: 'clan', required: true,
@@ -254,41 +279,11 @@ class StandingClanService {
     if (!priorMemberships.length) return menteeIds.map(id => ({ menteeId: id, priorClans: [] }));
 
     const priorClanIds = [...new Set(priorMemberships.map(m => m.clanId))];
-    const [tasks, blockers, certificates] = await Promise.all([
-      models.AssignedTask.findAll({
-        where: { clanId: { [Op.in]: priorClanIds }, menteeId: { [Op.in]: menteeIds } },
-        attributes: ['menteeId', 'clanId', 'status'], raw: true,
-      }),
-      models.Blocker.findAll({
-        where: { clanId: { [Op.in]: priorClanIds }, menteeId: { [Op.in]: menteeIds }, status: { [Op.ne]: 'resolved' } },
-        attributes: ['menteeId', 'clanId'], raw: true,
-      }),
-      models.CertificateInstance.findAll({
-        where: { menteeId: { [Op.in]: menteeIds } },
-        attributes: ['menteeId', 'tier', 'certificateNumber', 'createdAt'], raw: true,
-      }),
-    ]);
-
+    // Shared with the cross-clan mentee record so both count the same way —
+    // above all "unfinished" meaning not completed AND not cancelled.
+    const { taskTally, openBlockers, latestCertByMentee: certByMentee } =
+      await menteeRecordService.tallyByMenteeClan(menteeIds, priorClanIds);
     const key = (menteeId, cId) => `${menteeId}:${cId}`;
-    const taskTally = new Map();
-    for (const t of tasks) {
-      const k = key(t.menteeId, t.clanId);
-      const row = taskTally.get(k) || { assigned: 0, completed: 0, unfinished: 0 };
-      row.assigned += 1;
-      if (t.status === 'completed') row.completed += 1;
-      else if (t.status !== 'cancelled') row.unfinished += 1;
-      taskTally.set(k, row);
-    }
-    const openBlockers = new Map();
-    for (const b of blockers) {
-      const k = key(b.menteeId, b.clanId);
-      openBlockers.set(k, (openBlockers.get(k) || 0) + 1);
-    }
-    const certByMentee = new Map();
-    for (const c of certificates) {
-      const existing = certByMentee.get(c.menteeId);
-      if (!existing || new Date(c.createdAt) > new Date(existing.createdAt)) certByMentee.set(c.menteeId, c);
-    }
 
     const byMentee = new Map(menteeIds.map(id => [id, []]));
     for (const m of priorMemberships) {

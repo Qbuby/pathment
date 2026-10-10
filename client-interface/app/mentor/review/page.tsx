@@ -1,4 +1,5 @@
 'use client';
+import type { OpenWorkElsewhere } from '@/lib/types/mentee-record';
 import { AttendanceHistoryCalendar } from '@/components/mentor/AttendanceHistoryCalendar';
 
 import { ReviewHistoryCalendar } from '@/components/mentor/ReviewHistoryCalendar';
@@ -127,6 +128,8 @@ export default function CohortReview() {
   const [profile, setProfile] = useState<any>(null); // eslint-disable-line @typescript-eslint/no-explicit-any -- full mentee profile (aiSummary/signals)
   // Full cohort-review attendance history for the current mentee (newest first).
   const [attHistory, setAttHistory] = useState<{ sessionId: string; date: string | null; status: Attendance; title: string | null }[]>([]);
+  /** Open work in this mentee's OTHER clans. Empty is the common case. */
+  const [elsewhere, setElsewhere] = useState<OpenWorkElsewhere[]>([]);
   const [attOpen, setAttOpen] = useState(false);
   // The dated, saved cohort-review session (today by default, or ?session=<id>).
   // attendance / seen / deferred are derived from its entries — nothing ephemeral.
@@ -383,7 +386,7 @@ export default function CohortReview() {
   // the current mentee; reset state.
   useEffect(() => {
     if (!mentee) return;
-    setFocus(0); setNote(''); setNoteSent(false); setBlockers([]); setTasks([]); setProfile(null); setAttHistory([]);
+    setFocus(0); setNote(''); setNoteSent(false); setBlockers([]); setTasks([]); setProfile(null); setAttHistory([]); setElsewhere([]);
     frictionApi.listBlockers(mentee.id, 'open').then((r: any) => setBlockers(r?.data?.blockers ?? [])).catch(() => {}); // eslint-disable-line @typescript-eslint/no-explicit-any
     mentorApi.getMenteeProfile(mentee.id).then((r: any) => setProfile(r?.data?.profile ?? r?.data ?? null)).catch(() => setProfile(null)); // eslint-disable-line @typescript-eslint/no-explicit-any
     mentorApi.getMenteeAttendanceHistory(mentee.id).then((r) => setAttHistory((r?.data?.history ?? []) as typeof attHistory)).catch(() => setAttHistory([]));
@@ -394,7 +397,13 @@ export default function CohortReview() {
       .then((r: any) => setTasks(r?.data?.tasks ?? [])) // eslint-disable-line @typescript-eslint/no-explicit-any
       .catch(() => setTasks([]))
       .finally(() => setTasksLoading(false));
-  }, [mentee?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    // What they are already mid-way through in their OTHER clans. The one piece
+    // of cross-clan context that changes the next decision on this screen —
+    // assigning over work they are already doing elsewhere is the mistake.
+    mentorApi.getOpenWorkElsewhere(mentee.id, effectiveClanId || undefined)
+      .then((r) => setElsewhere(r.data?.tasks ?? []))
+      .catch(() => setElsewhere([]));
+  }, [mentee?.id, effectiveClanId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Landing on a mentee marks them "reviewed" (seen) — but only if still pending,
   // so a deferred mentee stays deferred and we never loop. Finished sessions stay put.
@@ -983,6 +992,38 @@ export default function CohortReview() {
                 ))}
               </div>
             </div>
+          )}
+
+          {/* Already mid-way through something in another clan.
+              Rendered only when there IS something, so the single-clan majority
+              sees no new chrome on a screen whose job is stepping through. */}
+          {elsewhere.length > 0 && (
+            <section className="rounded-2xl border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-900 dark:bg-amber-950/30">
+              <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
+                Also working on {elsewhere.length} thing{elsewhere.length === 1 ? '' : 's'} in another clan
+              </p>
+              <ul className="mt-1.5 space-y-1">
+                {elsewhere.slice(0, 4).map((t) => (
+                  <li key={t.id} className="flex flex-wrap items-center gap-1.5 text-[11px] text-amber-900/90 dark:text-amber-200/80">
+                    <span className="font-medium">{t.title}</span>
+                    <span className="capitalize opacity-75">· {t.status.replace(/_/g, ' ')}</span>
+                    <span className="opacity-75">· {t.clanName}</span>
+                    {t.assignedByViewer && <span className="opacity-75">· you assigned this</span>}
+                  </li>
+                ))}
+              </ul>
+              {elsewhere.length > 4 && (
+                <p className="mt-1 text-[11px] text-amber-900/70 dark:text-amber-200/60">
+                  and {elsewhere.length - 4} more
+                </p>
+              )}
+              <Link
+                href={`/mentor/mentees/${mentee.id}`}
+                className="mt-2 inline-block text-[11px] font-semibold text-amber-900 underline dark:text-amber-200"
+              >
+                See their full record
+              </Link>
+            </section>
           )}
 
           {/* State of this mentee - same read as the profile (AI summary + signals). */}

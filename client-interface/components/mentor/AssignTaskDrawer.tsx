@@ -78,7 +78,11 @@ export function AssignTaskDrawer({
   // Per-step, per-mentee customizations made at assign time, keyed by stepId.
   const [stepOverrides, setStepOverrides] = useState<Record<string, any>>({}); // eslint-disable-line @typescript-eslint/no-explicit-any
   const [customizeStep, setCustomizeStep] = useState<{ step: any; index: number } | null>(null); // eslint-disable-line @typescript-eslint/no-explicit-any
-  const [stepStatus, setStepStatus] = useState<{ index: number; stepId: string; title: string; status: string | null }[]>([]);
+  const [stepStatus, setStepStatus] = useState<{
+    index: number; stepId: string; title: string; status: string | null;
+    /** Advisory: the same step in ANOTHER clan. Never locks anything. */
+    otherClanStatus?: { status: string; clanId: string; clanName: string | null } | null;
+  }[]>([]);
   const [stepsLoading, setStepsLoading] = useState(false);
   const [activeCount, setActiveCount] = useState(0);
   const toggleStep = (i: number) => setSelectedSteps((p) => { const n = new Set(p); n.has(i) ? n.delete(i) : n.add(i); return n; });
@@ -752,7 +756,8 @@ export function AssignTaskDrawer({
                     // Per-mentee status when single; plain step list when bulk.
                     const rows = stepStatus.length
                       ? stepStatus
-                      : selectedRoadmap.steps.map((s, i) => ({ index: i, stepId: s.id, title: s.title, status: null as string | null }));
+                      // Bulk mode has no single mentee, so no cross-clan context either.
+                      : selectedRoadmap.steps.map((s, i) => ({ index: i, stepId: s.id, title: s.title, status: null as string | null, otherClanStatus: null as { status: string; clanId: string; clanName: string | null } | null }));
                     return (
                       <div>
                         <div className="flex items-center justify-between mb-1.5">
@@ -782,6 +787,23 @@ export function AssignTaskDrawer({
                                 {!!stepOverrides[s.stepId] && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 shrink-0">customized</span>}
                                 {isActive && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-700 shrink-0">assigned</span>}
                                 {isDone && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 shrink-0">done</span>}
+                                {/* ADVISORY. Only shown when this clan has no
+                                    status of its own, dashed so it reads as
+                                    context rather than state. It deliberately
+                                    does not reach `checked` or `disabled` —
+                                    you can still assign it. */}
+                                {!s.status && s.otherClanStatus && (
+                                  <span
+                                    title={`Already ${s.otherClanStatus.status.replace(/_/g, ' ')} in ${s.otherClanStatus.clanName ?? 'another clan'} — you can still assign it here`}
+                                    className={`text-[10px] px-1.5 py-0.5 rounded-full border border-dashed shrink-0 ${
+                                      s.otherClanStatus.status === 'completed'
+                                        ? 'border-emerald-300 text-emerald-700'
+                                        : 'border-amber-300 text-amber-700'
+                                    }`}
+                                  >
+                                    {s.otherClanStatus.status === 'completed' ? 'done' : 'in progress'} in {s.otherClanStatus.clanName ?? 'another clan'}
+                                  </span>
+                                )}
                                 <button type="button" title="View / customize step"
                                   onClick={(e) => { e.preventDefault(); e.stopPropagation(); setCustomizeStep({ step: selectedRoadmap.steps[s.index], index: s.index }); }}
                                   className="p-1 rounded-md text-slate-400 hover:text-brand-600 hover:bg-slate-100 shrink-0"><Eye className="w-3.5 h-3.5" /></button>
@@ -789,7 +811,7 @@ export function AssignTaskDrawer({
                             );
                           })}
                         </div>
-                        <p className="text-xs text-slate-400 mt-1">Tick the steps to hand over now — give several at once for the week. Already-assigned steps are locked.</p>
+                        <p className="text-xs text-slate-400 mt-1">Tick the steps to hand over now — give several at once for the week. Already-assigned steps are locked. Steps marked from another clan are advisory — you can still assign them.</p>
                       </div>
                     );
                   })()}

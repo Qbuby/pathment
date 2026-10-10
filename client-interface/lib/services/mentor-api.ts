@@ -1,3 +1,4 @@
+import type { MenteeRecord, OpenWorkElsewhere } from '@/lib/types/mentee-record';
 import {apiClient} from './api-client';
 import { apiConfig } from '@/lib/config/api';
 
@@ -67,6 +68,24 @@ export const mentorApi = {
 
   // Rich profile bundle for one mentee.
   getMenteeProfile: (menteeId: string) => apiClient.get(`/mentor/mentee/${menteeId}`),
+
+  /**
+   * The mentee's record across EVERY clan in the org, not just the active one.
+   *
+   * `X-Active-Clan` rides along on every request and is deliberately ignored by
+   * this endpoint — the whole point is to escape the clan filter. `compact`
+   * drops the task lists for the clan-review card.
+   */
+  getMenteeRecord: (menteeId: string, compact = false) =>
+    apiClient.get<{ data: { record: MenteeRecord } }>(
+      `/mentor/mentee/${menteeId}/record${compact ? '?view=compact' : ''}`,
+    ),
+
+  /** Open work in the mentee's other clans — so you do not assign over it. */
+  getOpenWorkElsewhere: (menteeId: string, excludeClanId?: string | null) =>
+    apiClient.get<{ data: { tasks: OpenWorkElsewhere[]; count: number } }>(
+      `/mentor/mentee/${menteeId}/open-work-elsewhere${excludeClanId ? `?excludeClanId=${excludeClanId}` : ''}`,
+    ),
 
   // Working-style (personality) + insight logging.
   updatePersonality: (menteeId: string, dims: { consistency?: number; communication?: number; resilience?: number; independence?: number }) =>

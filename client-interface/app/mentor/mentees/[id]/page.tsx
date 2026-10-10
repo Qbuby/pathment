@@ -62,6 +62,7 @@ import { CollaboratorsCard } from '@/components/mentor/CollaboratorsCard';
 import { TracksPanel } from '@/components/mentor/TracksPanel';
 import { Drawer } from '@/components/shared/Drawer';
 import { Avatar } from '@/components/shared/Avatar';
+import { MenteeRecordPanel } from '@/components/mentor/MenteeRecordPanel';
 import { MenteeScheduleView } from '@/components/shared/MenteeScheduleView';
 
 // ── Small presentational helpers (current indigo/slate design system) ────────
@@ -662,7 +663,7 @@ export default function MenteeDetail() {
         aria-label="Mentee profile sections"
         className="flex gap-1 overflow-x-auto rounded-2xl border border-border bg-card p-1.5"
       >
-        {['overview', 'work', 'mentoring', 'activity', 'schedule'].map(
+        {['overview', 'work', 'history', 'mentoring', 'activity', 'schedule'].map(
           (tab) => (
             <button
               key={tab}
@@ -733,6 +734,10 @@ export default function MenteeDetail() {
       )}
 
       {/* ── Weekly schedule (read-only; mentor fills it in Schedules) ─── */}
+      {/* Their record across every clan in the org — not just this one. Lazy,
+          so the tab costs nothing until it is opened. */}
+      {section === 'history' && <MenteeRecordPanel menteeId={menteeId} />}
+
       {section === 'schedule' && <MenteeScheduleView menteeId={menteeId} />}
 
       {section === 'work' && (

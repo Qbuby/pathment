@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useClan, ALL_CLANS, isHistoricalCohortClan } from '@/lib/context/ClanContext';
-import { Check, ChevronDown, ChevronUp, Crown, HeartHandshake, Inbox, Link2, Loader2, Search, Shield, SlidersHorizontal, Trash2, UserPlus, Users2, X, Copy, RefreshCw } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, Crown, HeartHandshake, Inbox, Link2, Loader2, Search, Shield, SlidersHorizontal, Trash2, UserPlus, Users2, X, Copy, RefreshCw, History } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { apiClient } from '@/lib/services/api-client';
@@ -178,6 +178,32 @@ function ClanTeamCard({ clanId, myRole }: { clanId: string; myRole: string }) {
   };
 
   const members = clan?.memberships || [];
+
+  /**
+   * What each mentee did BEFORE this standing clan.
+   *
+   * Their work is not moved here — it stays in the clan where it happened, so
+   * the completed programme's report and their certificate still account for
+   * it. This is the read-only view of it, so a mentor continuing with somebody
+   * can see what they already did without any of it counting as activity here.
+   */
+  const [priorByMentee, setPriorByMentee] = useState<Record<string, {
+    certificate: { tier: string } | null;
+    priorClans: { clanName: string | null; tasksAssigned: number; tasksCompleted: number; tasksUnfinished: number; openBlockers: number }[];
+  }>>({});
+
+  useEffect(() => {
+    if (!clan || clan.kind !== 'standing') { setPriorByMentee({}); return; }
+    let cancelled = false;
+    completionApi.priorRecord(clan.id)
+      .then((rows) => {
+        if (cancelled) return;
+        setPriorByMentee(Object.fromEntries(rows.map((r) => [r.menteeId, r])));
+      })
+      // Context is a bonus on this screen; never let it blank the roster.
+      .catch(() => { if (!cancelled) setPriorByMentee({}); });
+    return () => { cancelled = true; };
+  }, [clan]);
   // People holding a mentor role here AND still learning here as a mentee. They
   // appear in two sections on purpose.
   const dualRole = new Set(
@@ -231,6 +257,9 @@ function ClanTeamCard({ clanId, myRole }: { clanId: string; myRole: string }) {
             )}
           </p>
           <p className="text-xs text-slate-500 truncate">{m.user.email}</p>
+          {m.role === 'mentee' && priorByMentee[m.user.id] && (
+            <PriorRecordLine record={priorByMentee[m.user.id]} />
+          )}
         </div>
       </>
     );
@@ -1381,6 +1410,44 @@ function AddMenteesDrawer({ clanId, clanName, standing = false, onClose, onChang
         </div>
       </div>
     </Drawer>
+  );
+}
+
+/**
+ * One line of "what they did before this clan".
+ *
+ * Deliberately terse and deliberately separate from everything else on the row:
+ * this is history from the completed programme, and none of it counts toward
+ * what this clan measures. Saying where it came from is what keeps that clear.
+ */
+function PriorRecordLine({ record }: {
+  record: {
+    certificate: { tier: string } | null;
+    priorClans: { clanName: string | null; tasksAssigned: number; tasksCompleted: number; tasksUnfinished: number; openBlockers: number }[];
+  };
+}) {
+  const prior = record.priorClans[0];
+  if (!prior && !record.certificate) return null;
+
+  const bits: string[] = [];
+  if (prior) {
+    bits.push(`${prior.tasksCompleted}/${prior.tasksAssigned} done`);
+    if (prior.tasksUnfinished > 0) bits.push(`${prior.tasksUnfinished} unfinished`);
+    if (prior.openBlockers > 0) bits.push(`${prior.openBlockers} open blocker${prior.openBlockers === 1 ? '' : 's'}`);
+  }
+
+  return (
+    <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500">
+      <History className="h-3 w-3 shrink-0 text-slate-400" aria-hidden />
+      <span className="font-medium">Before this clan</span>
+      {prior?.clanName && <span>· {prior.clanName}</span>}
+      {bits.length > 0 && <span>· {bits.join(' · ')}</span>}
+      {record.certificate && (
+        <span className="rounded-full bg-amber-100 px-1.5 py-0.5 font-medium text-amber-700 capitalize dark:bg-amber-500/15 dark:text-amber-400">
+          {record.certificate.tier}
+        </span>
+      )}
+    </p>
   );
 }
 

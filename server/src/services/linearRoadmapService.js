@@ -958,12 +958,53 @@ class LinearRoadmapService {
       if (!cur || (RANK[a.status] || 0) > (RANK[cur] || 0)) statusByTitle.set(title, a.status);
     });
 
+    /**
+     * ADVISORY ONLY — what this mentee did with the same step in ANOTHER clan.
+     *
+     * The scoping above stays exactly as it is: a completed cohort's
+     * assignments must not mark a standing clan's steps as already given. But a
+     * mentor choosing the next task should not have to guess whether they
+     * already covered this somewhere else. So this is a separate read that
+     * labels the step and never locks it — `status`, `activeCount` and
+     * `assignedCount` keep their exact meanings, so the drawer's
+     * `disabled={isActive}` is provably unaffected.
+     */
+    const otherByTitle = new Map();
+    if (clanId && lineageTaskIds.length) {
+      const elsewhere = await models.AssignedTask.findAll({
+        where: {
+          roadmapTaskId: { [Op.in]: lineageTaskIds },
+          menteeId,
+          status: { [Op.ne]: 'cancelled' },
+          // `<>` also excludes NULL, which is correct: legacy null-clan rows
+          // belong to the in-clan read above, not to "somewhere else".
+          clanId: { [Op.ne]: clanId },
+        },
+        attributes: ['roadmapTaskId', 'status', 'clanId'],
+        include: [{ model: models.Clan, as: 'clan', attributes: ['id', 'name'], required: false }],
+      });
+      elsewhere.forEach((a) => {
+        const title = titleByTaskId.get(a.roadmapTaskId);
+        if (!title) return;
+        const cur = otherByTitle.get(title);
+        // Most-advanced wins, same RANK as the in-clan read.
+        if (!cur || (RANK[a.status] || 0) > (RANK[cur.status] || 0)) {
+          otherByTitle.set(title, { status: a.status, clanId: a.clanId, clanName: a.clan?.name || null });
+        }
+      });
+    }
+
     const ACTIVE = ['assigned', 'not_started', 'in_progress', 'revision_needed', 'submitted'];
-    const steps2 = steps.map((s, i) => ({ index: i, stepId: s.id, title: s.title, type: s.type, status: statusByTitle.get(norm(s.title)) || null }));
+    const steps2 = steps.map((s, i) => ({
+      index: i, stepId: s.id, title: s.title, type: s.type,
+      status: statusByTitle.get(norm(s.title)) || null,
+      otherClanStatus: otherByTitle.get(norm(s.title)) || null,
+    }));
     return {
       steps: steps2,
       activeCount: steps2.filter((s) => s.status && ACTIVE.includes(s.status)).length,
       assignedCount: steps2.filter((s) => s.status).length,
+      otherClanCount: steps2.filter((s) => s.otherClanStatus).length,
     };
   }
 

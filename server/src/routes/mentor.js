@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const cohortController = require('../controllers/cohortController');
+const menteeRecordController = require('../controllers/menteeRecordController');
 const cohortReviewController = require('../controllers/cohortReviewController');
 const reviewMeetingController = require('../controllers/reviewMeetingController');
 const reviewScheduleController = require('../controllers/reviewScheduleController');
@@ -60,6 +61,13 @@ router.get('/tasks/:id/progress', mentorOnly, taskProgressController.forMentor);
 
 // Rich profile bundle for a single mentee.
 router.get('/mentee/:id', authenticate, authorize(['mentor', 'admin']), cohortController.getMenteeProfile);
+
+/**
+ * The mentee's record across EVERY clan in the org, and their open work
+ * elsewhere. Deliberately not clan-scoped — see menteeRecordController.
+ */
+router.get('/mentee/:id/record', authenticate, authorize(['mentor', 'admin']), menteeRecordController.getRecord);
+router.get('/mentee/:id/open-work-elsewhere', authenticate, authorize(['mentor', 'admin']), menteeRecordController.getOpenWorkElsewhere);
 
 // Working-style (personality) + insight logging for a mentee.
 router.patch('/mentee/:id/personality', mentorOnly, cohortController.updatePersonality);

@@ -160,10 +160,36 @@ describe('standing clan requests are per clan', () => {
       }, other)).rejects.toThrow(/clan you mentor/i);
     });
 
-    it('refuses with no clan at all, rather than falling back to the programme', async () => {
+    /**
+     * Two clans in the programme, so there is a real choice to make — and the
+     * error names them rather than just refusing.
+     */
+    it('asks which clan when the mentor runs more than one', async () => {
       await expect(standingClanService.request({
         programId: program.id, name: 'Programme-wide', description: '',
-      }, mentor)).rejects.toThrow(/which clan/i);
+      }, mentor)).rejects.toThrow(/which clan this standing clan continues/i);
+    });
+
+    /**
+     * ...but a mentor with ONE eligible clan has nothing to choose. Refusing
+     * them was also what broke a frontend that predated the field: the client
+     * and the API deploy separately, so the old UI was told to pick something
+     * it never offered.
+     */
+    it('infers the clan when the mentor runs only one', async () => {
+      const soloMentor = await createMentor({ email: 'solo-mentor@test.com' });
+      await clanService.addMember(coreTeam.id, { userId: soloMentor.id, role: 'co_mentor' });
+
+      const request = await standingClanService.request({
+        programId: program.id, name: 'Core Team · Standing', description: '',
+      }, soloMentor);
+      expect(request.sourceClanId).toBe(coreTeam.id);
+    });
+
+    it('still refuses somebody who mentors no eligible clan', async () => {
+      await expect(standingClanService.request({
+        programId: program.id, name: 'Not mine', description: '',
+      }, other)).rejects.toThrow(/clan you mentor/i);
     });
 
     it('refuses when the clan is not in the programme given', async () => {
