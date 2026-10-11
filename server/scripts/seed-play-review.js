@@ -292,6 +292,81 @@ async function seed() {
           }, transaction);
         }
       }
+
+      const learnerCompletion = [4, 3, 1, 2];
+      const learnerPoints = [310, 225, 85, 150];
+      for (const [learnerIndex, learner] of learners.entries()) {
+        const menteeIndex = learnerIndex + 1;
+        const clan = menteeIndex < 3 ? learnerClan : mentorClan;
+        const assignedMentor = clan.id === learnerClan.id ? mentor : owner;
+        const enrollment = enrollments.get(learner.id);
+        const completedCount = learnerCompletion[learnerIndex];
+        await findOrCreate(models.RoadmapProgress, { roadmapId: roadmap.id, menteeId: learner.id, clanId: clan.id }, {
+          enrollmentId: enrollment.id, currentStep: completedCount, completed: false, startedAt: daysAgo(27),
+        }, transaction);
+        let reviewTask = null;
+        for (const [stepIndex, step] of steps.entries()) {
+          const completed = stepIndex < completedCount;
+          const awaitingReview = learnerIndex === 1 && stepIndex === completedCount;
+          const status = completed ? 'completed' : awaitingReview ? 'submitted' :
+            stepIndex === completedCount ? 'in_progress' : 'assigned';
+          const task = await findOrCreate(models.AssignedTask, {
+            menteeId: learner.id, roadmapTaskId: step.id, clanId: clan.id,
+          }, {
+            mentorId: assignedMentor.id, enrollmentId: enrollment.id, status,
+            assignedAt: daysAgo(27 - stepIndex * 4), dueDate: daysAhead(stepIndex * 5 - 6),
+            startedAt: stepIndex <= completedCount ? daysAgo(Math.max(1, 23 - stepIndex * 4)) : null,
+            submittedAt: completed || awaitingReview ? daysAgo(Math.max(1, 20 - stepIndex * 4)) : null,
+            completedAt: completed ? daysAgo(Math.max(1, 19 - stepIndex * 4)) : null,
+            currentSubmissionVersion: completed || awaitingReview ? 1 : 0,
+            timeSpentHours: completed || awaitingReview ? 4 + stepIndex : 1,
+            finalRating: completed ? 4.2 + learnerIndex * 0.1 : null,
+            pointsAwarded: completed ? step.pointsBase : 0, pointsBase: step.pointsBase,
+            isLate: learnerIndex === 2 && status === 'in_progress',
+          }, transaction);
+          if (awaitingReview) reviewTask = task;
+          if (completed || awaitingReview) {
+            const submission = await findOrCreate(models.TaskSubmission, { assignedTaskId: task.id, version: 1 }, {
+              submissionText: awaitingReview
+                ? 'Built the offline task flow and attached test notes for mentor review.'
+                : 'Completed the task with evidence, a short reflection, and the requested deliverable.',
+              submissionUrls: ['https://github.com/pathment/pathment'],
+              status: completed ? 'approved' : 'pending', submittedAt: task.submittedAt,
+              reviewedAt: completed ? task.completedAt : null,
+            }, transaction);
+            if (completed) {
+              await findOrCreate(models.TaskFeedback, {
+                assignedTaskId: task.id, submissionId: submission.id, mentorId: assignedMentor.id,
+              }, {
+                feedbackText: 'Clear work, good evidence, and a thoughtful reflection. Carry this standard into the next milestone.',
+                rating: 4.2 + learnerIndex * 0.1, isApproved: true, decision: 'approved_notes',
+                checkedCriteria: step.acceptanceCriteria, criteriaMet: { all: true }, feedbackType: 'general',
+              }, transaction);
+            }
+          }
+        }
+        await models.MenteeProfile.update({
+          totalTasksCompleted: completedCount, totalPoints: learnerPoints[learnerIndex],
+          currentStreakDays: [8, 5, 1, 3][learnerIndex], longestStreakDays: [14, 9, 4, 7][learnerIndex],
+          lastActivityDate: dateKey(daysAgo([0, 1, 6, 2][learnerIndex])),
+          avgTaskRating: [4.7, 4.5, 4.1, 4.3][learnerIndex],
+        }, { where: { userId: learner.id }, transaction });
+        if (reviewTask) {
+          await findOrCreate(models.Notification, {
+            userId: owner.id, title: `${learner.firstName} submitted work`, relatedEntityId: reviewTask.id,
+          }, {
+            type: 'task', audience: 'mentor', message: 'An offline task-flow submission is ready for review.',
+            status: 'unread', actionUrl: '/mentor/tasks/review', actionLabel: 'Review now',
+            relatedEntityType: MARKER, clanId: clan.id, sentAt: daysAgo(1), emailSent: false,
+          }, transaction);
+        }
+        await findOrCreate(models.LeaderboardEntry, {
+          userId: learner.id, programId: program.id, periodType: 'all_time', periodStart: program.startDate,
+        }, {
+          rank: [1, 3, 5, 4][learnerIndex], points: learnerPoints[learnerIndex],
+          periodEnd: program.endDate, isVisible: true,
+        }, transaction);
+      }
       await findOrCreate(models.Blocker, { menteeId: owner.id, assignedTaskId: ownerTasks[3].id }, {
         clanId: learnerClan.id, title: 'Need to confirm Android background retry behavior on a low-connectivity device.',
         category: 'technical', severity: 'medium', status: 'open', createdBy: owner.id, openedAt: daysAgo(1),
@@ -333,8 +408,8 @@ async function seed() {
         }, transaction);
       }
       await findOrCreate(models.LeaderboardEntry, {
-        userId: owner.id, programId: program.id, periodType: 'all_time', periodStart: dateKey(daysAgo(28)),
-      }, { rank: 2, points: 240, periodEnd: dateKey(daysAhead(28)), isVisible: true }, transaction);
+        userId: owner.id, programId: program.id, periodType: 'all_time', periodStart: program.startDate,
+      }, { rank: 2, points: 240, periodEnd: program.endDate, isVisible: true }, transaction);
       await findOrCreate(models.Gift, { name: 'Mentor office-hours pass' }, {
         description: 'Redeem points for a focused 30-minute mentoring session.', costXp: 200,
         stock: 8, active: true, createdBy: owner.id,
@@ -381,7 +456,8 @@ async function seed() {
       const summary = {
         fixture: MARKER, workspace: organization.slug, owner: owner.email,
         users: 6, programs: 1, cohorts: 1, clans: 2, roadmapSteps: steps.length,
-        ownerTasks: ownerTasks.length, organizationBadges: badges.length,
+        assignedTasks: steps.length * mentees.length, ownerTasks: ownerTasks.length,
+        organizationBadges: badges.length,
       };
       console.log(JSON.stringify(summary));
     });
