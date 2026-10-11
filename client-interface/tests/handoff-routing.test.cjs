@@ -56,6 +56,21 @@ test('workspace selection rejects reserved hosts, invalid storage, and invalid e
   assert.equal(f.window.location.destination, 'https://app.pathment.me/w/acme/login');
 });
 
+test('revoked workspace access clears the stale selection and returns to account routing', () => {
+  const window = browser('https://app.pathment.me/w/revoked/admin/dashboard');
+  const localStorage = storage();
+  localStorage.setItem('pathment-active-workspace', 'revoked');
+  const document = { cookie: 'pathment-workspace=revoked' };
+  const scope = load('lib/services/workspace-scope.ts', {}, { window, localStorage, document });
+
+  assert.equal(scope.recoverFromWorkspaceAccessDenied('FORBIDDEN'), false);
+  assert.equal(window.location.destination, undefined);
+  assert.equal(scope.recoverFromWorkspaceAccessDenied('WORKSPACE_ACCESS_DENIED'), true);
+  assert.equal(localStorage.getItem('pathment-active-workspace'), null);
+  assert.match(document.cookie, /Max-Age=0/);
+  assert.equal(window.location.destination, '/');
+});
+
 test('redirects stay inside the selected workspace', () => {
   const { handoff, scope } = fixture('https://app.pathment.me/w/acme/session-handoff');
   for (const value of ['//evil.test', '/\\evil.test', '/w/other//evil.test', '/session-handoff', '/login', '/\nevil']) {

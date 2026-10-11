@@ -68,7 +68,8 @@ describe('organization tenancy', () => {
       .set('Authorization', `Bearer ${outsiderToken}`)
       .set('X-Pathment-Workspace', secondary.slug);
     expect(response.status).toBe(403);
-    expect(response.body.message).toMatch(/do not have access/i);
+    expect(response.body.code).toBe('WORKSPACE_ACCESS_DENIED');
+    expect(response.body.message).toMatch(/no longer have access/i);
   });
 
   it('automatically scopes tenant-owned model reads to the request workspace', async () => {

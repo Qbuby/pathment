@@ -3,6 +3,7 @@ import { normalizeAxiosError } from '../utils/api-error';
 import { tokenStore } from './token-store';
 import { refreshAccessToken, handleSessionExpired, SessionExpiredError } from './auth-session';
 import { portalScopeHeaders } from './portal-scope';
+import { recoverFromWorkspaceAccessDenied } from './workspace-scope';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 
@@ -46,6 +47,10 @@ axiosInstance.interceptors.response.use(
       '/auth/resend-verification',
       '/auth/validate-invite',
     ].some((path) => requestUrl.includes(path));
+
+    if (recoverFromWorkspaceAccessDenied(error.response?.data?.code)) {
+      return Promise.reject(error);
+    }
 
     // 401 → renew once and replay, sharing the app-wide single-flight refresh
     // with api-client. Never sniff the message text to decide whether to try:

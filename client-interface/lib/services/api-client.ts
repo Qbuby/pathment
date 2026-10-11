@@ -4,7 +4,7 @@ import { normalizeAxiosError } from '../utils/api-error';
 import { tokenStore } from './token-store';
 import { refreshAccessToken, handleSessionExpired, SessionExpiredError } from './auth-session';
 import { portalScopeHeaders } from './portal-scope';
-import { workspaceScopeHeaders } from './workspace-scope';
+import { recoverFromWorkspaceAccessDenied, workspaceScopeHeaders } from './workspace-scope';
 
 class ApiClient {
   private client: AxiosInstance;
@@ -71,6 +71,10 @@ class ApiClient {
         const requestUrl = String(originalRequest?.url || '').toLowerCase();
         const hasAccessToken = Boolean(this.getToken());
         const isPublicAuthRequest = this.publicAuthPaths.some((path) => requestUrl.includes(path));
+
+        if (recoverFromWorkspaceAccessDenied(error.response?.data?.code)) {
+          return Promise.reject(error);
+        }
 
         // 401 → renew the access token once and replay the request. The refresh
         // itself is single-flight and shared app-wide (see auth-session), so a

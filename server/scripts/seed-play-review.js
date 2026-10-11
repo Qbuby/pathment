@@ -16,6 +16,7 @@
 require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
+const { Op } = require('sequelize');
 const { sequelize, models } = require('../src/db');
 const { runWithRequestContext } = require('../src/utils/auditContext');
 
@@ -130,6 +131,20 @@ async function seed() {
     });
     if (!ownerMembership || ownerMembership.role !== 'owner') {
       throw new Error(`${OWNER_EMAIL} must be the active owner of ${WORKSPACE_SLUG}`);
+    }
+    const otherActiveMemberships = await models.OrganizationMembership.count({
+      where: {
+        userId: owner.id,
+        status: 'active',
+        organizationId: { [Op.ne]: organization.id },
+      },
+      skipOrganizationScope: true,
+      transaction,
+    });
+    if (otherActiveMemberships > 0) {
+      throw new Error(
+        `${OWNER_EMAIL} must be dedicated to ${WORKSPACE_SLUG}; revoke other active workspace memberships first`
+      );
     }
 
     transaction.reviewOrganizationId = organization.id;

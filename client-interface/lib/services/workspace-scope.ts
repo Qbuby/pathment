@@ -5,6 +5,7 @@ export function validWorkspaceSlug(value: unknown): value is string {
 
 const KEY = 'pathment-active-workspace';
 const PATH = /^\/w\/([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?=\/|$)/i;
+let recoveringAccess = false;
 
 export function workspaceSlugFromPathname(pathname: string): string | null {
   const slug = pathname.match(PATH)?.[1]?.toLowerCase();
@@ -72,6 +73,25 @@ export function workspaceLandingPath(user: WorkspaceUser): string {
 export function workspaceScopeHeaders(): Record<string, string> {
   const slug = activeWorkspaceSlug();
   return slug ? { 'X-Pathment-Workspace': slug } : {};
+}
+
+/**
+ * A workspace membership can be suspended or removed while a tab is open.
+ * Keep the global account session, discard only the stale workspace choice,
+ * and let `/` resolve the remaining memberships. This prevents an old URL or
+ * cookie from repeatedly reopening a workspace the account can no longer use.
+ */
+export function recoverFromWorkspaceAccessDenied(code: unknown): boolean {
+  if (code !== 'WORKSPACE_ACCESS_DENIED' || typeof window === 'undefined') return false;
+  try { localStorage.removeItem(KEY); } catch { /* URL redirect is sufficient */ }
+  if (typeof document !== 'undefined') {
+    document.cookie = 'pathment-workspace=; Max-Age=0; Path=/; SameSite=Lax';
+  }
+  if (!recoveringAccess) {
+    recoveringAccess = true;
+    window.location.replace('/');
+  }
+  return true;
 }
 
 export function switchWorkspace(slug: string): void {

@@ -2,6 +2,7 @@ const { Op } = require('sequelize');
 const { models, sequelize } = require('../db');
 const { getRequestContext } = require('../utils/auditContext');
 const { NotFoundError, ForbiddenError, ValidationError, ConflictError } = require('../utils/errors/errorTypes');
+const AppError = require('../utils/errors/AppError');
 const { orgLogoThumb } = require('../utils/imageUrl');
 const authz = require('./authzService');
 const { PERMISSIONS } = require('../config/permissions');
@@ -163,7 +164,13 @@ class OrganizationService {
     const membership = await models.OrganizationMembership.findOne({
       where: { userId, organizationId, status: 'active' },
     });
-    if (!membership) throw new ForbiddenError('You do not have access to this organization');
+    if (!membership) {
+      throw new AppError(
+        'You no longer have access to this workspace. Choose one of your available workspaces.',
+        403,
+        'WORKSPACE_ACCESS_DENIED'
+      );
+    }
     return membership;
   }
 
