@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useAuth } from './AuthContext';
 import { organizationsApi, type OrganizationOverview, type OrganizationSummary } from '@/lib/services/organizations-api';
-import { switchWorkspace } from '@/lib/services/workspace-scope';
+import { activeWorkspaceSlug, switchWorkspace } from '@/lib/services/workspace-scope';
 
 interface OrganizationContextValue {
   current: OrganizationSummary | null;
@@ -24,7 +24,7 @@ export function OrganizationProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
 
   const refresh = useCallback(async () => {
-    if (!isAuthenticated) { setOverview(null); return; }
+    if (!isAuthenticated || !activeWorkspaceSlug()) { setOverview(null); return; }
     setLoading(true);
     try { setOverview(await organizationsApi.current()); }
     catch { setOverview(null); }

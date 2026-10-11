@@ -1235,7 +1235,7 @@ class AuthService {
     const membership = organizationId && await models.OrganizationMembership.findOne({
       where: { organizationId, userId, status: 'active' },
     });
-    if (organizationId && !membership) {
+    if (!organizationId || !membership) {
       // Global identity can accept an invitation without already being a member.
       // Do not join profiles, roles or other workspace records into this response.
       const account = await models.User.findByPk(userId, {
