@@ -48,6 +48,13 @@ test('workspace creation provisions an isolated owner and plan through the real 
       const ownerIdentity = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${token}`).set('X-Pathment-Workspace', workspace.slug);
       assert.equal(ownerIdentity.status, 200);
       assert.ok(ownerIdentity.body.data.user.capabilities.includes('admin'), 'workspace ownership grants admin despite the original account role');
+      const neutralIdentity = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${token}`);
+      assert.equal(neutralIdentity.status, 200);
+      assert.deepEqual(neutralIdentity.body.data.user.capabilities, [], 'account bootstrap must not inherit the default workspace');
+      assert.equal(neutralIdentity.body.data.user.workspaceAccess, false);
+      const neutralWorkspaces = await request(app).get('/api/organizations/me').set('Authorization', `Bearer ${token}`);
+      assert.equal(neutralWorkspaces.status, 200);
+      assert.ok(neutralWorkspaces.body.data.organizations.some(row => row.slug === workspace.slug));
       const rejected = await request(app).get('/api/organizations/current').set('Authorization', `Bearer ${otherToken}`).set('X-Pathment-Workspace', workspace.slug);
       assert.equal(rejected.status, 403);
       const account = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${otherToken}`).set('X-Pathment-Workspace', workspace.slug);

@@ -5,6 +5,7 @@ export function validWorkspaceSlug(value: unknown): value is string {
 
 const KEY = 'pathment-active-workspace';
 const PATH = /^\/w\/([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?=\/|$)/i;
+const ACCOUNT_PATHS = new Set(['/', '/login', '/register', '/reset-password', '/verify-email', '/workspaces']);
 let recoveringAccess = false;
 
 export function workspaceSlugFromPathname(pathname: string): string | null {
@@ -31,6 +32,17 @@ export function activeWorkspaceSlug(): string | null {
   if (window.location.pathname.startsWith('/w/')) return workspaceSlugFromPathname(window.location.pathname);
   const legacy = legacyWorkspaceFromHostname(window.location.hostname.toLowerCase());
   if (legacy) return legacy;
+  // Account entry pages are deliberately tenant-neutral. A stale workspace
+  // cookie is useful as a *recent choice*, but it must never scope API calls
+  // made by the chooser/login bootstrap or it can bounce a removed member back
+  // into the revoked workspace forever.
+  if (ACCOUNT_PATHS.has(window.location.pathname)) return null;
+  return rememberedWorkspaceSlug();
+}
+
+/** Last workspace visited, for ranking the account chooser only. */
+export function rememberedWorkspaceSlug(): string | null {
+  if (typeof window === 'undefined') return null;
   // Match the workspace selected by the routing proxy. Old unscoped links can
   // otherwise resurrect a stale localStorage choice after an explicit visit.
   if (typeof document !== 'undefined') {
@@ -86,6 +98,7 @@ export function recoverFromWorkspaceAccessDenied(code: unknown): boolean {
   try { localStorage.removeItem(KEY); } catch { /* URL redirect is sufficient */ }
   if (typeof document !== 'undefined') {
     document.cookie = 'pathment-workspace=; Max-Age=0; Path=/; SameSite=Lax';
+    document.cookie = 'pathment-workspace=; Max-Age=0; Path=/; SameSite=Lax; Secure';
   }
   if (!recoveringAccess) {
     recoveringAccess = true;

@@ -46,7 +46,8 @@ test('workspace selection rejects reserved hosts, invalid storage, and invalid e
   f.localStorage.setItem('pathment-active-workspace', '../evil');
   assert.equal(f.scope.activeWorkspaceSlug(), null);
   f.localStorage.setItem('pathment-active-workspace', 'acme');
-  assert.equal(f.scope.activeWorkspaceSlug(), 'acme');
+  assert.equal(f.scope.activeWorkspaceSlug(), null, 'neutral login must not inherit a stale workspace');
+  assert.equal(f.scope.rememberedWorkspaceSlug(), 'acme');
   f.window.location.pathname = '/w/app/login';
   assert.equal(f.scope.activeWorkspaceSlug(), null);
   assert.throws(() => f.scope.switchWorkspace('../evil'));
@@ -100,6 +101,20 @@ test('proxy workspace cookie takes precedence over stale storage on short links'
   assert.equal(scope.activeWorkspaceSlug(), 'devweekends');
   window.location.pathname = '/w/explicit/login';
   assert.equal(scope.activeWorkspaceSlug(), 'explicit');
+});
+
+test('account entry routes never scope API calls with a remembered workspace', () => {
+  for (const path of ['/', '/login', '/register', '/reset-password', '/verify-email', '/workspaces']) {
+    const localStorage = storage();
+    localStorage.setItem('pathment-active-workspace', 'old-workspace');
+    const window = browser(`https://app.pathment.me${path}`);
+    const scope = load('lib/services/workspace-scope.ts', {}, {
+      window, localStorage, document: { cookie: 'pathment-workspace=old-workspace' },
+    });
+    assert.equal(scope.activeWorkspaceSlug(), null, path);
+    assert.equal(scope.workspaceScopeHeaders()['X-Pathment-Workspace'], undefined, path);
+    assert.equal(scope.rememberedWorkspaceSlug(), 'old-workspace', path);
+  }
 });
 
 test('destination creates a tab-bound verifier and only sends its challenge to legacy', async () => {
