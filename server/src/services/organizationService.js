@@ -143,7 +143,6 @@ class OrganizationService {
         organizationId: organization.id, organizationSlug: organization.slug, userId,
       }, async () => {
         await models.AdminProfile.create({ userId }, { transaction });
-        await require('./gamificationService').createDefaultBadges({ transaction });
       });
       return serializeOrganization(organization, membership);
     };

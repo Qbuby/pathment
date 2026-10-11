@@ -57,6 +57,9 @@ describe('POST /api/auth/register — Registration', () => {
       });
       expect(membership.role).toBe('owner');
       expect(organization.settings).toMatchObject({ onboardingSource: 'public_signup' });
+      expect(await models.Badge.count({
+        where: { organizationId: organization.id }, skipOrganizationScope: true,
+      })).toBe(0);
       expect(await models.EmailVerificationToken.count({ where: { userId: user.id } })).toBe(1);
       expect(() => require('../../src/services/organizationService').assertWorkspaceAvailable(organization)).not.toThrow();
     } finally {

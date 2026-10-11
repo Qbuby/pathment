@@ -301,18 +301,4 @@ exports.getUserChallenges = catchAsync(async (req, res) => {
   );
 });
 
-/**
- * Initialize default badges (one-time setup)
- * POST /api/gamification/setup-badges
- */
-exports.setupDefaultBadges = catchAsync(async (req, res) => {
-  // Authorization enforced at the route (requirePermission GAMIFICATION_MANAGE).
-
-  const count = await gamificationService.createDefaultBadges();
-
-  res.status(201).json(
-    successResponse(`${count} default badges created/verified`, { count }, 201)
-  );
-});
-
 module.exports = exports;

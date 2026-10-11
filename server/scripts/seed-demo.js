@@ -1500,41 +1500,19 @@ async function seedData() {
     console.log("✅ Daily activity logs created (per-mentee streaks)\n");
   }
 
-  // ── Gamification — badges, points history & leaderboard ───────────────────────
-  if (models.Badge && models.UserBadge && models.PointsHistory) {
-    console.log("🏅 Seeding badges, points history & leaderboard…");
-    const BADGES = [
-      { name: "First Steps", description: "Completed your first task.", category: "milestone", criteriaType: "tasks_completed", criteriaValue: { count: 1 }, pointsReward: 20 },
-      { name: "On Fire", description: "Reached a 7-day streak.", category: "streak", criteriaType: "streak_days", criteriaValue: { days: 7 }, pointsReward: 50 },
-      { name: "Halfway Hero", description: "Crossed 50% program progress.", category: "progress", criteriaType: "progress_pct", criteriaValue: { pct: 50 }, pointsReward: 75 },
-      { name: "Peer Helper", description: "Helped peers in the community.", category: "community", criteriaType: "community_kudos", criteriaValue: { count: 1 }, pointsReward: 40 },
-    ];
-    const badgeByName = {};
-    for (const b of BADGES) {
-      const [row] = await models.Badge.findOrCreate({ where: { name: b.name }, defaults: b });
-      badgeByName[b.name] = row;
-    }
-    const award = async (user, names) => {
-      for (const n of names) {
-        const b = badgeByName[n];
-        if (b) await models.UserBadge.create({ userId: user.id, badgeId: b.id, unlockedAt: daysAgo(3) });
-      }
-    };
-    // Award by archetype, and lay down a couple of points-history rows each.
+  // ── Gamification — points history & leaderboard ────────────────────────────────
+  // Badge catalogs are intentionally organization-owned. Demo/bootstrap scripts
+  // must not create or award badges on an organization's behalf.
+  if (models.PointsHistory) {
+    console.log("🏅 Seeding points history & leaderboard…");
     for (const m of menteeList) {
       const st = MENTEE_STATS[m.spec.archetype] || MENTEE_STATS.average;
-      const earned = [];
-      if (st.tasks >= 1) earned.push("First Steps");
-      if (st.streak >= 7) earned.push("On Fire");
-      if ((m.spec.archetype === "star") || (m.spec.archetype === "on_track")) earned.push("Halfway Hero");
-      if (m.spec.archetype === "star") earned.push("Peer Helper");
-      await award(m.user, earned);
       // Points history — a small ledger so the points page isn't blank.
       let running = 0;
       const events = [];
       if (st.tasks >= 1) events.push({ change: 10, reason: "Completed “Semantic HTML & accessible layout”", ago: 30 });
       if (st.tasks >= 2) events.push({ change: 12, reason: "Completed “Modern CSS & responsive design”", ago: 16 });
-      if (st.streak >= 7) events.push({ change: 50, reason: "Earned the On Fire badge", ago: 5 });
+      if (st.streak >= 7) events.push({ change: 50, reason: "Maintained a 7-day learning streak", ago: 5 });
       for (const e of events) {
         const before = running; running += e.change;
         await models.PointsHistory.create({
@@ -1555,7 +1533,7 @@ async function seedData() {
         });
       }
     }
-    console.log("✅ Badges, points history & leaderboard created\n");
+    console.log("✅ Points history & leaderboard created\n");
   }
 
   // ── Roadmap chaining — a follow-on roadmap linked after the core one ──────────

@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const withPostgres = require('../helpers/privatePostgres.cjs');
 
-test('workspace creation provisions an isolated owner, plan and defaults through the real API', async () => {
+test('workspace creation provisions an isolated owner and plan through the real API', async () => {
   await withPostgres(async adminDb => {
     await adminDb.query('CREATE DATABASE pathment_isolation_test');
     Object.assign(process.env, {
@@ -56,7 +56,7 @@ test('workspace creation provisions an isolated owner, plan and defaults through
       assert.equal(account.body.data.user.adminProfile, undefined);
       await runWithRequestContext({ organizationId: workspace.id, userId: owner.id }, async () => {
         assert.equal(await models.AdminProfile.count(), 1);
-        assert.ok(await models.Badge.count() > 0);
+        assert.equal(await models.Badge.count(), 0, 'new workspaces do not receive system badges');
         assert.equal(await models.MenteeProfile.count(), 0);
         assert.equal(await models.User.count(), 1, 'the member directory is not imported');
         await models.RegistrationInvite.create({
