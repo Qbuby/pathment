@@ -93,8 +93,13 @@ export function workspaceScopeHeaders(): Record<string, string> {
  * and let `/` resolve the remaining memberships. This prevents an old URL or
  * cookie from repeatedly reopening a workspace the account can no longer use.
  */
-export function recoverFromWorkspaceAccessDenied(code: unknown): boolean {
+export function recoverFromWorkspaceAccessDenied(code: unknown, requestWorkspace: unknown): boolean {
   if (code !== 'WORKSPACE_ACCESS_DENIED' || typeof window === 'undefined') return false;
+  const active = activeWorkspaceSlug();
+  // A denial only proves that the workspace explicitly attached to THIS
+  // request is no longer accessible. Never let an unscoped/global request (or
+  // a late response from a previous workspace) evict the current selection.
+  if (!active || typeof requestWorkspace !== 'string' || requestWorkspace.toLowerCase() !== active) return false;
   try { localStorage.removeItem(KEY); } catch { /* URL redirect is sufficient */ }
   if (typeof document !== 'undefined') {
     document.cookie = 'pathment-workspace=; Max-Age=0; Path=/; SameSite=Lax';
