@@ -72,7 +72,9 @@ class ApiClient {
         const hasAccessToken = Boolean(this.getToken());
         const isPublicAuthRequest = this.publicAuthPaths.some((path) => requestUrl.includes(path));
 
-        if (recoverFromWorkspaceAccessDenied(error.response?.data?.code)) {
+        const requestWorkspace = originalRequest?.headers?.get?.('X-Pathment-Workspace')
+          ?? originalRequest?.headers?.['X-Pathment-Workspace'];
+        if (recoverFromWorkspaceAccessDenied(error.response?.data?.code, requestWorkspace)) {
           return Promise.reject(error);
         }
 

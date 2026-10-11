@@ -3,7 +3,7 @@ import { normalizeAxiosError } from '../utils/api-error';
 import { tokenStore } from './token-store';
 import { refreshAccessToken, handleSessionExpired, SessionExpiredError } from './auth-session';
 import { portalScopeHeaders } from './portal-scope';
-import { recoverFromWorkspaceAccessDenied } from './workspace-scope';
+import { recoverFromWorkspaceAccessDenied, workspaceScopeHeaders } from './workspace-scope';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 
@@ -21,6 +21,13 @@ axiosInstance.interceptors.request.use(
     }
     // Same portal scoping as api-client: the hat the user currently has on.
     Object.entries(portalScopeHeaders()).forEach(([key, value]) => {
+      config.headers[key] = value;
+    });
+    // Keep this legacy axios client tenant-scoped exactly like api-client.
+    // Security, feedback and submission services still use this instance; if
+    // it omits the workspace header, the API falls back to the legacy default
+    // tenant and a valid user can be bounced out of their selected workspace.
+    Object.entries(workspaceScopeHeaders()).forEach(([key, value]) => {
       config.headers[key] = value;
     });
     return config;
@@ -48,7 +55,9 @@ axiosInstance.interceptors.response.use(
       '/auth/validate-invite',
     ].some((path) => requestUrl.includes(path));
 
-    if (recoverFromWorkspaceAccessDenied(error.response?.data?.code)) {
+    const requestWorkspace = originalRequest?.headers?.get?.('X-Pathment-Workspace')
+      ?? originalRequest?.headers?.['X-Pathment-Workspace'];
+    if (recoverFromWorkspaceAccessDenied(error.response?.data?.code, requestWorkspace)) {
       return Promise.reject(error);
     }
 

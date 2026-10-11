@@ -17,6 +17,13 @@ const ACCOUNT_PATHS = new Set([
   '/api/auth/me',
   '/api/auth/refresh',
   '/api/auth/logout',
+  '/api/auth/audit-logs',
+  '/api/auth/change-password',
+  '/api/auth/2fa/setup',
+  '/api/auth/2fa/verify',
+  '/api/auth/2fa/disable',
+  '/api/auth/2fa/status',
+  '/api/auth/2fa/regenerate-backup-codes',
   '/api/organizations',
   '/api/organizations/me',
 ]);
