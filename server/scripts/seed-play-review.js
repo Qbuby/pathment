@@ -16,7 +16,6 @@
 require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
-const { Op } = require('sequelize');
 const { sequelize, models } = require('../src/db');
 const { runWithRequestContext } = require('../src/utils/auditContext');
 
