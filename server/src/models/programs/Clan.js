@@ -20,6 +20,16 @@ module.exports = (sequelize, DataTypes) => {
     },
     kind: { type: DataTypes.STRING(20), allowNull: false, defaultValue: 'cohort', validate: { isIn: [['cohort', 'standing']] } },
     frozenAt: { type: DataTypes.DATE, field: 'frozen_at' },
+    /**
+     * Does joining this standing clan carry the mentee's work across with them?
+     *
+     * Defaults true, so clans created from now on bring a joiner's in-flight
+     * roadmaps and custom work with them automatically. Migration 126 set it
+     * FALSE on every clan that already existed: those rosters were built
+     * deliberately one mentee at a time, and generating assignments against
+     * them after the fact would look like work appearing from nowhere.
+     */
+    autoContinueOnJoin: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true, field: 'auto_continue_on_join' },
     name: {
       type: DataTypes.STRING(150),
       allowNull: false

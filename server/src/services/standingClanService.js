@@ -9,6 +9,7 @@ const { PERMISSIONS } = require('../config/permissions');
 const { HISTORICAL_MEMBERSHIP_STATUSES } = require('../config/membership');
 const { NOTIFICATION_EVENTS } = require('../config/notificationMatrix');
 const { getRequestContext } = require('../utils/auditContext');
+const logger = require('../utils/logger');
 const { NotFoundError, ForbiddenError, ValidationError, ConflictError } = require('../utils/errors/errorTypes');
 
 // clanService requires this module at load time — keep lazy to avoid the cycle.
@@ -480,7 +481,7 @@ class StandingClanService {
         status: { [Op.ne]: 'cancelled' },
       },
       attributes: [
-        'id', 'clanId', 'roadmapTaskId', 'status', 'assignedAt', 'isCustomTask', 'pointsBase',
+        'id', 'clanId', 'mentorId', 'roadmapTaskId', 'status', 'assignedAt', 'isCustomTask', 'pointsBase',
         'typeOverride', 'titleOverride', 'descriptionOverride', 'deliverableOverride',
         'acceptanceCriteriaOverride', 'resourcesOverride', 'openSourceOrgIds',
       ],
@@ -498,8 +499,17 @@ class StandingClanService {
 
     // Newest source assignment wins if a historical step was assigned twice.
     const byStepId = new Map();
+    // Who last set work on each roadmap over there. The resume step itself is
+    // often unassigned in the source clan (it is the step they had not reached),
+    // so the roadmap's previous mentor has to come from the steps that WERE
+    // assigned, newest first — `assignments` is already ordered assignedAt DESC.
+    const roadmapMentorId = new Map();
     for (const assignment of assignments) {
       if (!byStepId.has(assignment.roadmapTaskId)) byStepId.set(assignment.roadmapTaskId, assignment);
+      const roadmapId = assignment.roadmapTask?.roadmapId;
+      if (roadmapId && assignment.mentorId && !roadmapMentorId.has(roadmapId)) {
+        roadmapMentorId.set(roadmapId, assignment.mentorId);
+      }
     }
 
     const roadmapIds = [...new Set(assignments
@@ -553,6 +563,10 @@ class StandingClanService {
           sourceTaskId: source?.id || null,
         },
         sourceClanName: source ? (sourceNameById.get(source.clanId) || null) : null,
+        // The mentor this work came from. Drives the automatic carry on join:
+        // work follows the mentee by itself only when the mentor who set it is
+        // also on this standing clan's team. See `_autoContinueFor`.
+        sourceMentorId: source?.mentorId || roadmapMentorId.get(roadmapId) || null,
       });
     }
 
@@ -568,6 +582,7 @@ class StandingClanService {
           type,
           status: row.status,
           sourceClanName: sourceNameById.get(row.clanId) || null,
+          sourceMentorId: row.mentorId || null,
           supported,
           unavailableReason: supported ? null : `Create a new ${type} assignment so its kit and attempt settings are current.`,
         };
@@ -589,7 +604,15 @@ class StandingClanService {
    * The target membership row is locked for the transaction, serialising
    * double-clicks/retries. The provenance unique index is the final guard.
    */
-  async continueWork(clanId, menteeId, input, actor) {
+  /**
+   * `preserveSourceMentor` keeps the mentor who ORIGINALLY set each task as its
+   * mentor here, instead of whoever triggered the continuation. Used by the
+   * automatic carry on join: nobody chose to assign that work just now, it is
+   * the same work following the mentee, and "work you assigned follows you" is
+   * already how `authzService.canActOnTask` reads a task's owner. The manual
+   * button leaves it off, because there a mentor really is assigning it.
+   */
+  async continueWork(clanId, menteeId, input, actor, { preserveSourceMentor = false } = {}) {
     const clan = await this._assertContinuationAccess(clanId, menteeId, actor);
     const preview = await this.continuationPreview(clanId, menteeId, actor);
     const requestedRoadmapIds = [...new Set(Array.isArray(input.roadmapIds) ? input.roadmapIds : [])];
@@ -711,7 +734,15 @@ class StandingClanService {
             organizationId: clan.organizationId,
             clanId,
             menteeId,
-            mentorId: actor.id,
+            /**
+             * `source` is null when the resume step was never assigned over
+             * there — it is the step they had not reached yet. The roadmap
+             * still has a previous mentor, the one who set the steps before
+             * it, and `row.sourceMentorId` is them. Without this fallback the
+             * carried step was stamped with whoever did the adding, which is
+             * the one thing the automatic carry is meant not to do.
+             */
+            mentorId: (preserveSourceMentor && (source?.mentorId || row.sourceMentorId)) || actor.id,
             enrollmentId: null,
             roadmapTaskId: row.resumeStep.stepId,
             continuedFromTaskId: source?.id || null,
@@ -784,7 +815,7 @@ class StandingClanService {
             organizationId: clan.organizationId,
             clanId,
             menteeId,
-            mentorId: actor.id,
+            mentorId: (preserveSourceMentor && source.mentorId) || actor.id,
             enrollmentId: null,
             roadmapTaskId: copiedTask.id,
             continuedFromTaskId: source.id,
@@ -903,7 +934,8 @@ class StandingClanService {
     if (!canManage && !canAdd) throw new ForbiddenError('You cannot manage this clan');
 
     if (!Array.isArray(menteeIds) || !menteeIds.length || menteeIds.length > 100) throw new ValidationError('Select between 1 and 100 mentees');
-    return sequelize.transaction(async transaction => {
+    const joined = [];
+    const rows = await sequelize.transaction(async transaction => {
       const clan = await models.Clan.findByPk(clanId, { transaction, lock: transaction.LOCK.UPDATE });
       const rows = [];
       for (const userId of [...new Set(menteeIds)]) {
@@ -948,10 +980,120 @@ class StandingClanService {
             `This clan holds ${clan.maxMentees} mentees and already has ${count}. Raise its capacity in clan settings, or select fewer people.`,
           );
         }
+        joined.push(userId);
         rows.push(await clans().addMember(clanId, { userId, role: 'mentee' }, actor, { transaction }));
       }
       return rows;
     });
+
+    /**
+     * Bring their work with them.
+     *
+     * Deliberately AFTER the transaction commits, for two reasons. The carry
+     * must never cost somebody their place in the clan — a mentee who is added
+     * stays added even if nothing could be continued. And `continueWork` opens
+     * its own transaction and re-reads authorization, so running it inside the
+     * add would block on the membership row this transaction has not committed
+     * yet; that deadlock has already been paid for once on `addMember`.
+     *
+     * Only for clans that opted in. Migration 126 opted every pre-existing clan
+     * out, so a standing clan approved before this shipped behaves exactly as it
+     * did and keeps the manual button.
+     *
+     * And only the work whose mentor is on this clan's team — `_autoContinueFor`
+     * explains why the rest waits for a person.
+     */
+    if (clan.autoContinueOnJoin && joined.length) {
+      await Promise.all(joined.map((menteeId) => this.carryWorkOnJoin(clanId, menteeId, actor)));
+    }
+    return rows;
+  }
+
+  /**
+   * Bring one mentee's work with them, if this clan carries work at all.
+   *
+   * The public door, because there are two ways into a standing clan: the
+   * mentor's own "add mentees" flow, and the generic `POST /clans/:id/members`
+   * an admin uses from the clans screen. A mentee added by an admin is still a
+   * mentee joining a continuation clan, and it would be a strange product where
+   * their work followed them only when a mentor did the clicking.
+   *
+   * Returns rather than throws, always: the caller has already committed the
+   * membership and must not fail because of what happens here.
+   */
+  async carryWorkOnJoin(clanId, menteeId, actor) {
+    try {
+      const clan = await models.Clan.findByPk(clanId);
+      if (!clan || clan.kind !== 'standing' || !clan.autoContinueOnJoin) {
+        return { menteeId, continued: 0, skipped: true };
+      }
+      return this._autoContinueFor(clanId, menteeId, actor);
+    } catch (error) {
+      logger.warn(`[standingClan] could not carry work for ${menteeId} into ${clanId}: ${error.message}`);
+      return { menteeId, error: error.message };
+    }
+  }
+
+  /**
+   * Continue work for one mentee who has just joined — but only the work whose
+   * mentor came with them.
+   *
+   * The automatic carry is deliberately NOT "take everything". It fires per item
+   * and only when the mentor who set that work is on THIS clan's mentor team
+   * (lead or co-mentor). Those are the cases where nothing is really changing
+   * hands: the same mentor is continuing with the same mentee, so re-picking the
+   * same roadmaps by hand is pure ceremony.
+   *
+   * Work set by somebody who is not here is left for the manual button. Handing
+   * a mentee's half-finished roadmap to a new mentor is a judgement — they have
+   * not seen the submissions or the feedback behind it — and it should be made
+   * by a person. `ContinueWorkLauncher` hides itself when nothing is left to
+   * continue, so the button appears in exactly the cases this skips.
+   *
+   * Never throws. A mentee who is in the clan but whose work could not be
+   * carried is a smaller problem than an add that half-failed, and the mentor
+   * can still press the button.
+   */
+  async _autoContinueFor(clanId, menteeId, actor) {
+    try {
+      const [preview, team] = await Promise.all([
+        this.continuationPreview(clanId, menteeId, actor),
+        this._mentorTeamOf(clanId),
+      ]);
+      // Lead and co-mentors both count. A co-mentor who set the work and moved
+      // across with the mentee is the same continuity as a lead who did; the
+      // product has treated co-mentors as full peers since co-mentor parity.
+      const carriesOwnWork = new Set([team.leadId, ...team.coMentorIds].filter(Boolean));
+      const sameMentor = (sourceMentorId) => !!sourceMentorId && carriesOwnWork.has(sourceMentorId);
+
+      const roadmaps = (preview.roadmaps || []).filter((row) => sameMentor(row.sourceMentorId));
+      const customTasks = (preview.customTasks || [])
+        .filter((row) => row.supported && sameMentor(row.sourceMentorId));
+      const roadmapIds = roadmaps.map((row) => row.roadmapId).filter(Boolean);
+      const taskIds = customTasks.map((row) => row.sourceTaskId).filter(Boolean);
+
+      const held = (preview.roadmaps || []).length - roadmaps.length
+        + (preview.customTasks || []).filter((row) => row.supported).length - customTasks.length;
+      if (!roadmapIds.length && !taskIds.length) {
+        if (held) {
+          logger.info('[standingClan] left work for the manual button (different mentor)', {
+            clanId, menteeId, held,
+          });
+        }
+        return { menteeId, continued: 0, held };
+      }
+
+      const result = await this.continueWork(
+        clanId, menteeId, { roadmapIds, taskIds }, actor, { preserveSourceMentor: true },
+      );
+      logger.info('[standingClan] carried work on join', {
+        clanId, menteeId, roadmaps: roadmapIds.length, customTasks: taskIds.length, held,
+      });
+      return { menteeId, result, held };
+    } catch (error) {
+      logger.warn(`[standingClan] could not carry work for ${menteeId} into ${clanId}: ${error.message}`);
+      return { menteeId, error: error.message };
+    }
   }
 
   async activity(clanId, { period = '30d' } = {}, actor) {

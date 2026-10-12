@@ -1046,8 +1046,6 @@ function AddMenteesDrawer({ clanId, clanName, standing = false, onClose, onChang
    * thing worth bringing across is work that never got finished, and that is
    * created as NEW assignments the mentor chooses.
    */
-  const [carryOver, setCarryOver] = useState<{ menteeId: string; menteeName: string; tasks: { id: string; titleOverride: string | null; status: string }[] }[]>([]);
-  const [carrying, setCarrying] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [inviteEmail, setInviteEmail] = useState('');
@@ -1149,19 +1147,12 @@ function AddMenteesDrawer({ clanId, clanName, standing = false, onClose, onChang
     try {
       await completionApi.addMentees(clanId, ids);
       toast.success(`${ids.length} mentee${ids.length === 1 ? '' : 's'} added to ${clanName}`);
-
-      // Ask only about people who actually left something unfinished, so the
-      // prompt never appears for a roster that has nothing to carry.
-      const added = visiblePeople.filter((p) => ids.includes(p.id));
-      const found = await Promise.all(added.map(async (p) => {
-        try {
-          const tasks = await completionApi.unfinishedPriorWork(clanId, p.id);
-          return tasks.length ? { menteeId: p.id, menteeName: p.name, tasks } : null;
-        } catch {
-          return null;  // never block the add on this
-        }
-      }));
-      setCarryOver(found.filter(Boolean) as typeof carryOver);
+      // Their work follows them automatically now — adding somebody to a
+      // standing clan continues their in-flight roadmaps and custom tasks,
+      // resumed where they left off. The old "bring unfinished work across?"
+      // prompt here is gone: it asked a question that always had the same
+      // answer. Clans approved before that shipped are opted out and still
+      // have the manual Continue work launcher.
       setPeople((prev) => prev.filter((p) => !ids.includes(p.id)));
       setSelected(new Set());
       setAlreadyHere((prev) => {
@@ -1351,62 +1342,6 @@ function AddMenteesDrawer({ clanId, clanName, standing = false, onClose, onChang
           </div>
 
           {/* ── Unfinished work, offered after adding ─────────────────── */}
-          {carryOver.length > 0 && (
-            <div className="rounded-xl border border-sky-200 bg-sky-50/60 p-3.5 dark:border-sky-900/60 dark:bg-sky-950/20">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Continue unfinished work?</p>
-                <span className="rounded-full border border-sky-200 bg-card px-2 py-0.5 text-[10px] font-medium text-sky-700 dark:border-sky-800 dark:text-sky-300">Optional next step</span>
-              </div>
-              <p className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
-                {/* Said plainly, because the alternative people expect is a move. */}
-                Previous records stay read-only in the completed clan. Continuing
-                creates fresh assignments here; it never moves or edits history.
-              </p>
-              <ul className="mt-3 space-y-1.5">
-                {carryOver.map((entry) => (
-                  <li key={entry.menteeId} className="flex items-center justify-between gap-3 rounded-lg border border-sky-100 bg-card px-2.5 py-2 text-xs dark:border-sky-900/60">
-                    <span className="font-medium text-slate-800 dark:text-slate-200">{entry.menteeName}</span>
-                    <span className="shrink-0 text-slate-500">{entry.tasks.length} unfinished</span>
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  disabled={carrying}
-                  onClick={async () => {
-                    setCarrying(true);
-                    try {
-                      let total = 0;
-                      for (const entry of carryOver) {
-                        await completionApi.carryForward(clanId, entry.menteeId, entry.tasks.map((t) => t.id));
-                        total += entry.tasks.length;
-                      }
-                      toast.success(`${total} task${total === 1 ? '' : 's'} assigned here as new work`);
-                      setCarryOver([]);
-                      onChanged();
-                    } catch (e) {
-                      toast.error(extractApiErrorMessage(e, 'Could not carry the work forward'));
-                    } finally {
-                      setCarrying(false);
-                    }
-                  }}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
-                >
-                  {carrying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                  Assign here as new work
-                </button>
-                <button
-                  type="button"
-                  disabled={carrying}
-                  onClick={() => setCarryOver([])}
-                  className="rounded-lg border border-slate-300 bg-card px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                >
-                  Start fresh
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </Drawer>

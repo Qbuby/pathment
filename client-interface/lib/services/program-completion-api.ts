@@ -36,6 +36,8 @@ export interface ContinuationPreview {
     resumeIndex: number;
     resumeStep: { stepId: string; title: string; previousStatus: string | null; sourceTaskId: string | null };
     sourceClanName: string | null;
+    /** The mentor who set this work. Carried automatically only when they are on this clan's team. */
+    sourceMentorId: string | null;
   }>;
   customTasks: Array<{
     sourceTaskId: string;
@@ -43,6 +45,7 @@ export interface ContinuationPreview {
     type: string;
     status: string;
     sourceClanName: string | null;
+    sourceMentorId: string | null;
     supported: boolean;
     unavailableReason: string | null;
   }>;

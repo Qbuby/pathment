@@ -115,6 +115,18 @@ const updateClan = catchAsync(async (req, res) => {
  */
 const addMember = catchAsync(async (req, res) => {
   const membership = await clanService.addMember(req.params.id, req.body, req.user);
+  /**
+   * A mentee joining a standing clan brings their work with them, whichever
+   * screen added them. This is the admin's door into the same event the
+   * mentor's "add mentees" flow handles; `carryWorkOnJoin` decides whether the
+   * clan carries work at all and never throws, so the add itself is unaffected.
+   *
+   * Deliberately after `addMember` returned — the membership row has to exist
+   * and be committed before anything reads it.
+   */
+  if (membership && (req.body?.role || 'mentee') === 'mentee') {
+    await standingClanService.carryWorkOnJoin(req.params.id, membership.userId, req.user);
+  }
   res.status(201).json(successResponse('Member added', { membership }, 201));
 });
 

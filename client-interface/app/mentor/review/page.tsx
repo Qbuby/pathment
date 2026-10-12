@@ -41,6 +41,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { getViewerTimeZone } from '@/lib/utils/datetime';
 import { MobileReviewActionBar } from '@/components/mentor/MobileReviewActionBar';
 import { ContinueWorkLauncher } from '@/components/mentor/ContinueWorkLauncher';
+import { MenteeRecordPanel } from '@/components/mentor/MenteeRecordPanel';
 
 type Attendance = 'present' | 'absent' | 'excused';
 type EntryStatus = 'pending' | 'reviewed' | 'deferred';
@@ -132,6 +133,15 @@ export default function CohortReview() {
   /** Open work in this mentee's OTHER clans. Empty is the common case. */
   const [elsewhere, setElsewhere] = useState<OpenWorkElsewhere[]>([]);
   const [attOpen, setAttOpen] = useState(false);
+  /**
+   * Their record across the organisation, behind a button on the mentee card.
+   *
+   * It used to be a panel in the column. Clan review is a stepping-through
+   * screen — the mentor is going person by person — and a second history
+   * surface competed with the job instead of helping it. One click away is the
+   * right distance: there when you want it, invisible when you don't.
+   */
+  const [recordOpen, setRecordOpen] = useState(false);
   // The dated, saved cohort-review session (today by default, or ?session=<id>).
   // attendance / seen / deferred are derived from its entries — nothing ephemeral.
   const [session, setSession] = useState<ReviewSession | null>(null);
@@ -387,7 +397,7 @@ export default function CohortReview() {
   // the current mentee; reset state.
   useEffect(() => {
     if (!mentee) return;
-    setFocus(0); setNote(''); setNoteSent(false); setBlockers([]); setTasks([]); setProfile(null); setAttHistory([]); setElsewhere([]);
+    setFocus(0); setNote(''); setNoteSent(false); setBlockers([]); setTasks([]); setProfile(null); setAttHistory([]); setElsewhere([]); setRecordOpen(false);
     frictionApi.listBlockers(mentee.id, 'open').then((r: any) => setBlockers(r?.data?.blockers ?? [])).catch(() => {}); // eslint-disable-line @typescript-eslint/no-explicit-any
     mentorApi.getMenteeProfile(mentee.id).then((r: any) => setProfile(r?.data?.profile ?? r?.data ?? null)).catch(() => setProfile(null)); // eslint-disable-line @typescript-eslint/no-explicit-any
     mentorApi.getMenteeAttendanceHistory(mentee.id).then((r) => setAttHistory((r?.data?.history ?? []) as typeof attHistory)).catch(() => setAttHistory([]));
@@ -756,7 +766,7 @@ export default function CohortReview() {
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return;
       // Also bail while any field-bearing drawer is open (review / assign / task
       // edit / extension / history) — its inputs own the keyboard.
-      if (reviewing || assigning || taskDetail || extReview || historyOpen || attOpen) return;
+      if (reviewing || assigning || taskDetail || extReview || historyOpen || attOpen || recordOpen) return;
       const k = e.key.toLowerCase();
       if (k === 't') {
         e.preventDefault();
@@ -782,7 +792,7 @@ export default function CohortReview() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [go, skip, approve, requestChanges, mark, pending, focus, reviewing, assigning, taskDetail, extReview, historyOpen, attOpen]);
+  }, [go, skip, approve, requestChanges, mark, pending, focus, reviewing, assigning, taskDetail, extReview, historyOpen, attOpen, recordOpen]);
 
   if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-brand-600" /></div>;
   if (!cohort.length) return (
@@ -954,6 +964,36 @@ export default function CohortReview() {
                     with another mentor — so the move lives here too, not only on
                     the profile. */}
                 <MoveMenteeButton menteeId={mentee!.id} menteeName={mentee!.name} variant="icon" disabled={historical} />
+                {/* Their record everywhere else in the org. The dot is the only
+                    thing that leaks out onto the card, and only when they are
+                    mid-way through something in another clan — which is the one
+                    fact that changes what you assign next. */}
+                <button
+                  type="button"
+                  onClick={() => setRecordOpen(true)}
+                  title={elsewhere.length
+                    ? `Work history · ${elsewhere.length} active item${elsewhere.length === 1 ? '' : 's'} in other clans`
+                    : 'Work history across clans'}
+                  aria-label="Work history across clans"
+                  className="relative p-1.5 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-50"
+                >
+                  <History className="w-4 h-4" />
+                  {elsewhere.length > 0 && (
+                    <span aria-hidden className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-brand-500" />
+                  )}
+                </button>
+                {/* Work whose mentor did not come across with them is not
+                    carried on its own — see `_autoContinueFor`. This is the
+                    button that finishes that job, and it hides itself when
+                    there is nothing left to continue. */}
+                {activeClan?.kind === 'standing' && (
+                  <ContinueWorkLauncher
+                    clanId={activeClan.id}
+                    menteeId={mentee!.id}
+                    variant="link"
+                    onContinued={refresh}
+                  />
+                )}
                 <button
                   onClick={pauseCurrent}
                   disabled={pausing || historical}
@@ -995,58 +1035,9 @@ export default function CohortReview() {
             </div>
           )}
 
-          {/* Already mid-way through something in another clan.
-              Rendered only when there IS something, so the single-clan majority
-              sees no new chrome on a screen whose job is stepping through. */}
-          {elsewhere.length > 0 && (
-            <section className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3.5 dark:border-slate-800 dark:bg-slate-900/50" aria-label="Work in other clans">
-              <div className="flex items-start gap-2.5">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-card text-slate-500 dark:border-slate-700">
-                  <ListTodo className="h-4 w-4" aria-hidden />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-xs font-semibold text-slate-900 dark:text-slate-100">Work in other clans</h3>
-                    <span className="rounded-full border border-slate-200 bg-card px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:border-slate-700 dark:text-slate-400">Context only</span>
-                  </div>
-                  <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-                    {elsewhere.length} active item{elsewhere.length === 1 ? '' : 's'} shown to help you avoid assigning duplicate work.
-                  </p>
-                </div>
-              </div>
-              <ul className="mt-3 space-y-1.5">
-                {elsewhere.slice(0, 4).map((t) => (
-                  <li key={t.id} className="flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-200/80 bg-card px-2.5 py-2 text-[11px] dark:border-slate-800">
-                    <span className="min-w-0 flex-1 font-medium text-slate-800 dark:text-slate-200">{t.title}</span>
-                    <span className="rounded-full bg-sky-50 px-1.5 py-0.5 font-medium capitalize text-sky-700 dark:bg-sky-500/10 dark:text-sky-300">{t.status.replace(/_/g, ' ')}</span>
-                    <span className="text-slate-500 dark:text-slate-400">{t.clanName}</span>
-                    {t.assignedByViewer && <span className="text-slate-400">· assigned by you</span>}
-                  </li>
-                ))}
-              </ul>
-              {elsewhere.length > 4 && (
-                <p className="mt-1.5 text-[11px] text-slate-500">
-                  +{elsewhere.length - 4} more active item{elsewhere.length - 4 === 1 ? '' : 's'}
-                </p>
-              )}
-              <Link
-                href={`/mentor/mentees/${mentee.id}`}
-                className="mt-2.5 inline-flex items-center gap-1 text-[11px] font-semibold text-brand-700 hover:text-brand-800 dark:text-brand-300"
-              >
-                See full record <ArrowUpRight className="h-3 w-3" aria-hidden />
-              </Link>
-            </section>
-          )}
-
-          {activeClan?.kind === 'standing' && mentee && (
-            <div className="flex justify-end">
-              <ContinueWorkLauncher
-                clanId={activeClan.id}
-                menteeId={mentee.id}
-                onContinued={refresh}
-              />
-            </div>
-          )}
+          {/* Work in other clans and the continuation button both used to live
+              here as full-width panels. They are on the mentee card now: this
+              column is for the review itself. */}
 
           {/* State of this mentee - same read as the profile (AI summary + signals). */}
           {profile?.aiSummary && (
@@ -1585,6 +1576,56 @@ export default function CohortReview() {
         title="Attendance history"
         subtitle={mentee ? `${mentee.name} · ${attHistory.length} recorded meeting${attHistory.length === 1 ? '' : 's'}` : undefined}>
         <AttendanceHistoryCalendar key={`${mentee?.id}-${attHistory[0]?.date || "empty"}`} entries={attHistory} />
+      </Drawer>
+
+      {/* Everything this mentee has done in the organisation, clan by clan —
+          the same record as their profile's History tab, so there is one answer
+          to "what have they already done" and not two.
+
+          Open work in other clans is listed first: it is the part that changes
+          what you assign in the next few minutes. The rest is background. */}
+      <Drawer open={recordOpen} onClose={() => setRecordOpen(false)} width="lg"
+        title="Work history"
+        subtitle={mentee ? `${mentee.name} · across every clan in this organisation` : undefined}>
+        {mentee && (
+          <div className="space-y-4">
+            {elsewhere.length > 0 && (
+              <section className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3.5 dark:border-slate-800 dark:bg-slate-900/50" aria-label="Open work in other clans">
+                <div className="flex items-start gap-2.5">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-card text-slate-500 dark:border-slate-700">
+                    <ListTodo className="h-4 w-4" aria-hidden />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-xs font-semibold text-slate-900 dark:text-slate-100">Open right now in other clans</h3>
+                      <span className="rounded-full border border-slate-200 bg-card px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:border-slate-700 dark:text-slate-400">Context only</span>
+                    </div>
+                    <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+                      {elsewhere.length} active item{elsewhere.length === 1 ? '' : 's'} — so you do not assign the same thing twice.
+                    </p>
+                  </div>
+                </div>
+                <ul className="mt-3 space-y-1.5">
+                  {elsewhere.map((t) => (
+                    <li key={t.id} className="flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-200/80 bg-card px-2.5 py-2 text-[11px] dark:border-slate-800">
+                      <span className="min-w-0 flex-1 font-medium text-slate-800 dark:text-slate-200">{t.title}</span>
+                      <span className="rounded-full bg-sky-50 px-1.5 py-0.5 font-medium capitalize text-sky-700 dark:bg-sky-500/10 dark:text-sky-300">{t.status.replace(/_/g, ' ')}</span>
+                      <span className="text-slate-500 dark:text-slate-400">{t.clanName}</span>
+                      {t.assignedByViewer && <span className="text-slate-400">· assigned by you</span>}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+            <MenteeRecordPanel menteeId={mentee.id} />
+            <Link
+              href={`/mentor/mentees/${mentee.id}`}
+              className="inline-flex items-center gap-1 text-xs font-semibold text-brand-700 hover:text-brand-800 dark:text-brand-300"
+            >
+              Open their full profile <ArrowUpRight className="h-3.5 w-3.5" aria-hidden />
+            </Link>
+          </div>
+        )}
       </Drawer>
 
       {showHelp && (
