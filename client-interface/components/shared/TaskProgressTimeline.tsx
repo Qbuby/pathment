@@ -1,8 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, PenLine, Trash2 } from 'lucide-react';
+import { ChevronDown, Loader2, PenLine, Trash2 } from 'lucide-react';
 
 import { menteeApi, type TaskProgress, type TaskProgressDay } from '@/lib/services/mentee-api';
 import { mentorApi } from '@/lib/services/mentor-api';
@@ -16,15 +16,53 @@ const dayLabel = (dateKey: string) => {
 };
 
 /**
+ * A quiet stretch only earns its own row once it is long enough to be a story.
+ *
+ * Two silent days between work is ordinary and reads fine as two rows. A week
+ * is a different thing and deserves to be said in one line, out loud.
+ */
+const COLLAPSE_RUN_FROM = 3;
+
+type TimelineRow =
+  | { kind: 'day'; day: TaskProgressDay }
+  | { kind: 'gap'; days: TaskProgressDay[] };
+
+/** Fold runs of empty days into single rows, leaving filled days untouched. */
+function toRows(days: TaskProgressDay[]): TimelineRow[] {
+  const rows: TimelineRow[] = [];
+  let run: TaskProgressDay[] = [];
+  const flush = () => {
+    if (!run.length) return;
+    // Today is never swallowed into a gap — it is where the mentee writes.
+    if (run.length >= COLLAPSE_RUN_FROM) rows.push({ kind: 'gap', days: run });
+    else run.forEach((day) => rows.push({ kind: 'day', day }));
+    run = [];
+  };
+  for (const day of days) {
+    if (!day.entry && !day.isToday) { run.push(day); continue; }
+    flush();
+    rows.push({ kind: 'day', day });
+  }
+  flush();
+  return rows;
+}
+
+/**
  * TaskProgressTimeline — a mentee's day-by-day notes on one task.
  *
  * One component, two readers. The mentee gets a box to write in; the mentor gets
  * the same timeline read only, so both are looking at exactly the same thing
  * during a review rather than two versions of the truth.
  *
- * The empty days are rendered, not collapsed. A four day task with two filled
- * days and two hollow ones tells a mentor something a status field never will,
- * and hiding the gaps would throw away the only signal this feature exists for.
+ * The gaps are the signal and they stay. A four day task with two filled days
+ * and two hollow ones tells a mentor something a status field never will.
+ *
+ * What changed is how a LONG gap is drawn. A task assigned four weeks ago
+ * rendered twenty-eight rows, twenty-three of them reading "nothing logged",
+ * and the five days that mattered were lost inside it. A run of quiet days is
+ * now one row that says how long it was — which is not less information than
+ * nine identical lines, it is the same information said once and read at a
+ * glance. Clicking it opens the individual days.
  */
 export function TaskProgressTimeline({
   taskId, mode, className = '', readOnly = false,
@@ -42,6 +80,15 @@ export function TaskProgressTimeline({
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [busyDay, setBusyDay] = useState<string | null>(null);
+  /**
+   * The whole panel folds away. On a task that has run for weeks the log is the
+   * longest thing on the screen, and somebody opening the task to read the
+   * brief should not have to scroll past a month of their own notes to reach
+   * it. It opens by default, because for a mentee writing today's line is the
+   * point of the panel; the header keeps the summary visible either way.
+   */
+  const [open, setOpen] = useState(true);
+  const [openGaps, setOpenGaps] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     try {
@@ -61,6 +108,16 @@ export function TaskProgressTimeline({
   }, [taskId, mode]);
 
   useEffect(() => { load(); }, [load]);
+
+  /**
+   * Above the early returns on purpose: `data` is null while loading, and a
+   * hook that only runs once there is data changes the hook order between
+   * renders.
+   */
+  const rows = useMemo(
+    () => toRows((data?.days ?? []).filter((d) => !d.isFuture)),
+    [data],
+  );
 
   const save = async () => {
     if (!canWrite) return;
@@ -100,7 +157,6 @@ export function TaskProgressTimeline({
   }
   if (!data) return null;
 
-  const past = data.days.filter((d) => !d.isFuture);
   // Nothing to show a mentor on a task that was never started.
   if (mode === 'mentor' && data.summary.loggedDays === 0) {
     return (
@@ -113,25 +169,48 @@ export function TaskProgressTimeline({
 
   return (
     <div className={`rounded-2xl border border-slate-200 bg-card ${className}`}>
-      <div className="flex items-center justify-between gap-2 px-5 py-4 border-b border-slate-200">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-2 px-5 py-4 text-left"
+      >
         <h3 className="text-sm font-medium text-slate-900 inline-flex items-center gap-1.5">
           <PenLine className="w-4 h-4 text-brand-600" /> Progress
         </h3>
-        <span className="text-xs text-slate-500 tabular-nums">{data.summary.label}</span>
-      </div>
+        <span className="flex items-center gap-2">
+          <span className="text-xs text-slate-500 tabular-nums">{data.summary.label}</span>
+          <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
+        </span>
+      </button>
 
-      <div className="px-5 py-4">
+      {open && (
+      <div className="px-5 py-4 border-t border-slate-200">
         <ol className="space-y-0">
-          {past.map((day, i) => (
-            <DayRow
-              key={day.dateKey}
-              day={day}
-              isLast={i === past.length - 1}
-              canEdit={canWrite}
-              busy={busyDay === day.dateKey}
-              onRemove={() => remove(day.dateKey)}
-            />
-          ))}
+          {rows.map((row, i) => {
+            const isLast = i === rows.length - 1;
+            if (row.kind === 'gap' && !openGaps.has(row.days[0].dateKey)) {
+              return (
+                <GapRow
+                  key={`gap-${row.days[0].dateKey}`}
+                  days={row.days}
+                  isLast={isLast}
+                  onExpand={() => setOpenGaps((prev) => new Set(prev).add(row.days[0].dateKey))}
+                />
+              );
+            }
+            const days = row.kind === 'gap' ? row.days : [row.day];
+            return days.map((day, j) => (
+              <DayRow
+                key={day.dateKey}
+                day={day}
+                isLast={isLast && j === days.length - 1}
+                canEdit={canWrite}
+                busy={busyDay === day.dateKey}
+                onRemove={() => remove(day.dateKey)}
+              />
+            ));
+          })}
         </ol>
 
         {canWrite && (
@@ -164,7 +243,35 @@ export function TaskProgressTimeline({
           <p className="mt-4 text-xs text-slate-500">Completed programs are read-only.</p>
         )}
       </div>
+      )}
     </div>
+  );
+}
+
+/** A stretch of quiet, said once. Opens into its individual days. */
+function GapRow({ days, isLast, onExpand }: {
+  days: TaskProgressDay[];
+  isLast: boolean;
+  onExpand: () => void;
+}) {
+  return (
+    <li className="flex gap-3">
+      <div className="flex flex-col items-center shrink-0">
+        {/* Dashed, not hollow: this marker stands for a span, not a day. */}
+        <span aria-hidden className="mt-1.5 h-2.5 w-2.5 rounded-full border-2 border-dashed border-slate-300" />
+        {!isLast && <span className="w-px flex-1 bg-slate-200 my-1" />}
+      </div>
+      <div className={`min-w-0 flex-1 ${isLast ? 'pb-0' : 'pb-4'}`}>
+        <button
+          type="button"
+          onClick={onExpand}
+          className="text-xs font-medium text-slate-400 hover:text-slate-600 underline-offset-4 hover:underline"
+        >
+          {days.length} days with nothing logged
+          <span className="ml-1.5 text-slate-300">({dayLabel(days[0].dateKey)} – {dayLabel(days[days.length - 1].dateKey)})</span>
+        </button>
+      </div>
+    </li>
   );
 }
 

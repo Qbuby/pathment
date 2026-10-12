@@ -29,6 +29,7 @@ import {
   SubmitTaskDrawer,
   type SubmitTaskTarget,
 } from "@/components/mentee/SubmitTaskDrawer";
+import { TaskDrawer } from "@/components/mentee/TaskDrawer";
 import { stripHtml } from "@/lib/utils/html";
 import { useClan, isHistoricalCohortClan } from "@/lib/context/ClanContext";
 
@@ -43,6 +44,24 @@ function MenteeTasksContent() {
   const [submitTarget, setSubmitTarget] = useState<SubmitTaskTarget | null>(
     null,
   );
+  /**
+   * The task being read, in a drawer over the list.
+   *
+   * Reading a brief is the commonest thing a mentee does here and it used to
+   * cost a full page load and a trip back. `/mentee/tasks/:id` still exists and
+   * is still what every notification links to — this is the shortcut from the
+   * list, not a replacement for the address.
+   */
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+
+  /** Hand a list row to the submit drawer in the shape it expects. */
+  const askToSubmit = (task: any) => setSubmitTarget({ // eslint-disable-line @typescript-eslint/no-explicit-any
+    id: task.id,
+    title: task.roadmapTask?.title || task.title || "Task",
+    status: task.status,
+    deliverable: task.roadmapTask?.deliverable,
+    acceptanceCriteria: task.roadmapTask?.acceptanceCriteria || [],
+  });
   const {
     filteredTasks,
     stats,
@@ -388,8 +407,16 @@ function MenteeTasksContent() {
                           <div className="flex-1 min-w-0">
                             <div className="flex flex-wrap items-center gap-2 mb-2">
                               <h3 className="text-slate-900 break-words min-w-0 flex-1">
+                                {/* Still an anchor, so ⌘-click and "open in
+                                    new tab" reach the real page; a plain click
+                                    opens the drawer instead of navigating. */}
                                 <Link
                                   href={`/mentee/tasks/${task.id}`}
+                                  onClick={(e) => {
+                                    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                                    e.preventDefault();
+                                    setOpenTaskId(task.id);
+                                  }}
                                   className="hover:text-brand-600 hover:underline underline-offset-4"
                                 >
                                   {task.roadmapTask?.title}
@@ -535,18 +562,7 @@ function MenteeTasksContent() {
                                 </button>
                               ) : (
                                 <button
-                                  onClick={() =>
-                                    setSubmitTarget({
-                                      id: task.id,
-                                      title: task.roadmapTask?.title || "Task",
-                                      status: task.status,
-                                      deliverable:
-                                        task.roadmapTask?.deliverable,
-                                      acceptanceCriteria:
-                                        task.roadmapTask?.acceptanceCriteria ||
-                                        [],
-                                    })
-                                  }
+                                  onClick={() => askToSubmit(task)}
                                   disabled={historical}
                                   title={historical ? HISTORICAL_TITLE : undefined}
                                   className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words disabled:opacity-50"
@@ -592,9 +608,7 @@ function MenteeTasksContent() {
 
                             {/* Always show a way to view task details */}
                             <button
-                              onClick={() =>
-                                router.push(`/mentee/tasks/${task.id}`)
-                              }
+                              onClick={() => setOpenTaskId(task.id)}
                               className="text-slate-600 hover:text-brand-600 text-sm transition-colors cursor-pointer shrink-0"
                             >
                               View Details
@@ -623,6 +637,20 @@ function MenteeTasksContent() {
           </div>
         )}
       </div>
+
+      <TaskDrawer
+        taskId={openTaskId}
+        open={!!openTaskId}
+        onClose={() => setOpenTaskId(null)}
+        readOnly={historical}
+        onStart={async (id) => { await handleStartTask(id); }}
+        onSubmit={(task) => {
+          // One drawer at a time: hand off to the submit form rather than
+          // stacking a second panel on top of this one.
+          setOpenTaskId(null);
+          askToSubmit(task);
+        }}
+      />
 
       <SubmitTaskDrawer
         open={!!submitTarget}
