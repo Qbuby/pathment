@@ -60,31 +60,7 @@ const authenticate = catchAsync(async (req, res, next) => {
       .assertMembership(user.id, req.organizationId);
   }
 
-  // Lazily resolve the user's scoped roles, memoized for the whole request, so
-  // authorize()/requirePermission() share ONE fetch and routes that don't gate
-  // on roles pay nothing (the DB is cross-region — avoid per-request overhead).
-  req.loadAssignments = () => {
-    if (!req._assignmentsPromise) req._assignmentsPromise = authzService.getAssignments(user);
-    return req._assignmentsPromise;
-  };
-  // Capabilities are DERIVED on demand (never the stored array), so a revoked
-  // role stops granting access immediately — no stale capability survives.
-  req.loadCapabilities = () => {
-    if (!req._capabilitiesPromise) {
-      req._capabilitiesPromise = req.loadAssignments()
-        .then((assignments) => authzService.getCapabilities(user, { assignments }));
-    }
-    return req._capabilitiesPromise;
-  };
-
-  // Compatibility for older service signatures that accept one role. Only
-  // workspace-wide administration may become "admin"; program roles stay scoped.
-  req.loadWorkspaceRole = async () => {
-    const assignments = await req.loadAssignments();
-    if (assignments.some(item => item.role === 'super_admin' && item.scopeType === 'org')) return 'admin';
-    const capabilities = await req.loadCapabilities();
-    return capabilities.includes('mentor') ? 'mentor' : capabilities.includes('mentee') ? 'mentee' : 'member';
-  };
+  attachRoleResolvers(req, user);
 
   // Seed the audit context with WHO is acting (ip/ua/requestId were seeded by
   // requestContext before auth ran). Every audit write now records the actor.
@@ -179,6 +155,45 @@ const authorize = (roles) => {
 };
 
 /**
+ * Attach the lazy role resolvers to a request that has an authenticated user.
+ *
+ * Shared by `authenticate` and `optionalAuth`. It used to live inline inside
+ * `authenticate` only, and that asymmetry was a real bug: an `optionalAuth`
+ * route could not call `req.loadWorkspaceRole()`, so its controller fell back
+ * to the account's stored `user.role` — which says what somebody signed up as,
+ * not what they administer. A workspace owner whose account role is 'mentor'
+ * was then treated as the public, and the admin Programs list silently served
+ * them the published-and-public view of their own workspace.
+ */
+function attachRoleResolvers(req, user) {
+  // Lazily resolve the user's scoped roles, memoized for the whole request, so
+  // authorize()/requirePermission() share ONE fetch and routes that don't gate
+  // on roles pay nothing (the DB is cross-region — avoid per-request overhead).
+  req.loadAssignments = () => {
+    if (!req._assignmentsPromise) req._assignmentsPromise = authzService.getAssignments(user);
+    return req._assignmentsPromise;
+  };
+  // Capabilities are DERIVED on demand (never the stored array), so a revoked
+  // role stops granting access immediately — no stale capability survives.
+  req.loadCapabilities = () => {
+    if (!req._capabilitiesPromise) {
+      req._capabilitiesPromise = req.loadAssignments()
+        .then((assignments) => authzService.getCapabilities(user, { assignments }));
+    }
+    return req._capabilitiesPromise;
+  };
+
+  // Compatibility for older service signatures that accept one role. Only
+  // workspace-wide administration may become "admin"; program roles stay scoped.
+  req.loadWorkspaceRole = async () => {
+    const assignments = await req.loadAssignments();
+    if (assignments.some(item => item.role === 'super_admin' && item.scopeType === 'org')) return 'admin';
+    const capabilities = await req.loadCapabilities();
+    return capabilities.includes('mentor') ? 'mentor' : capabilities.includes('mentee') ? 'mentee' : 'member';
+  };
+}
+
+/**
  * Optional authentication - doesn't fail if no token provided
  */
 const optionalAuth = async (req, res, next) => {
@@ -200,6 +215,9 @@ const optionalAuth = async (req, res, next) => {
             await require('../services/organizationService').assertMembership(user.id, req.organizationId);
           }
           req.user = user;
+          // Same resolvers as a required-auth route. They are lazy, so an
+          // anonymous-friendly endpoint that never asks pays nothing.
+          attachRoleResolvers(req, user);
         }
       }
     }

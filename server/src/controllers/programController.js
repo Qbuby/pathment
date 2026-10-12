@@ -28,7 +28,12 @@ class ProgramController {
     const result = await programService.getPrograms(
       req.query,
       req.user?.id,
-      req.user?.role
+      // NOT `req.user.role` — that is the account's signup role, and somebody
+      // who administers this workspace may well have signed up as a mentor.
+      // Reading it here served them the anonymous view of their own
+      // programmes: published-and-public only, which silently hid every
+      // completed or private one and made the status filter look broken.
+      req.user ? await req.loadWorkspaceRole() : null
     );
 
     res.status(200).json(paginatedResponse(
@@ -47,7 +52,7 @@ class ProgramController {
     const program = await programService.getProgramById(
       req.params.id,
       req.user?.id,
-      req.user?.role
+      req.user ? await req.loadWorkspaceRole() : null
     );
 
     res.status(200).json(successResponse(

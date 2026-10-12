@@ -10,7 +10,7 @@ import { toast } from 'sonner';
 import {
   ChevronLeft, ChevronRight, SkipForward, Check, Loader2,
   TrendingUp, TrendingDown, Minus, Flag, Clock, ClipboardCheck, Keyboard, CheckCircle2, ArrowUpRight, Send, Plus, ListTodo, CalendarClock,
-  Trash2, X, History, RotateCcw, CalendarDays, AlertTriangle, StickyNote, Search, Lock, Unlock, PauseCircle, Sparkles, PenLine, Star,
+  Trash2, X, History, RotateCcw, CalendarDays, AlertTriangle, StickyNote, Search, Lock, Unlock, PauseCircle, Sparkles, PenLine, Star, Users,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useMentorCohort, useMentorApprovals, type CohortMentee, type CohortMomentum, type CohortRisk, type ApprovalItem } from '@/lib/hooks/mentor';
@@ -795,11 +795,67 @@ export default function CohortReview() {
   }, [go, skip, approve, requestChanges, mark, pending, focus, reviewing, assigning, taskDetail, extReview, historyOpen, attOpen, recordOpen]);
 
   if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-brand-600" /></div>;
-  if (!cohort.length) return (
-    <div className="bg-card rounded-2xl border border-slate-200 py-16 text-center max-w-2xl">
-      <p className="text-slate-600">No mentees to review yet.</p>
-    </div>
-  );
+  /**
+   * Nobody to review.
+   *
+   * This used to be one grey sentence in an otherwise blank card, which told a
+   * mentor who had just had their standing clan approved precisely nothing:
+   * not whether something had failed, not whether they were looking at the
+   * wrong clan, and not what to do next. The three ways to arrive here are
+   * genuinely different situations, so each gets its own answer and its own way
+   * out.
+   */
+  if (!cohort.length) {
+    const canAddHere = activeClan?.kind === 'standing' && !historical;
+    const state = !clans.length
+      ? {
+        title: 'You do not mentor a clan yet',
+        body: 'Clan review walks you through your mentees one at a time. An admin adds you to a clan as its lead or co-mentor, and this fills in on its own.',
+        action: null,
+      }
+      : historical
+        ? {
+          title: `${activeClanName || 'This clan'} has finished`,
+          body: 'Its programme is closed, so there is nothing left to review here. The work and the feedback are all still readable from each mentee’s record.',
+          action: { href: '/mentor/mentees', label: 'Open my mentees' },
+        }
+        : {
+          title: `No one is in ${activeClanName || 'this clan'} yet`,
+          body: canAddHere
+            ? 'Add the mentees you are carrying forward and their work comes with them. Clan review then steps through them one at a time, here.'
+            : 'Once mentees join this clan they appear here, one at a time, with their submissions, blockers and progress.',
+          action: canAddHere
+            ? { href: '/mentor/clan-team', label: 'Add mentees' }
+            : { href: '/mentor/clan-team', label: 'Open clan team' },
+        };
+
+    return (
+      <div className="mx-auto max-w-xl rounded-2xl border border-slate-200 bg-card px-6 py-14 text-center dark:border-slate-800">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-400 dark:border-slate-700 dark:bg-slate-900">
+          <Users className="h-5 w-5" aria-hidden />
+        </div>
+        <h2 className="mt-4 text-base font-semibold text-slate-900 dark:text-slate-100">{state.title}</h2>
+        <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-slate-500 dark:text-slate-400">{state.body}</p>
+        {state.action && (
+          <Link
+            href={state.action.href}
+            className="mt-5 inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-700"
+          >
+            {state.action.label}
+            <ArrowUpRight className="h-4 w-4" aria-hidden />
+          </Link>
+        )}
+        {/* A multi-clan mentor's commonest reason for an empty screen is simply
+            being pointed at the wrong clan. Say so, rather than letting them
+            conclude the page is broken. */}
+        {clans.length >= 2 && (
+          <p className="mt-5 border-t border-slate-100 pt-4 text-xs text-slate-400 dark:border-slate-800">
+            Reviewing <span className="font-medium text-slate-600 dark:text-slate-300">{activeClanName || 'this clan'}</span> — switch clan in the sidebar to review another.
+          </p>
+        )}
+      </div>
+    );
+  }
 
   // The current index can briefly point past the end right after the cohort
   // shrinks (e.g. you just paused this mentee). Render nothing for that one
