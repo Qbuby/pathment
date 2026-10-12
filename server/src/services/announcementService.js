@@ -1,6 +1,7 @@
 const { Op } = require('sequelize');
 const { models } = require('../db');
 const { NotFoundError, ValidationError, ForbiddenError } = require('../utils/errors/errorTypes');
+const authzService = require('./authzService');
 
 const AUDIENCE_TYPES = ['all', 'mentors', 'mentees', 'program', 'clan'];
 
@@ -12,13 +13,32 @@ const AUDIENCE_TYPES = ['all', 'mentors', 'mentees', 'program', 'clan'];
  * program/clan they belong to (admins see everything for oversight).
  */
 class AnnouncementService {
-  _caps(user) {
-    return Array.isArray(user?.capabilities) && user.capabilities.length ? user.capabilities : [user?.role].filter(Boolean);
+  /**
+   * What this person can actually do, derived now.
+   *
+   * This read `user.capabilities` and fell back to `user.role` — both legacy,
+   * and `authzService.getAssignments` says so in as many words: elevated access
+   * comes from RoleAssignments and memberships, "NOT the stored `capabilities`
+   * array, which is legacy and no longer authoritative".
+   *
+   * The cost was real. A workspace owner whose account signed up as a mentor
+   * resolved to ['mentor'], so composing an announcement took the mentor branch
+   * and was refused with "Mentors can only announce to a clan they lead" — on
+   * their own workspace, from the admin portal, with the audience picker in
+   * front of them offering All mentors.
+   *
+   * `getCapabilities` adds 'admin' through `hasAdminAccess`, which reads the
+   * org membership and the role assignments, so it covers both a base-role
+   * admin and a workspace owner or admin of any account type.
+   */
+  async _caps(user) {
+    if (!user) return [];
+    return authzService.getCapabilities(user);
   }
 
   /** Clans + programs the viewer belongs to (for visibility filtering). */
   async _scope(user) {
-    const caps = this._caps(user);
+    const caps = await this._caps(user);
     const memberships = await models.ClanMembership.findAll({
       where: { userId: user.id, status: 'active' },
       include: [{ model: models.Clan, as: 'clan', attributes: ['programId'] }]
@@ -51,7 +71,7 @@ class AnnouncementService {
    * Returns undefined for admins, who see everything for oversight.
    */
   async _visibilityWhere(user) {
-    const caps = this._caps(user);
+    const caps = await this._caps(user);
     if (caps.includes('admin')) return undefined;
 
     const { clanIds, programIds } = await this._scope(user);
@@ -160,7 +180,7 @@ class AnnouncementService {
   async create({ title, body, audience, audienceId }, author) {
     if (!title || !title.trim() || !body || !body.trim()) throw new ValidationError('title and body are required');
     if (!AUDIENCE_TYPES.includes(audience)) throw new ValidationError('Invalid audience');
-    const caps = this._caps(author);
+    const caps = await this._caps(author);
 
     if (caps.includes('admin')) {
       if ((audience === 'program' || audience === 'clan') && !audienceId) {
@@ -188,7 +208,7 @@ class AnnouncementService {
   async _assertCanManage(id, user) {
     const a = await models.Announcement.findByPk(id);
     if (!a) throw new NotFoundError('Announcement not found');
-    const caps = this._caps(user);
+    const caps = await this._caps(user);
     if (!caps.includes('admin') && a.authorId !== user.id) {
       throw new ForbiddenError('You can only manage your own announcements');
     }
