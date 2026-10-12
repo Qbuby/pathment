@@ -25,7 +25,7 @@ import {
 import { NavLink } from '@/lib/config/navigation';
 import { useNavPreferences } from '@/lib/hooks/shared';
 import { usePermissions } from '@/lib/hooks/usePermissions';
-import { useClan, ALL_CLANS } from '@/lib/context/ClanContext';
+import { useClan, ALL_CLANS, type ClanLite } from '@/lib/context/ClanContext';
 import { useNavBadges } from '@/lib/hooks/shared/useNavBadges';
 import { SelectMenu } from './SelectMenu';
 import { ClanAvatar } from './ClanAvatar';
@@ -168,23 +168,56 @@ export default function Navigation({ role }: NavigationProps) {
     );
   };
 
-  // ── Clan scope (multi-clan mentors) ───────────────────────────────────────
-  // Only meaningful in the mentor view, and only when the user mentors 2+ clans.
+  // ── Clan scope (multi-clan mentors / mentees) ─────────────────────────────
+  /**
+   * One row per clan, grouped by what the clan IS rather than sorted by it.
+   *
+   * A clan from a closed programme stays in this list on purpose. It is the
+   * only way to scope the rest of the app — Approvals, Mentees, Review — to
+   * that clan, which is exactly how somebody looks back at what happened
+   * there, and the app already enforces read-only on that scope
+   * (`isHistoricalCohortClan`). Taking it out of the picker would not archive
+   * the work, it would just make it unreachable.
+   *
+   * What it must not do is sit in the same list as live work with no visible
+   * difference. So it goes under its own heading, below everything current,
+   * marked read-only.
+   */
+  const clanGroupOf = (c: ClanLite) => (
+    c.kind === 'standing' ? 'Standing clans'
+      : c.frozenAt ? 'Past programmes'
+        : 'Active programme'
+  );
+  // Current work first, history last; alphabetical inside each group.
+  const GROUP_ORDER = ['Active programme', 'Standing clans', 'Past programmes'];
+  const clanOptions = (list: ClanLite[]) => [...list]
+    .sort((a, b) => GROUP_ORDER.indexOf(clanGroupOf(a)) - GROUP_ORDER.indexOf(clanGroupOf(b))
+      || a.name.localeCompare(b.name))
+    .map((c) => ({
+      value: c.id,
+      // The clan's own name owns the full width. Everything that qualifies it
+      // moves to the second line, where it no longer competes for room.
+      label: c.name,
+      description: c.kind === 'standing'
+        ? `Standing${c.programName ? ` · ${c.programName}` : ''}`
+        : c.frozenAt
+          ? `${c.programName || 'Programme'} · finished`
+          : c.programName || 'Active programme',
+      group: clanGroupOf(c),
+      meta: c.kind !== 'standing' && c.frozenAt ? 'Read-only' : undefined,
+      icon: <ClanAvatar name={c.name} src={c.avatarUrl} size="sm" />,
+    }));
+
   const renderClanScope = () => {
     if (role === 'mentor' && clans.length >= 2) {
-      const options = [
-        { value: ALL_CLANS, label: 'All clans' },
-        ...clans.map((c) => ({
-          value: c.id,
-          label: `${c.name}${c.kind === 'standing' ? ' · Standing clan' : c.frozenAt ? ' · Completed history' : ' · Active program'}`,
-          icon: <ClanAvatar name={c.name} src={c.avatarUrl} size="sm" />,
-        })),
-      ];
       return (
         <SelectMenu
           value={activeClanId}
           onChange={setActiveClanId}
-          options={options}
+          options={[
+            { value: ALL_CLANS, label: 'All clans', description: 'Everything you mentor' },
+            ...clanOptions(clans),
+          ]}
           ariaLabel="Filter by clan"
           className="w-full"
         />
@@ -195,11 +228,7 @@ export default function Navigation({ role }: NavigationProps) {
         <SelectMenu
           value={menteeActiveClanId || menteeClans[0].id}
           onChange={setMenteeActiveClanId}
-          options={menteeClans.map((c) => ({
-            value: c.id,
-            label: `${c.name}${c.kind === 'standing' ? ' · Standing clan' : c.frozenAt ? ' · Completed history' : ' · Active program'}`,
-            icon: <ClanAvatar name={c.name} src={c.avatarUrl} size="sm" />,
-          }))}
+          options={clanOptions(menteeClans)}
           ariaLabel="Switch clan"
           className="w-full"
         />

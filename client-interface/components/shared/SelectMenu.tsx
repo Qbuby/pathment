@@ -7,6 +7,24 @@ export interface SelectOption {
   value: string;
   label: string;
   icon?: ReactNode;
+  /**
+   * A second line under the label — what this option IS, as opposed to what it
+   * is called.
+   *
+   * It exists because the alternative people reach for is `label: 'Name · kind
+   * · status'`, and in a sidebar-width menu that single string truncates from
+   * the right, eating the status first and then the name itself. Two lines let
+   * the name keep the full width. Search matches this as well as the label.
+   */
+  description?: string;
+  /**
+   * Section heading this option belongs under. Options are rendered in the
+   * order their groups first appear, so the caller controls the order by
+   * ordering the array. Ungrouped options render first, with no heading.
+   */
+  group?: string;
+  /** Small muted text pinned to the right of the row (e.g. "Read-only"). */
+  meta?: string;
 }
 
 interface SelectMenuProps {
@@ -48,14 +66,15 @@ export function SelectMenu({ value, onChange, options, placeholder = 'Select…'
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return options;
-    return options.filter((o) => o.label.toLowerCase().includes(q));
+    return options.filter((o) => `${o.label} ${o.description || ''} ${o.group || ''}`.toLowerCase().includes(q));
   }, [options, query]);
 
   const openMenu = () => {
     if (!triggerRef.current || disabled) return;
     const rect = triggerRef.current.getBoundingClientRect();
     const spaceBelow = window.innerHeight - rect.bottom;
-    const needed = Math.min(options.length * 40 + (withSearch ? 56 : 16), 320);
+    const rowHeight = options.some((o) => o.description) ? 52 : 40;
+    const needed = Math.min(options.length * rowHeight + (withSearch ? 56 : 16), 320);
     setFlipUp(spaceBelow < needed && rect.top > spaceBelow);
     setQuery('');
     setActiveIdx(Math.max(0, options.findIndex((o) => o.value === value)));
@@ -102,12 +121,33 @@ export function SelectMenu({ value, onChange, options, placeholder = 'Select…'
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={ariaLabel}
+        // A truncated label with no tooltip leaves no way at all to read the
+        // full name. Browsers only show `title` on a non-disabled element, so
+        // this lives on the trigger rather than the inner span.
+        title={selected ? [selected.label, selected.description].filter(Boolean).join(' — ') : undefined}
         className="w-full flex items-center justify-between gap-2 px-3 py-2.5 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-700 dark:text-slate-700 bg-card hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        <span className="flex items-center gap-2 min-w-0">
+        <span className="flex min-w-0 flex-1 items-center gap-2">
           {selected?.icon}
-          <span className={`truncate ${selected ? '' : 'text-slate-400'}`}>{selected?.label ?? placeholder}</span>
+          <span className="min-w-0 flex-1 text-left">
+            <span className={`block truncate ${selected ? '' : 'text-slate-400'}`}>{selected?.label ?? placeholder}</span>
+            {selected?.description && (
+              <span className="block truncate text-[11px] font-normal text-slate-500 dark:text-slate-500">{selected.description}</span>
+            )}
+          </span>
         </span>
+        {/*
+          The selected option's `meta` stays visible on the trigger, not just
+          in the open menu. For the clan picker that is the "Read-only" marker
+          on a finished programme — otherwise the only clue you are looking at
+          history is that scattered buttons are greyed out, which reads as a
+          bug rather than as a scope.
+        */}
+        {selected?.meta && (
+          <span className="shrink-0 rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-700/60 dark:text-slate-300">
+            {selected.meta}
+          </span>
+        )}
         <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
@@ -137,27 +177,46 @@ export function SelectMenu({ value, onChange, options, placeholder = 'Select…'
               <p className="px-3 py-3 text-sm text-slate-400 text-center">No matches</p>
             ) : filtered.map((o, i) => {
               const isSel = o.value === value;
+              // A heading whenever the group changes. Driven by the array's
+              // order rather than a separate structure, so a caller groups
+              // simply by ordering — and an ungrouped list renders as before.
+              const newGroup = o.group && o.group !== filtered[i - 1]?.group;
               return (
-                <button
-                  key={o.value}
-                  type="button"
-                  role="option"
-                  data-idx={i}
-                  aria-selected={isSel}
-                  onMouseEnter={() => setActiveIdx(i)}
-                  onClick={() => choose(o.value)}
-                  className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-left text-sm transition-colors ${
-                    i === activeIdx
-                      ? 'bg-brand-50 dark:bg-brand-500/15 text-brand-800 dark:text-brand-200'
-                      : 'text-slate-700 dark:text-slate-700 hover:bg-slate-50 dark:hover:bg-slate-100'
-                  }`}
-                >
-                  <span className="flex items-center gap-2 min-w-0">
-                    {o.icon}
-                    <span className="truncate">{o.label}</span>
-                  </span>
-                  {isSel && <Check className="w-4 h-4 text-brand-600 shrink-0" />}
-                </button>
+                <div key={o.value}>
+                  {newGroup && (
+                    <p className="px-3 pb-1 pt-2.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                      {o.group}
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    role="option"
+                    data-idx={i}
+                    aria-selected={isSel}
+                    onMouseEnter={() => setActiveIdx(i)}
+                    onClick={() => choose(o.value)}
+                    title={[o.label, o.description].filter(Boolean).join(' — ')}
+                    className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-left text-sm transition-colors ${
+                      i === activeIdx
+                        ? 'bg-brand-50 dark:bg-brand-500/15 text-brand-800 dark:text-brand-200'
+                        : 'text-slate-700 dark:text-slate-700 hover:bg-slate-50 dark:hover:bg-slate-100'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2 min-w-0 flex-1">
+                      {o.icon}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate">{o.label}</span>
+                        {o.description && (
+                          <span className="block truncate text-[11px] text-slate-500 dark:text-slate-500">{o.description}</span>
+                        )}
+                      </span>
+                    </span>
+                    {o.meta && !isSel && (
+                      <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-slate-400">{o.meta}</span>
+                    )}
+                    {isSel && <Check className="w-4 h-4 text-brand-600 shrink-0" />}
+                  </button>
+                </div>
               );
             })}
           </div>
