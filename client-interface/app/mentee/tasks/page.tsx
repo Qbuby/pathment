@@ -378,6 +378,8 @@ function MenteeTasksContent() {
                     const interviewHref = `/mentee/interviews/${task.id}`;
                     const isQuiz = taskType === "quiz";
                     const quizHref = `/mentee/quizzes/${task.id}`;
+                    // Course tasks are studied on Buildment; the task page shows progress.
+                    const isCourse = taskType === "course";
 
                     return (
                       <div
@@ -482,7 +484,14 @@ function MenteeTasksContent() {
                             </div>
 
                             {task.status === "assigned" &&
-                              (isInterview ? (
+                              (isCourse ? (
+                                <button
+                                  onClick={() => router.push(`/mentee/tasks/${task.id}`)}
+                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words"
+                                >
+                                  View course
+                                </button>
+                              ) : isInterview ? (
                                 <button
                                   onClick={() => router.push(interviewHref)}
                                   disabled={historical}
@@ -513,7 +522,14 @@ function MenteeTasksContent() {
 
                             {(task.status === "in_progress" ||
                               task.status === "revision_needed") &&
-                              (isInterview ? (
+                              (isCourse ? (
+                                <button
+                                  onClick={() => router.push(`/mentee/tasks/${task.id}`)}
+                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words"
+                                >
+                                  Continue course
+                                </button>
+                              ) : isInterview ? (
                                 <button
                                   onClick={() => router.push(interviewHref)}
                                   disabled={historical}

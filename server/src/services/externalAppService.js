@@ -1,7 +1,10 @@
 const { Op } = require('sequelize');
 const { models } = require('../db');
-const { NotFoundError, ConflictError } = require('../utils/errors/errorTypes');
+const { NotFoundError, ConflictError, ValidationError } = require('../utils/errors/errorTypes');
+const { INTEGRATIONS } = require('../config/externalApps');
+const { encrypt, decrypt, mask } = require('../utils/secretCrypto');
 const organizationService = require('./organizationService');
+const buildmentClient = require('./buildmentClient');
 
 /**
  * externalAppService - the external app catalog + per-workspace connections.
@@ -11,7 +14,23 @@ const organizationService = require('./organizationService');
  *    workspace has connected each app, and connect/disconnect apps.
  *  - Platform admins author the catalog itself (create/update/delete). The
  *    catalog is global, so those writes affect every workspace.
+ *
+ * Connecting an integration-backed app means: the admin enters the provider's
+ * keys, the provider verifies them, and only then are they stored (encrypted).
+ * A connection is therefore always one the provider has confirmed at least once.
  */
+
+// integrationKey → verify(credentials) → { connected, error, metadata }
+const VERIFIERS = {
+  buildment: async (credentials) => {
+    const result = await buildmentClient.verifyConnection(credentials);
+    return {
+      connected: result.connected,
+      error: result.error,
+      metadata: { organizationSlug: result.organizationSlug, organizationName: result.organizationName },
+    };
+  },
+};
 
 const catalogShape = (app) => ({
   id: app.id,
@@ -19,6 +38,7 @@ const catalogShape = (app) => ({
   type: app.type,
   description: app.description || null,
   iconUrl: app.iconUrl || null,
+  integrationKey: app.integrationKey || null,
   isActive: app.isActive,
   createdAt: app.createdAt,
   updatedAt: app.updatedAt
@@ -34,6 +54,35 @@ const filterWhere = ({ search, type } = {}) => {
 
 const isDuplicateName = (error) => error?.name === 'SequelizeUniqueConstraintError';
 
+const workspaceShape = (app, row) => ({
+  id: app.id,
+  name: app.name,
+  type: app.type,
+  description: app.description || null,
+  iconUrl: app.iconUrl || null,
+  // Only apps with a server-side integration can be connected; the fields are
+  // what the connect dialog asks for.
+  connectable: Boolean(INTEGRATIONS[app.integrationKey]),
+  credentialFields: INTEGRATIONS[app.integrationKey]?.credentialFields || [],
+  connected: Boolean(row),
+  status: row ? row.status : null,
+  credentialsMasked: row?.credentialsMasked || null,
+  accountName: row?.metadata?.organizationName || null,
+  connectedAt: row ? row.createdAt : null,
+  lastVerifiedAt: row?.lastVerifiedAt || null
+});
+
+/** Trim and require every field the integration declares; drop anything else. */
+function cleanCredentials(integrationKey, input = {}) {
+  const clean = {};
+  for (const field of INTEGRATIONS[integrationKey].credentialFields) {
+    const value = typeof input?.[field.key] === 'string' ? input[field.key].trim() : '';
+    if (!value) throw new ValidationError(`${field.label} is required`);
+    clean[field.key] = value;
+  }
+  return clean;
+}
+
 class ExternalAppService {
   // ── workspace view ──────────────────────────────────────────────────────
   async listForOrganization(organizationId, filters = {}) {
@@ -42,28 +91,60 @@ class ExternalAppService {
       models.ExternalApp.findAll({ where: { ...filterWhere(filters), isActive: true }, order: [['name', 'ASC']] }),
       models.OrganizationApp.findAll({ where: { organizationId: orgId } })
     ]);
-    const connectedAt = new Map(connections.map((row) => [row.appId, row.createdAt]));
-    return apps.map((app) => ({
-      id: app.id,
-      name: app.name,
-      type: app.type,
-      description: app.description || null,
-      iconUrl: app.iconUrl || null,
-      connected: connectedAt.has(app.id),
-      connectedAt: connectedAt.get(app.id) || null
-    }));
+    const rowByApp = new Map(connections.map((row) => [row.appId, row]));
+    return apps.map((app) => workspaceShape(app, rowByApp.get(app.id)));
   }
 
-  async connect(user, organizationId, appId) {
+  /**
+   * Verify the keys with the provider, then store them. Nothing is saved when
+   * the provider says no, so a failed attempt never replaces working keys.
+   * Connecting an already-connected app replaces its keys (rotation).
+   */
+  async connect(user, organizationId, appId, credentialsInput) {
     const orgId = organizationId || await organizationService.currentId();
     const app = await models.ExternalApp.findOne({ where: { id: appId, isActive: true } });
     if (!app) throw new NotFoundError('App not found');
-    // Idempotent: connecting an already-connected app keeps the original row.
-    const [row] = await models.OrganizationApp.findOrCreate({
+    if (!INTEGRATIONS[app.integrationKey]) throw new ValidationError(`${app.name} cannot be connected yet`);
+
+    const credentials = cleanCredentials(app.integrationKey, credentialsInput);
+    const result = await VERIFIERS[app.integrationKey](credentials);
+    if (!result.connected) {
+      throw new ValidationError(`${app.name} did not accept these keys${result.error ? `: ${result.error}` : ''}`);
+    }
+
+    const values = {
+      status: 'connected',
+      credentialsEncrypted: encrypt(JSON.stringify(credentials)),
+      credentialsMasked: mask(credentials[INTEGRATIONS[app.integrationKey].credentialFields[0].key]),
+      metadata: result.metadata || {},
+      lastVerifiedAt: new Date()
+    };
+    const [row, created] = await models.OrganizationApp.findOrCreate({
       where: { organizationId: orgId, appId },
-      defaults: { organizationId: orgId, appId, connectedBy: user.id }
+      defaults: { organizationId: orgId, appId, connectedBy: user.id, ...values }
     });
-    return { appId, connected: true, connectedAt: row.createdAt };
+    if (!created) await row.update({ ...values, connectedBy: user.id });
+    return workspaceShape(app, row);
+  }
+
+  /** Re-verify the stored keys and record the outcome. */
+  async test(organizationId, appId) {
+    const orgId = organizationId || await organizationService.currentId();
+    const row = await models.OrganizationApp.findOne({
+      where: { organizationId: orgId, appId },
+      include: [{ model: models.ExternalApp, as: 'app' }]
+    });
+    if (!row) throw new NotFoundError('App is not connected');
+    const integrationKey = row.app?.integrationKey;
+    if (!INTEGRATIONS[integrationKey] || !row.credentialsEncrypted) {
+      throw new ValidationError('This connection has no keys to test — connect it again');
+    }
+    const result = await VERIFIERS[integrationKey](JSON.parse(decrypt(row.credentialsEncrypted)));
+    await row.update({
+      status: result.connected ? 'connected' : 'error',
+      ...(result.connected ? { metadata: result.metadata || {}, lastVerifiedAt: new Date() } : {})
+    });
+    return { appId, status: row.status, error: result.connected ? null : result.error };
   }
 
   async disconnect(organizationId, appId) {
@@ -72,6 +153,26 @@ class ExternalAppService {
     if (!row) throw new NotFoundError('App is not connected');
     await row.destroy();
     return { appId, connected: false };
+  }
+
+  // ── for integration services (never exposed over HTTP) ──────────────────
+  /**
+   * The workspace's live connection to an integration, with decrypted
+   * credentials — or null when it is not connected / the keys were rejected.
+   */
+  async getConnection(organizationId, integrationKey) {
+    const orgId = organizationId || await organizationService.currentId();
+    const row = await models.OrganizationApp.findOne({
+      where: { organizationId: orgId, status: 'connected' },
+      include: [{ model: models.ExternalApp, as: 'app', where: { integrationKey, isActive: true }, required: true }]
+    });
+    if (!row || !row.credentialsEncrypted) return null;
+    return { row, credentials: JSON.parse(decrypt(row.credentialsEncrypted)), metadata: row.metadata || {} };
+  }
+
+  /** The provider rejected the stored keys mid-flight: stop offering the integration. */
+  async markRejected(row) {
+    await row.update({ status: 'error' });
   }
 
   // ── catalog authoring (platform admin) ──────────────────────────────────
@@ -87,12 +188,13 @@ class ExternalAppService {
         type: data.type,
         description: data.description || null,
         iconUrl: data.iconUrl || null,
+        integrationKey: data.integrationKey || null,
         isActive: data.isActive !== false,
         createdBy: user?.id || null
       });
       return catalogShape(app);
     } catch (error) {
-      if (isDuplicateName(error)) throw new ConflictError('An app with that name already exists');
+      if (isDuplicateName(error)) throw new ConflictError('An app with that name or integration already exists');
       throw error;
     }
   }
@@ -105,11 +207,12 @@ class ExternalAppService {
     if (data.type !== undefined) patch.type = data.type;
     if (data.description !== undefined) patch.description = data.description || null;
     if (data.iconUrl !== undefined) patch.iconUrl = data.iconUrl || null;
+    if (data.integrationKey !== undefined) patch.integrationKey = data.integrationKey || null;
     if (data.isActive !== undefined) patch.isActive = data.isActive;
     try {
       await app.update(patch);
     } catch (error) {
-      if (isDuplicateName(error)) throw new ConflictError('An app with that name already exists');
+      if (isDuplicateName(error)) throw new ConflictError('An app with that name or integration already exists');
       throw error;
     }
     return catalogShape(app);

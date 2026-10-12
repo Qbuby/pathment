@@ -47,6 +47,13 @@ export const qk = {
     mentorDocuments: ['messaging', 'mentor-documents'] as const,
   },
 
+  // External courses (Buildment): connection status, assignable list, per-task enrollment.
+  courses: {
+    all: ['courses'] as const,
+    status: ['courses', 'status'] as const,
+    list: ['courses', 'list'] as const,
+    enrollment: (taskId: string) => ['courses', 'enrollment', taskId] as const,
+  },
   mentor: {
     all: ['mentor'] as const,
     cohort: ['mentor', 'cohort'] as const,

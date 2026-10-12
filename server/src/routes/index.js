@@ -163,6 +163,9 @@ router.use('/ai-connections', aiConnectionRoutes);
 // External apps - platform catalog + per-workspace connections
 router.use('/apps', require('./externalApps'));
 
+// External courses (Buildment) - assignable catalog + per-task enrollment/progress
+router.use('/courses', require('./courses'));
+
 // Program reviews - anonymous mentee→mentor feedback at completion
 router.use('/program-reviews', programReviewRoutes);
 

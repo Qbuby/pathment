@@ -10,8 +10,13 @@ const list = catchAsync(async (req, res) => {
 });
 
 const connect = catchAsync(async (req, res) => {
-  const result = await externalAppService.connect(req.user, req.organizationId, req.params.id);
-  res.status(200).json(successResponse('App connected', result));
+  const app = await externalAppService.connect(req.user, req.organizationId, req.params.id, req.body.credentials);
+  res.status(200).json(successResponse('App connected', { app }));
+});
+
+const test = catchAsync(async (req, res) => {
+  const result = await externalAppService.test(req.organizationId, req.params.id);
+  res.status(200).json(successResponse('Connection tested', result));
 });
 
 const disconnect = catchAsync(async (req, res) => {
@@ -40,4 +45,4 @@ const remove = catchAsync(async (req, res) => {
   res.status(200).json(successResponse('App deleted', await externalAppService.remove(req.params.id)));
 });
 
-module.exports = { list, connect, disconnect, listCatalog, create, update, remove };
+module.exports = { list, connect, test, disconnect, listCatalog, create, update, remove };

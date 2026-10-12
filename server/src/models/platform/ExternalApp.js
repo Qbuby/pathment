@@ -1,4 +1,4 @@
-const { APP_TYPES } = require('../../config/externalApps');
+const { APP_TYPES, INTEGRATION_KEYS } = require('../../config/externalApps');
 
 module.exports = (sequelize, DataTypes) => {
   /**
@@ -12,6 +12,14 @@ module.exports = (sequelize, DataTypes) => {
     type: { type: DataTypes.ENUM(...APP_TYPES), allowNull: false },
     description: { type: DataTypes.TEXT, allowNull: true },
     iconUrl: { type: DataTypes.STRING(500), allowNull: true, field: 'icon_url' },
+    // Which server-side integration backs this app (config/externalApps.js).
+    // null = listed in the catalog but not connectable yet.
+    integrationKey: {
+      type: DataTypes.STRING(40),
+      allowNull: true,
+      field: 'integration_key',
+      validate: { isIn: [INTEGRATION_KEYS] }
+    },
     // Inactive apps stay in the catalog but are hidden from workspaces.
     isActive: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true, field: 'is_active' },
     createdBy: { type: DataTypes.UUID, allowNull: true, field: 'created_by' }
@@ -20,7 +28,8 @@ module.exports = (sequelize, DataTypes) => {
     underscored: true,
     timestamps: true,
     indexes: [
-      { unique: true, name: 'external_apps_name_lower_uniq', fields: [sequelize.fn('lower', sequelize.col('name'))] }
+      { unique: true, name: 'external_apps_name_lower_uniq', fields: [sequelize.fn('lower', sequelize.col('name'))] },
+      { unique: true, name: 'external_apps_integration_key_uniq', fields: ['integration_key'], where: { integration_key: { [sequelize.Sequelize.Op.ne]: null } } }
     ]
   });
 

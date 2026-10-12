@@ -19,7 +19,8 @@ router.delete('/catalog/:id', requirePlatformAdmin, validateParams(externalAppSc
 
 // A workspace's own view + connections — gated on system.settings (org admins hold it).
 router.get('/', requirePermission(PERMISSIONS.SYSTEM_SETTINGS), validateQuery(externalAppSchemas.listQuery), c.list);
-router.post('/:id/connect', requirePermission(PERMISSIONS.SYSTEM_SETTINGS), validateParams(externalAppSchemas.idParam), c.connect);
+router.post('/:id/connect', requirePermission(PERMISSIONS.SYSTEM_SETTINGS), validateParams(externalAppSchemas.idParam), validateBody(externalAppSchemas.connect), c.connect);
+router.post('/:id/test', requirePermission(PERMISSIONS.SYSTEM_SETTINGS), validateParams(externalAppSchemas.idParam), c.test);
 router.delete('/:id/connect', requirePermission(PERMISSIONS.SYSTEM_SETTINGS), validateParams(externalAppSchemas.idParam), c.disconnect);
 
 module.exports = router;

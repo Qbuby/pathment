@@ -172,6 +172,11 @@ async function start() {
       notificationScheduler.start();
     }
 
+    // Pull progress for open course enrollments (Buildment) every 15 minutes.
+    if (process.env.COURSE_SYNC_DISABLED !== 'true') {
+      require('./workers/courseSyncWorker').start();
+    }
+
     server.listen(PORT, () => {
       console.log(`✓ Server running on port ${PORT}`);
       console.log(`✓ Environment: ${process.env.NODE_ENV || 'development'}`);

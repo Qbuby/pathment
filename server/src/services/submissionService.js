@@ -69,6 +69,10 @@ class SubmissionService {
     if (taskType === 'interview' || taskType === 'quiz') {
       throw new ValidationError(`This is a ${taskType} task — complete it through the ${taskType}, not a work submission.`);
     }
+    // Course tasks complete themselves when the course is finished on the provider.
+    if (taskType === 'course') {
+      throw new ValidationError('This is a course task — it completes automatically when you finish the course.');
+    }
 
     // Upload files to Cloudinary
     // PDFs and documents must use 'raw' so Cloudinary delivers them via

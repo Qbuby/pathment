@@ -5,4 +5,20 @@
  */
 const APP_TYPES = ['course', 'communication', 'productivity', 'developer', 'analytics', 'other'];
 
-module.exports = { APP_TYPES };
+/**
+ * Server-side integrations a catalog app can be backed by
+ * (external_apps.integration_key). `credentialFields` drives the connect
+ * dialog; the values are verified with the provider and stored encrypted on
+ * organization_apps — they are never returned to a client.
+ */
+const INTEGRATIONS = {
+  buildment: {
+    credentialFields: [
+      { key: 'accessKey', label: 'Access key', secret: false },
+      { key: 'secretKey', label: 'Secret key', secret: true },
+    ],
+  },
+};
+const INTEGRATION_KEYS = Object.keys(INTEGRATIONS);
+
+module.exports = { APP_TYPES, INTEGRATIONS, INTEGRATION_KEYS };

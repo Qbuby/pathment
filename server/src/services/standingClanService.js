@@ -561,7 +561,7 @@ class StandingClanService {
       .filter((row) => !continuedSourceIds.has(row.id) && !targetStepIds.has(row.roadmapTaskId))
       .map((row) => {
         const type = row.typeOverride || row.roadmapTask.type;
-        const supported = !['quiz', 'interview'].includes(type);
+        const supported = !['quiz', 'interview', 'course'].includes(type);
         return {
           sourceTaskId: row.id,
           title: row.titleOverride || row.roadmapTask.title,
