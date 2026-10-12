@@ -47,6 +47,13 @@ export const qk = {
     mentorDocuments: ['messaging', 'mentor-documents'] as const,
   },
 
+  // External courses (Buildment): connection status, assignable list, per-task enrollment.
+  courses: {
+    all: ['courses'] as const,
+    status: ['courses', 'status'] as const,
+    list: ['courses', 'list'] as const,
+    enrollment: (taskId: string) => ['courses', 'enrollment', taskId] as const,
+  },
   mentor: {
     all: ['mentor'] as const,
     cohort: ['mentor', 'cohort'] as const,
@@ -117,6 +124,7 @@ export const qk = {
     orgRoadmaps: ['admin', 'org-roadmaps'] as const,
     clanHealth: ['admin', 'clan-health'] as const,
     aiConnections: ['admin', 'ai-connections'] as const,
+    apps: ['admin', 'apps'] as const,
     clanList: (page: number, limit: number, search: string, programId: string) =>
       ['admin', 'clans', page, limit, search, programId] as const,
     menteeList: (page: number, limit: number, search: string) =>

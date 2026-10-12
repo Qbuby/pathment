@@ -41,6 +41,7 @@ const WORKSPACE_MODELS = {
   QuizKit: 'quiz_kits',
   QuizQuestion: 'quiz_questions',
   QuizSession: 'quiz_sessions',
+  CourseEnrollment: 'course_enrollments',
   AdminMeeting: 'admin_meetings',
   AvailabilityRule: 'availability_rules',
   AvailabilitySlot: 'availability_slots',
@@ -88,7 +89,7 @@ const WORKSPACE_MODELS = {
 };
 
 const GLOBAL_MODELS = new Set([
-  'User', 'Organization', 'Plan',
+  'User', 'Organization', 'Plan', 'ExternalApp',
   'SuppressedEmail', 'DeviceToken', 'UserSettings', 'UserSession', 'RefreshToken',
   'SignInLinkToken', 'PasswordResetToken', 'EmailVerificationToken', 'TwoFactorAuth',
 ]);

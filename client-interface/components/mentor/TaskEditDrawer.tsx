@@ -256,7 +256,7 @@ export function TaskEditDrawer({
             disabled={
               !["assigned", "not_started", "in_progress"].includes(
                 task.status,
-              ) || ["quiz", "interview", "open_source"].includes(initial.type)
+              ) || ["quiz", "interview", "open_source", "course"].includes(initial.type)
             }
           >
             {Array.from(

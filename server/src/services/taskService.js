@@ -11,6 +11,7 @@ const { pointsForDifficulty } = require('../config/points');
 const { difficultyWeight } = require('../config/scoring');
 const interviewKitService = require('./interviewKitService');
 const quizKitService = require('./quizKitService');
+const courseService = require('./courseService');
 const { resolveMenteeClanId, listMenteeClans, clanScopedWhere } = require('./menteeClanScope');
 const { toStringList } = require('../utils/multipartFields');
 
@@ -206,6 +207,19 @@ class TaskService {
       const seconds = Number(quizOpts.timeLimitSeconds || kit.timeLimitSeconds) || (kitQuestions.length * 45);
       quizEstimateHours = Math.max(1, Math.round(seconds / 3600));
     }
+    // Course tasks carry a provider course id under `data.course`. Assigning one
+    // enrolls the mentee on the provider, so it is resolved (and seats checked)
+    // BEFORE any rows exist, and it cannot be deferred to a schedule.
+    let coursePrepared = null;
+    if (type === 'course') {
+      if (roadmapTaskId) throw new ValidationError('A course is assigned as its own task, not as a roadmap step');
+      if (data.schedule) throw new ValidationError('Courses are assigned right away — they cannot be scheduled');
+      // The assign drawer enrolls first and sends the enrollment's id; without
+      // one the enrollment happens here, as part of assigning.
+      coursePrepared = data.course?.assignmentId
+        ? await courseService.prepareEnrolled(data.course.courseId, data.course.assignmentId, menteeId)
+        : await courseService.prepare(data.course?.courseId);
+    }
     if (data.schedule) {
       return require('./customTaskScheduleService').create({ ...data, enrollmentId }, mentorId, clanId);
     }
@@ -223,12 +237,12 @@ class TaskService {
     } else {
       // Create custom roadmap task (not part of any roadmap - a one-off).
       roadmapTask = await models.RoadmapTask.create({
-        title,
-        description: description || 'No description provided',
+        title: title || coursePrepared?.course.title,
+        description: description || coursePrepared?.course.description || 'No description provided',
         type: type || 'custom',
         difficulty: difficulty || 'medium',
         taskOrder: 0,
-        deliverable: deliverable || 'Complete the assigned task',
+        deliverable: deliverable || (coursePrepared ? 'Finish the course on Buildment' : 'Complete the assigned task'),
         acceptanceCriteria: acceptanceCriteria || [],
         estimatedHours: type === 'interview'
           ? (interviewEstimateHours || 1)
@@ -262,6 +276,8 @@ class TaskService {
 
     // Create assigned task
     const assignedTask = await models.AssignedTask.create({
+      // A course enrolled ahead of the task: the task takes the enrollment's id.
+      ...(coursePrepared?.enrolled ? { id: coursePrepared.enrolled.assignmentId } : {}),
       roadmapTaskId: roadmapTask.id,
       menteeId,
       mentorId,
@@ -276,6 +292,18 @@ class TaskService {
       occurrenceDate: occurrenceDate || null,
       openSourceOrgIds: orgIds
     });
+
+    // Enroll on the provider. The task only exists if the enrollment does: a
+    // refusal (no seats, expired, enrolled elsewhere…) removes the rows again.
+    if (coursePrepared) {
+      try {
+        await courseService.enrollForTask(assignedTask, coursePrepared);
+      } catch (error) {
+        await assignedTask.destroy();
+        await models.RoadmapTask.destroy({ where: { id: roadmapTask.id } });
+        throw error;
+      }
+    }
 
     // Link the interview kit + snapshot the per-assignment options.
     if (interviewOpts) {
@@ -384,9 +412,13 @@ class TaskService {
     }
     const results = [];
     let frozenError = null;
+    // Courses enrolled ahead of assigning carry one enrollment id per mentee.
+    const courseFor = (menteeId) => (taskFields.course?.assignmentIds
+      ? { course: { courseId: taskFields.course.courseId, assignmentId: taskFields.course.assignmentIds[menteeId] } }
+      : {});
     for (const menteeId of menteeIds) {
       try {
-        await this.createCustomTask({ ...taskFields, menteeId }, mentorId);
+        await this.createCustomTask({ ...taskFields, ...courseFor(menteeId), menteeId }, mentorId);
         results.push({ menteeId, ok: true });
       } catch (err) {
         if (err.code === 'CLAN_FROZEN') frozenError = frozenError || err;
@@ -1149,6 +1181,9 @@ class TaskService {
     const enrollmentId = task.enrollmentId;
     const roadmapTaskId = task.roadmapTaskId;
 
+    // Course tasks hold a seat on the provider — release it first.
+    await courseService.cancelForTask(task);
+
     // Delete assigned task
     await task.destroy();
 
@@ -1249,6 +1284,10 @@ class TaskService {
     if (!task) throw new NotFoundError('Task not found');
     await clanLifecycleService.assertTaskWritable(task);
     if (task.status !== 'cancelled') throw new ValidationError('Only a cancelled task can be reassigned');
+    // Cancelling a course task released its enrollment; that cannot be undone in place.
+    if (await courseService.enrollmentForTask(task.id)) {
+      throw new ValidationError('A cancelled course cannot be reassigned — assign the course again to create a new enrollment');
+    }
 
     task.status = 'assigned';
     task.cancelledBy = null;
@@ -1293,6 +1332,9 @@ class TaskService {
     if (task.status === 'completed') {
       throw new ValidationError('Cannot cancel completed tasks');
     }
+
+    // Course tasks hold a seat on the provider — release it first.
+    await courseService.cancelForTask(task);
 
     // Update task status to cancelled
     task.status = 'cancelled';
@@ -1379,6 +1421,9 @@ class TaskService {
     if (['submitted', 'completed'].includes(task.status)) {
       throw new ValidationError('This task has been submitted or completed — cancel it instead of unassigning');
     }
+
+    // Course tasks hold a seat on the provider — release it first.
+    await courseService.cancelForTask(task);
 
     const { enrollmentId, roadmapTaskId, isCustomTask } = task;
     await task.destroy();

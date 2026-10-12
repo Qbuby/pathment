@@ -33,6 +33,7 @@ import { TaskProgressTimeline } from "@/components/shared/TaskProgressTimeline";
 import { SubmitTaskDrawer } from "@/components/mentee/SubmitTaskDrawer";
 import { InterviewReviewDrawer } from "@/components/mentor/InterviewReviewDrawer";
 import { isMissingDescription } from "@/lib/utils/html";
+import { CourseProgressCard } from "@/components/shared/CourseProgressCard";
 import { useClan, isHistoricalCohortClan } from "@/lib/context/ClanContext";
 
 interface PageProps {
@@ -147,6 +148,8 @@ export default function TaskDetailsPage({ params }: PageProps) {
   // Quiz tasks run in the quiz runner (start/resume/retake/view) — never the submit drawer.
   const isQuiz = (task.roadmapTask?.type || task.type) === "quiz";
   const openQuiz = () => router.push(`/mentee/quizzes/${task.id}`);
+  // Course tasks are studied on Buildment and complete themselves from its progress.
+  const isCourse = (task.roadmapTask?.type || task.type) === "course";
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -353,6 +356,8 @@ export default function TaskDetailsPage({ params }: PageProps) {
             </div>
           )
         )
+      ) : isCourse ? (
+        <CourseProgressCard taskId={task.id} viewer="mentee" onTaskStatusChange={refetch} />
       ) : (
         canSubmit && (
           <div className="flex flex-col items-end gap-1">
@@ -507,12 +512,16 @@ export default function TaskDetailsPage({ params }: PageProps) {
             <div className="rounded-2xl border border-border bg-card p-8 text-center">
               <FileText className="h-8 w-8 mx-auto mb-3 text-brand-600" />
               <h2 className="font-semibold">
-                {isQuiz || isInterview
+                {isCourse
+                  ? "Your course"
+                  : isQuiz || isInterview
                   ? "Your assessment"
                   : "Your work will appear here"}
               </h2>
               <p className="text-sm text-muted-foreground mt-2">
-                {isQuiz || isInterview
+                {isCourse
+                  ? "There is nothing to hand in — this task completes automatically when you finish the course on Buildment."
+                  : isQuiz || isInterview
                   ? "Use the assessment button above to open your work or view your results."
                   : "Submit your work when it’s ready. Your files and mentor’s feedback will stay together here."}
               </p>
@@ -822,7 +831,7 @@ export default function TaskDetailsPage({ params }: PageProps) {
           )}
         </section>
       )}
-      {!isInterview && !isQuiz && (
+      {!isInterview && !isQuiz && !isCourse && (
         <SubmitTaskDrawer
           open={submitOpen}
           task={{

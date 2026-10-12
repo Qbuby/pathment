@@ -10,6 +10,8 @@ export const mentorWorkspaces = [
     { href: '/mentor/quizzes', label: 'Quizzes' },
     { href: '/mentor/programs', label: 'Programs' },
     { href: '/mentor/library', label: 'Library' },
+    // Shown only while the workspace's course provider (Buildment) is connected.
+    { href: '/mentor/courses', label: 'Courses', requires: 'courses' },
   ] },
   { label: 'Recognition', tabs: [
     { href: '/mentor/top-performers', label: 'Top performers' },

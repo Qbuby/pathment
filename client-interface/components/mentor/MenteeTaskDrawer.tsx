@@ -20,6 +20,7 @@ import {
 import { Drawer } from "@/components/shared/Drawer";
 import { ResourceLink } from "@/components/shared/ResourceLink";
 import { OpenSourceOrgAvatar } from "@/components/shared/OpenSourceOrgAvatar";
+import { CourseProgressCard } from "@/components/shared/CourseProgressCard";
 
 import { TaskEditDrawer } from "@/components/mentor/TaskEditDrawer";
 import taskApi from "@/lib/services/task-api";
@@ -69,7 +70,9 @@ export function MenteeTaskDrawer({
     "in_progress",
     "revision_needed",
   ].includes(task.status);
-  const [editing, setEditing] = useState(canEdit);
+  // Course tasks open on their enrollment + progress, not straight into the editor.
+  const isCourse = (task.roadmapTask?.type || task.type) === "course";
+  const [editing, setEditing] = useState(canEdit && !isCourse);
   const showSubmissions = [
     "completed",
     "submitted",
@@ -321,6 +324,10 @@ export function MenteeTaskDrawer({
                   </div>
                 </div>
               )}
+
+            {isCourse && (
+              <CourseProgressCard taskId={task.id} viewer="mentor" onTaskStatusChange={onChanged} />
+            )}
 
             {rt.deliverable && (
               <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2">
