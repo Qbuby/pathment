@@ -160,6 +160,9 @@ router.use('/access', accessRoutes);
 // AI connections - admin BYO provider keys + feature routing
 router.use('/ai-connections', aiConnectionRoutes);
 
+// External apps - platform catalog + per-workspace connections
+router.use('/apps', require('./externalApps'));
+
 // Program reviews - anonymous mentee→mentor feedback at completion
 router.use('/program-reviews', programReviewRoutes);
 

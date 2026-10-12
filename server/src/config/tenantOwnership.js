@@ -88,7 +88,7 @@ const WORKSPACE_MODELS = {
 };
 
 const GLOBAL_MODELS = new Set([
-  'User', 'Organization', 'Plan',
+  'User', 'Organization', 'Plan', 'ExternalApp',
   'SuppressedEmail', 'DeviceToken', 'UserSettings', 'UserSession', 'RefreshToken',
   'SignInLinkToken', 'PasswordResetToken', 'EmailVerificationToken', 'TwoFactorAuth',
 ]);

@@ -109,3 +109,5 @@ export type { CommunityReportRow, ReportStatus } from './useModeration';
 
 export { useAIConnections, useAIQuota } from '../shared/useAIConnections';
 export { useAIConnectionsTab } from '../shared/useAIConnectionsTab';
+export { useApps } from '../shared/useApps';
+export { useAppsTab } from '../shared/useAppsTab';

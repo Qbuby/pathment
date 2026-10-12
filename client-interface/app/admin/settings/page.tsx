@@ -2,8 +2,9 @@
 
 import { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { User, Bell, Shield, Loader2, Save, KeyRound, Palette, Lock, Building2, CreditCard } from 'lucide-react';
+import { User, Bell, Shield, Loader2, Save, KeyRound, Palette, Lock, Building2, CreditCard, LayoutGrid } from 'lucide-react';
 import { useAdminSettings } from '@/lib/hooks/admin';
+import { useOrganization } from '@/lib/context/OrganizationContext';
 import { PageHeader } from '@/components/admin/ui';
 import SecurityTab from '@/components/shared/SecurityTab';
 import { LocationDetailsFields } from '@/components/settings/LocationDetailsFields';
@@ -11,6 +12,7 @@ import { ProfilePhotoField } from '@/components/settings/ProfilePhotoField';
 import { AppearanceTab } from '@/components/settings/AppearanceTab';
 import AIConnectionsTab from '@/components/settings/AIConnectionsTab';
 import { NotificationPreferencesTab } from '@/components/settings/NotificationPreferencesTab';
+import AppsTab from '@/components/settings/AppsTab';
 import ReviewLockTab from '@/components/settings/ReviewLockTab';
 import { PhoneField } from '@/components/shared/PhoneField';
 import { OrganizationSettingsTab } from '@/components/settings/OrganizationSettingsTab';
@@ -23,6 +25,7 @@ const TABS = [
   { id: 'appearance', label: 'Display', icon: Palette },
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'ai', label: 'AI Connections', icon: KeyRound },
+  { id: 'apps', label: 'Apps', icon: LayoutGrid },
   { id: 'review-lock', label: 'Review Lock', icon: Lock },
   { id: 'security', label: 'Security', icon: Shield },
 ];
@@ -42,6 +45,9 @@ function AdminSettingsInner() {
   const tabParam = searchParams.get('tab');
   const [activeTab, setActiveTab] = useState(() => tabParam && TABS.some((x) => x.id === tabParam) ? tabParam : 'profile');
   const { loading, saving, profileData, setProfileData, handleProfileUpdate } = useAdminSettings();
+  // Apps are a workspace-admin surface (system.settings); the API enforces the same rule.
+  const { overview } = useOrganization();
+  const tabs = overview?.canManageOrganization === true ? TABS : TABS.filter((x) => x.id !== 'apps');
 
   if (loading) {
     return (
@@ -57,7 +63,7 @@ function AdminSettingsInner() {
 
       <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
         <nav aria-label="Settings sections" className="flex gap-1 overflow-x-auto lg:flex-col lg:items-stretch">
-          {TABS.map(tab => <button key={tab.id} onClick={() => setActiveTab(tab.id)} aria-current={activeTab === tab.id ? 'page' : undefined} className={`inline-flex items-center gap-3 whitespace-nowrap rounded-xl px-4 py-3 text-left text-sm font-medium ${activeTab === tab.id ? 'bg-brand-600 text-white' : 'text-muted-foreground hover:bg-muted'}`}><tab.icon className="h-4 w-4" />{tab.label}</button>)}
+          {tabs.map(tab => <button key={tab.id} onClick={() => setActiveTab(tab.id)} aria-current={activeTab === tab.id ? 'page' : undefined} className={`inline-flex items-center gap-3 whitespace-nowrap rounded-xl px-4 py-3 text-left text-sm font-medium ${activeTab === tab.id ? 'bg-brand-600 text-white' : 'text-muted-foreground hover:bg-muted'}`}><tab.icon className="h-4 w-4" />{tab.label}</button>)}
         </nav>
 
         <div className="rounded-3xl border border-border bg-card p-4 sm:p-8">
@@ -134,6 +140,7 @@ function AdminSettingsInner() {
           {activeTab === 'plan' && <PlansSettingsTab />}
           {activeTab === 'notifications' && <NotificationPreferencesTab role="admin" />}
           {activeTab === 'ai' && <AIConnectionsTab />}
+          {activeTab === 'apps' && tabs.some((x) => x.id === 'apps') && <AppsTab />}
           {activeTab === 'review-lock' && <ReviewLockTab />}
           {activeTab === 'security' && <SecurityTab userRole="admin" showAuditLogs={true} />}
         </div>

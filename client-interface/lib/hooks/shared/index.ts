@@ -6,3 +6,5 @@ export { useActivityTracker } from './useActivityTracker';
 export { useNavPreferences } from './useNavPreferences';
 export { useAIConnections, useAIQuota } from './useAIConnections';
 export { useAIConnectionsTab } from './useAIConnectionsTab';
+export { useApps } from './useApps';
+export { useAppsTab } from './useAppsTab';

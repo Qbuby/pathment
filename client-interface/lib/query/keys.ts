@@ -117,6 +117,7 @@ export const qk = {
     orgRoadmaps: ['admin', 'org-roadmaps'] as const,
     clanHealth: ['admin', 'clan-health'] as const,
     aiConnections: ['admin', 'ai-connections'] as const,
+    apps: ['admin', 'apps'] as const,
     clanList: (page: number, limit: number, search: string, programId: string) =>
       ['admin', 'clans', page, limit, search, programId] as const,
     menteeList: (page: number, limit: number, search: string) =>
