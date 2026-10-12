@@ -81,7 +81,7 @@ export default function CohortReview() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user } = useAuth();
-  const { clans, activeClanId, setActiveClanId } = useClan();
+  const { clans, activeClanId } = useClan();
   const { cohort, loading, refetch: refetchCohort } = useMentorCohort();
   const { queue, refetch: refetchQueue } = useMentorApprovals();
   const confirm = useConfirm();
@@ -95,11 +95,16 @@ export default function CohortReview() {
   const activeClan = clans.find((c) => c.id === effectiveClanId) ?? null;
   const activeClanName = activeClan?.name ?? null;
   const historical = isHistoricalCohortClan(activeClan);
-  useEffect(() => {
-    if (clans.length >= 2 && activeClanId === ALL_CLANS && clans[0]?.id) {
-      setActiveClanId(clans[0].id);
-    }
-  }, [clans, activeClanId, setActiveClanId]);
+  /**
+   * This used to write `clans[0].id` into the global clan selection whenever it
+   * saw "All clans", which quietly overwrote what the mentor had chosen — and
+   * because the old restore briefly read "All clans" on every load before the
+   * memberships arrived, merely opening this page could reset their clan to
+   * whichever one sorts first.
+   *
+   * `effectiveClanId` above already pins this screen to a single clan without
+   * touching the sidebar, which is all this page ever needed.
+   */
 
   const [idx, setIdx] = useState(0);
   // Guards the one-time restore of ?mentee= below; the clan-change effect also
