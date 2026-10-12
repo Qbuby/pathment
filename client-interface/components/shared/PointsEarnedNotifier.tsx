@@ -5,7 +5,7 @@ import { X, Sparkles, ArrowRight, Flame, Trophy } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/context/AuthContext";
-import { logicalPathname, workspacePath } from "@/lib/services/workspace-scope";
+import { activeWorkspaceSlug, logicalPathname, workspacePath } from "@/lib/services/workspace-scope";
 import {
   gamificationApi,
   type PointsHistoryEntry,
@@ -86,12 +86,13 @@ export function PointsEarnedNotifier() {
   const { user } = useAuth();
   const rawPath = usePathname() || "";
   const pathname = logicalPathname(rawPath);
+  const hasWorkspace = Boolean(activeWorkspaceSlug());
   const [items, setItems] = useState<PointsHistoryEntry[]>([]);
   const [itemsOwnerId, setItemsOwnerId] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
   const [dismissedOwnerId, setDismissedOwnerId] = useState<string | null>(null);
 
-  const blocked = isOnboardingPath(pathname, rawPath);
+  const blocked = !hasWorkspace || isOnboardingPath(pathname, rawPath);
   const userId = user?.id || null;
   const dismissed = dismissedOwnerId === userId;
   const visible = !blocked && !dismissed && itemsOwnerId === userId && items.length > 0;

@@ -9,7 +9,7 @@ import { WorkspaceChooser } from '@/components/shared/WorkspaceChooser';
 import { restoreAccessToken, SessionExpiredError } from '@/lib/services/auth-session';
 import { organizationsApi, OrganizationSummary, resolveWorkspaceEntry } from '@/lib/services/organizations-api';
 import { tokenStore } from '@/lib/services/token-store';
-import { activeWorkspaceSlug, switchWorkspace } from '@/lib/services/workspace-scope';
+import { rememberedWorkspaceSlug, switchWorkspace } from '@/lib/services/workspace-scope';
 import '@/styles/public-appearance.css';
 
 type GatewayState = 'checking' | 'opening' | 'choose' | 'error';
@@ -37,7 +37,7 @@ export default function HomePage() {
   const [canCreate, setCanCreate] = useState(false);
   const [creating, setCreating] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const recentSlug = activeWorkspaceSlug();
+  const recentSlug = rememberedWorkspaceSlug();
   const cachedUser = tokenStore.getUser<{ firstName?: string; email?: string }>();
 
   const loadAccount = useCallback(async () => {
@@ -49,7 +49,7 @@ export default function HomePage() {
       }
 
       const account = await organizationsApi.account();
-      const decision = resolveWorkspaceEntry(account.organizations, activeWorkspaceSlug());
+      const decision = resolveWorkspaceEntry(account.organizations, rememberedWorkspaceSlug());
       if (decision.kind === 'open') {
         setState('opening');
         switchWorkspace(decision.workspace.slug);

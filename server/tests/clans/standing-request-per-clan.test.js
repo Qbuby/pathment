@@ -477,3 +477,206 @@ describe('carrying a mentee into a standing clan', () => {
     expect(await source.reload()).toMatchObject({ clanId: cohort.id, status: 'completed', roadmapTaskId: template.id });
   });
 });
+
+/**
+ * Joining a standing clan brings your work with you.
+ *
+ * The continuation machinery already existed behind a button the mentor had to
+ * press, picking roadmaps and tasks by hand. "Carry their work over" is the
+ * answer every time somebody joins a continuation clan, so adding them now does
+ * it — resuming each roadmap at the step they had reached.
+ *
+ * The flag is the whole safety story: migration 126 opted every clan that
+ * already existed OUT, so standing clans approved before this shipped keep
+ * behaving exactly as they did.
+ */
+describe('work carries over automatically on join', () => {
+  const { models: m } = require('../../src/db');
+  const { createRoadmap, createRoadmapTask, createMentee } = require('../helpers/seed');
+  let admin3, lead3, otherMentor, strangerMentor, joiner, program3, cohort3, standing3;
+
+  /**
+   * Unfinished roadmap work in the cohort, set by `mentor`.
+   *
+   * Who set it is the whole question for the automatic carry, so every test
+   * here seeds through this and says which mentor it is naming.
+   */
+  const seedRoadmapWorkBy = async (mentor, label) => {
+    const roadmap = await createRoadmap({ programId: program3.id, createdBy: admin3.id, name: `${label} roadmap` });
+    for (const [i, status] of [['1', 'completed'], ['2', 'in_progress']]) {
+      const step = await createRoadmapTask({ roadmapId: roadmap.id, title: `${label} step ${i}`, taskOrder: Number(i) });
+      await m.AssignedTask.create({
+        organizationId: cohort3.organizationId, clanId: cohort3.id, menteeId: joiner.id,
+        mentorId: mentor.id, roadmapTaskId: step.id, status,
+        assignedAt: new Date(), completedAt: status === 'completed' ? new Date() : null,
+      });
+    }
+    return roadmap;
+  };
+
+  beforeEach(async () => {
+    await cleanDb();
+    admin3 = await createAdmin({ email: 'a3@test.com' });
+    lead3 = await createMentor({ email: 'l3@test.com' });
+    otherMentor = await createMentor({ email: 'other3@test.com' });
+    strangerMentor = await createMentor({ email: 'stranger3@test.com' });
+    joiner = await createMentee({ email: 'joiner@test.com' });
+
+    program3 = await createProgram({ createdBy: admin3.id });
+    await program3.update({ status: 'completed', closedAt: new Date() });
+
+    cohort3 = await m.Clan.create({ programId: program3.id, name: 'Cohort C', kind: 'cohort', leadMentorId: lead3.id, createdBy: admin3.id });
+    standing3 = await m.Clan.create({ programId: program3.id, name: 'Cohort C · Standing', kind: 'standing', leadMentorId: lead3.id, createdBy: admin3.id });
+    await clanService.addMember(cohort3.id, { userId: lead3.id, role: 'lead_mentor' });
+    await clanService.addMember(standing3.id, { userId: lead3.id, role: 'lead_mentor' });
+    await clanService.addMember(cohort3.id, { userId: joiner.id, role: 'mentee' });
+    // `otherMentor` came across with the mentee as a co-mentor, and a co-mentor
+    // counts: the work they set is still being continued by the person who set
+    // it. `strangerMentor` stays behind in the cohort.
+    await clanService.addMember(cohort3.id, { userId: otherMentor.id, role: 'co_mentor' });
+    await clanService.addMember(standing3.id, { userId: otherMentor.id, role: 'co_mentor' });
+    await clanService.addMember(cohort3.id, { userId: strangerMentor.id, role: 'co_mentor' });
+
+    await seedRoadmapWorkBy(otherMentor, 'Carried');
+  });
+
+  const carriedInto = (clanId) => m.AssignedTask.count({
+    where: { clanId, menteeId: joiner.id, continuedFromTaskId: { [require('sequelize').Op.ne]: null } },
+  });
+
+  it('carries their work when the clan opts in', async () => {
+    expect(standing3.autoContinueOnJoin).toBe(true);
+    await standingClanService.addMenteesToStandingClan(standing3.id, [joiner.id], lead3);
+
+    expect(await carriedInto(standing3.id)).toBeGreaterThan(0);
+  });
+
+  /**
+   * The constraint that mattered most: a standing clan approved BEFORE this
+   * shipped must not suddenly generate assignments. Migration 126 set exactly
+   * this flag false on every clan that already existed.
+   */
+  it('carries nothing when the clan was approved before this existed', async () => {
+    await standing3.update({ autoContinueOnJoin: false });
+    await standingClanService.addMenteesToStandingClan(standing3.id, [joiner.id], lead3);
+
+    expect(await carriedInto(standing3.id)).toBe(0);
+    // They still joined — the opt-out is about work, not membership.
+    expect(await m.ClanMembership.count({
+      where: { clanId: standing3.id, userId: joiner.id, role: 'mentee', status: 'active' },
+    })).toBe(1);
+  });
+
+  it('keeps whoever originally set the work as its mentor', async () => {
+    await standingClanService.addMenteesToStandingClan(standing3.id, [joiner.id], lead3);
+    const carried = await m.AssignedTask.findAll({
+      where: { clanId: standing3.id, menteeId: joiner.id, continuedFromTaskId: { [require('sequelize').Op.ne]: null } },
+      attributes: ['mentorId'],
+    });
+    expect(carried.length).toBeGreaterThan(0);
+    // Not lead3, who did the adding — otherMentor, who set the work.
+    for (const row of carried) expect(row.mentorId).toBe(otherMentor.id);
+  });
+
+  it('still adds the mentee when nothing can be carried', async () => {
+    const fresh = await createMentee({ email: 'nohistory@test.com' });
+    await expect(
+      standingClanService.addMenteesToStandingClan(standing3.id, [fresh.id], lead3),
+    ).resolves.toBeTruthy();
+    expect(await m.ClanMembership.count({
+      where: { clanId: standing3.id, userId: fresh.id, role: 'mentee', status: 'active' },
+    })).toBe(1);
+  });
+
+  it('does not duplicate work when the same mentee is added again', async () => {
+    await standingClanService.addMenteesToStandingClan(standing3.id, [joiner.id], lead3);
+    const first = await carriedInto(standing3.id);
+    await standingClanService.addMenteesToStandingClan(standing3.id, [joiner.id], lead3);
+    expect(await carriedInto(standing3.id)).toBe(first);
+  });
+
+  /**
+   * The automatic carry is "the same mentor keeps going with the same mentee",
+   * not "take everything". Work set by somebody who did not come across is a
+   * judgement for a person: the new mentor has not read the submissions or the
+   * feedback behind it. It stays available on the manual button, which is
+   * exactly what `continuationPreview` still offering it means.
+   */
+  describe('only work whose mentor came too', () => {
+    beforeEach(async () => {
+      await seedRoadmapWorkBy(strangerMentor, 'Held');
+    });
+
+    it('carries the team\'s work and leaves the stranger\'s behind', async () => {
+      await standingClanService.addMenteesToStandingClan(standing3.id, [joiner.id], lead3);
+      const carried = await m.AssignedTask.findAll({
+        where: { clanId: standing3.id, menteeId: joiner.id, continuedFromTaskId: { [require('sequelize').Op.ne]: null } },
+        attributes: ['mentorId'],
+      });
+      expect(carried.length).toBeGreaterThan(0);
+      expect(carried.some((row) => row.mentorId === strangerMentor.id)).toBe(false);
+      for (const row of carried) expect(row.mentorId).toBe(otherMentor.id);
+    });
+
+    it('still offers the held work on the manual button', async () => {
+      await standingClanService.addMenteesToStandingClan(standing3.id, [joiner.id], lead3);
+      const preview = await standingClanService.continuationPreview(standing3.id, joiner.id, lead3);
+      // The carried roadmap is gone from the preview because it is already
+      // here; the held one is still on offer, which IS the button appearing.
+      expect(preview.roadmaps.length).toBe(1);
+      expect(preview.roadmaps[0].sourceMentorId).toBe(strangerMentor.id);
+    });
+
+    it('carries nothing at all when no mentor came across', async () => {
+      await m.AssignedTask.update(
+        { mentorId: strangerMentor.id },
+        { where: { clanId: cohort3.id, menteeId: joiner.id } },
+      );
+      await standingClanService.addMenteesToStandingClan(standing3.id, [joiner.id], lead3);
+
+      expect(await carriedInto(standing3.id)).toBe(0);
+      // And they are still in the clan, with the button waiting for the mentor.
+      expect(await m.ClanMembership.count({
+        where: { clanId: standing3.id, userId: joiner.id, role: 'mentee', status: 'active' },
+      })).toBe(1);
+      const preview = await standingClanService.continuationPreview(standing3.id, joiner.id, lead3);
+      expect(preview.roadmaps.length).toBe(2);
+    });
+
+    /**
+     * The resume step is often the step they never reached, so it has no
+     * assignment of its own to read a mentor off. The roadmap's mentor is still
+     * the person who set the steps before it.
+     */
+    it('keeps the previous mentor even when the resume step was never assigned', async () => {
+      // Drop the unfinished step's assignment: step 1 is completed, step 2 was
+      // never given out, so the carry resumes at a step with no source row.
+      await m.AssignedTask.destroy({
+        where: { clanId: cohort3.id, menteeId: joiner.id, mentorId: otherMentor.id, status: 'in_progress' },
+      });
+      await standingClanService.addMenteesToStandingClan(standing3.id, [joiner.id], lead3);
+
+      const carried = await m.AssignedTask.findAll({
+        where: { clanId: standing3.id, menteeId: joiner.id },
+        attributes: ['mentorId'],
+      });
+      expect(carried.length).toBeGreaterThan(0);
+      // otherMentor set the roadmap, lead3 did the adding.
+      for (const row of carried) expect(row.mentorId).toBe(otherMentor.id);
+    });
+
+    it('carries work the standing clan\'s own lead set', async () => {
+      await m.AssignedTask.update(
+        { mentorId: lead3.id },
+        { where: { clanId: cohort3.id, menteeId: joiner.id, mentorId: strangerMentor.id } },
+      );
+      await standingClanService.addMenteesToStandingClan(standing3.id, [joiner.id], lead3);
+
+      const carried = await m.AssignedTask.findAll({
+        where: { clanId: standing3.id, menteeId: joiner.id, continuedFromTaskId: { [require('sequelize').Op.ne]: null } },
+        attributes: ['mentorId'],
+      });
+      expect(carried.map((row) => row.mentorId).sort()).toEqual([lead3.id, otherMentor.id].sort());
+    });
+  });
+});

@@ -49,7 +49,17 @@ export function WorkspaceSwitcher({ compact = false, onNavigate }: WorkspaceSwit
           <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" sideOffset={6} className="w-[var(--radix-popover-trigger-width)] min-w-64 overflow-hidden rounded-xl border-slate-200 p-0 shadow-xl">
+      {/*
+        Width tracks the trigger exactly.
+
+        `min-w-64` used to sit here, and in the sidebar the trigger is narrower
+        than 16rem — so the panel grew past the sidebar's right edge and hung
+        over the page content, not as a deliberate overhang but as a ragged
+        40px of overshoot. A switcher should look like it belongs to the control
+        that opened it. `max-w` keeps it honest if this is ever used somewhere
+        the trigger is wider than the viewport.
+      */}
+      <PopoverContent align="start" sideOffset={6} className="w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-xl border-slate-200 p-0 shadow-xl">
         <div className="border-b border-slate-100 px-3 py-2.5">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Your workspaces</p>
         </div>

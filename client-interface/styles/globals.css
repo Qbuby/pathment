@@ -303,17 +303,23 @@ html[data-accent='graphite'] {
    * Frosted-glass surface for floating / elevated chrome — popovers, dropdown
    * menus, the ⌘K palette, drawers. Token-driven (uses --card / --border) so it
    * follows light/dark + the active accent automatically and stays CONSISTENT
-   * everywhere it's applied. Kept fairly opaque so text/inputs stay readable —
-   * this is an intentionally light first pass we can dial up later.
+   * everywhere it's applied.
+   *
+   * Opacity was 82% / 70%, and that was too far: a menu opened over the sidebar
+   * showed the nav links behind it straight through its own rows — you could
+   * read "Approvals" and its badge underneath a list you were trying to pick
+   * from. Blur softens a photograph; it does not stop dark text on a light
+   * background from showing through. These values keep the frosted tint and the
+   * saturation while putting the surface firmly in front of whatever it covers.
    */
   .glass {
-    background-color: color-mix(in srgb, var(--card) 82%, transparent);
+    background-color: color-mix(in srgb, var(--card) 96%, transparent);
     -webkit-backdrop-filter: blur(14px) saturate(180%);
     backdrop-filter: blur(14px) saturate(180%);
     border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   }
   .dark .glass {
-    background-color: color-mix(in srgb, var(--card) 70%, transparent);
+    background-color: color-mix(in srgb, var(--card) 93%, transparent);
     border-color: rgba(255, 255, 255, 0.10);
   }
   /* Gracefully fall back to a solid surface where backdrop-blur isn't supported. */

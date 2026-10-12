@@ -905,7 +905,15 @@ class ClanService {
     const { Op } = require('sequelize');
     const direct = await models.ClanMembership.findAll({
       where: { userId, status: { [Op.in]: ['active', 'paused'] } },
-      include: [{ model: models.Clan, as: 'clan', attributes: ['id', 'name', 'avatarUrl', 'programId', 'status', 'kind', 'frozenAt'] }],
+      include: [{
+        model: models.Clan, as: 'clan',
+        attributes: ['id', 'name', 'avatarUrl', 'programId', 'status', 'kind', 'frozenAt'],
+        // The programme's name, for the clan picker's second line. A clan name
+        // alone ("Core Team 2026") does not say which programme it belongs to,
+        // and once somebody is in clans from two programmes that is the first
+        // thing they need to tell them apart.
+        include: [{ model: models.Program, as: 'program', attributes: ['id', 'name', 'status'], required: false }],
+      }],
       order: [['joinedAt', 'DESC']]
     });
     const out = direct.map((m) => m.toJSON());
@@ -923,6 +931,7 @@ class ClanService {
       const clans = await models.Clan.findAll({
         where: { id: { [Op.in]: missingClanIds } },
         attributes: ['id', 'name', 'avatarUrl', 'programId', 'status', 'kind', 'frozenAt'],
+        include: [{ model: models.Program, as: 'program', attributes: ['id', 'name', 'status'], required: false }],
       });
       const clanById = new Map(clans.map((c) => [c.id, c.toJSON()]));
       for (const g of grants) {
