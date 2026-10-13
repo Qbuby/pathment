@@ -922,6 +922,10 @@ export default function MentorApprovals() {
             disabled: reviewingIndex === reviewOrder.length - 1,
             position: `${reviewingIndex + 1} of ${reviewOrder.length}`,
           } : undefined}
+          prev={reviewOrder.length > 1 && reviewingIndex >= 0 ? {
+            onClick: () => setReviewing(reviewOrder[reviewingIndex - 1] ?? reviewing),
+            disabled: reviewingIndex === 0,
+          } : undefined}
           onClose={() => setReviewing(null)}
           onReviewed={() => { setSelected(new Set()); refetch(); }}
         />

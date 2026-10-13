@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Check, ChevronRight, Star, ExternalLink, Loader2, Clock, ShieldCheck } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Star, ExternalLink, Loader2, Clock, ShieldCheck } from 'lucide-react';
 import { submissionService } from '@/lib/services/submissionService';
 import { Drawer } from '@/components/shared/Drawer';
 import { Avatar } from '@/components/shared/Avatar';
@@ -28,6 +28,10 @@ const FEEDBACK_TEMPLATES = [
 // quality rating to 4/5. The mentor can override both, but must give a reason.
 const LATE_PENALTY_PCT = 0.2;
 
+// Shared look of the Back / Next buttons in the header (padding differs per side).
+const STEP_BUTTON =
+  'inline-flex items-center gap-0.5 rounded-lg border border-slate-200 py-1.5 text-xs font-medium text-slate-700 hover:border-brand-300 hover:text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-slate-200 disabled:hover:text-slate-700';
+
 export function ReviewDrawer({
   item,
   onClose,
@@ -35,6 +39,7 @@ export function ReviewDrawer({
   readOnly = false,
   showMentee = false,
   next,
+  prev,
 }: {
   item: ApprovalItem;
   onClose: () => void;
@@ -47,6 +52,8 @@ export function ReviewDrawer({
    * only when there is more than one; `disabled` marks the last one.
    */
   next?: { onClick: () => void; disabled: boolean; position?: string };
+  /** Step back to the previous submission; `disabled` marks the first one. */
+  prev?: { onClick: () => void; disabled: boolean };
 }) {
   const [checked, setChecked] = useState<Set<string>>(new Set());
   // `total` is the task's max (set by difficulty). A late task is pre-penalized:
@@ -74,6 +81,36 @@ export function ReviewDrawer({
   useEffect(() => {
     bodyRef.current?.parentElement?.scrollTo({ top: 0 });
   }, [item.submissionId]);
+
+  // → / ← step to the next / previous submission. Read through refs so the
+  // listener is bound once per drawer rather than on every render.
+  const nextRef = useRef(next);
+  const prevRef = useRef(prev);
+  const busyRef = useRef(busy);
+  useEffect(() => {
+    nextRef.current = next;
+    prevRef.current = prev;
+    busyRef.current = busy;
+  });
+  const hasStep = !!next || !!prev;
+  useEffect(() => {
+    if (!hasStep) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      // Arrow keys belong to text fields, the points slider and open menus.
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || t.closest('input, textarea, select, [role="slider"], [role="listbox"], [role="menu"]'))) return;
+      // Only the top-most dialog reacts — never a sheet stacked above this one.
+      const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
+      if (dialogs[dialogs.length - 1] !== bodyRef.current?.closest('[role="dialog"]')) return;
+      const step = e.key === 'ArrowRight' ? nextRef.current : prevRef.current;
+      if (!step || step.disabled || busyRef.current) return;
+      e.preventDefault();
+      step.onClick();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [hasStep]);
 
   // Split criteria into hard gates (~60%) + soft checks (the rest), like the
   // prototype: Approve is blocked until every REQUIRED criterion is ticked.
@@ -179,17 +216,31 @@ export function ReviewDrawer({
               )}
             </div>
           </div>
-          {next && (
+          {(next || prev) && (
             <div className="flex shrink-0 items-center gap-2">
-              {next.position && <span className="hidden text-xs text-slate-400 tabular-nums sm:inline">{next.position}</span>}
-              <button
-                onClick={next.onClick}
-                disabled={next.disabled || !!busy}
-                title={next.disabled ? 'This is the last submission to review' : 'Go to the next submission'}
-                className="inline-flex items-center gap-0.5 rounded-lg border border-slate-200 py-1.5 pl-2.5 pr-1.5 text-xs font-medium text-slate-700 hover:border-brand-300 hover:text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-slate-200 disabled:hover:text-slate-700"
-              >
-                Next<ChevronRight className="h-4 w-4" aria-hidden="true" />
-              </button>
+              {prev && (
+                <button
+                  onClick={prev.onClick}
+                  disabled={prev.disabled || !!busy}
+                  title={prev.disabled ? 'This is the first submission' : 'Previous submission (← Left arrow key)'}
+                  aria-keyshortcuts="ArrowLeft"
+                  className={`${STEP_BUTTON} pl-1.5 pr-2.5`}
+                >
+                  <ChevronLeft className="h-4 w-4" aria-hidden="true" />Back
+                </button>
+              )}
+              {next?.position && <span className="hidden text-xs text-slate-400 tabular-nums sm:inline">{next.position}</span>}
+              {next && (
+                <button
+                  onClick={next.onClick}
+                  disabled={next.disabled || !!busy}
+                  title={next.disabled ? 'This is the last submission to review' : 'Next submission (→ Right arrow key)'}
+                  aria-keyshortcuts="ArrowRight"
+                  className={`${STEP_BUTTON} pl-2.5 pr-1.5`}
+                >
+                  Next<ChevronRight className="h-4 w-4" aria-hidden="true" />
+                </button>
+              )}
             </div>
           )}
         </div>
