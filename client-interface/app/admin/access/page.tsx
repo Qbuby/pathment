@@ -186,7 +186,7 @@ function PeopleTab() {
                   onClick={() => setSelected(u)}
                   className={`w-full text-left px-2 py-2.5 rounded-lg flex items-center justify-between gap-2 ${selected?.id === u.id ? 'bg-brand-50 dark:bg-brand-500/15' : 'hover:bg-slate-50'}`}
                 >
-                  <Avatar name={`${u.firstName} ${u.lastName}`} size="sm"/>
+                  <Avatar name={`${u.firstName} ${u.lastName}`} src={u.profilePictureUrl} size="sm"/>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-slate-900 truncate">{`${u.firstName} ${u.lastName}`.trim() || u.email}</p>
                     <p className="text-xs text-slate-500 truncate">{u.email} · {u.role}</p>

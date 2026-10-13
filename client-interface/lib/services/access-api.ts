@@ -32,6 +32,8 @@ export interface DirectoryUser {
   email: string;
   role: string;
   status?: 'active' | 'suspended' | 'pending' | 'inactive';
+  /** Profile photo; absent or null falls back to initials. */
+  profilePictureUrl?: string | null;
 }
 
 /** IAM admin API + the current user's effective permissions (for UI gating). */
