@@ -51,7 +51,7 @@ export const adminApi = {
   },
   /** Cohort-review records — read-only rollups, clan-wise / mentor-wise. */
   reviewRecords: {
-    list: (params: { clanId?: string; mentorId?: string; from?: string; to?: string } = {}) =>
+    list: (params: { programId?: string; clanId?: string; mentorId?: string; from?: string; to?: string } = {}) =>
       apiClient.get('/admin/review-records', { params }),
     detail: (id: string) => apiClient.get(`/admin/review-records/${id}`),
   },

@@ -14,12 +14,18 @@ const attRate = (present, total) => (total > 0 ? Math.round((present / total) * 
 class ReviewRecordsService {
   /**
    * Org review records with rollups.
-   * @param {{clanId?:string, mentorId?:string, from?:string, to?:string, limit?:number}} f
+   * @param {{programId?:string, clanId?:string, mentorId?:string, from?:string, to?:string, limit?:number}} f
    * @returns {{summary, byClan, byMentor, sessions}}
    */
   async orgReviewRecords(f = {}) {
     const where = {};
     if (f.clanId) where.clanId = f.clanId;
+    if (f.programId && models.Clan) {
+      // Sessions hang off clans, so a program filter is "any clan in that program".
+      const clans = await models.Clan.findAll({ where: { programId: f.programId }, attributes: ['id'], paranoid: false });
+      const clanIds = clans.map((c) => c.id);
+      where.clanId = f.clanId ? { [Op.in]: clanIds.filter((id) => id === f.clanId) } : { [Op.in]: clanIds };
+    }
     if (f.mentorId) where.mentorId = f.mentorId;
     if (f.from || f.to) {
       where.sessionDate = {};
