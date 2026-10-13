@@ -5,7 +5,7 @@ import { Loader2, Video, X } from 'lucide-react';
 import { PageHeader } from '@/components/admin/ui';
 import {
   ReviewKpis, AttendanceByClanChart, AttendanceBreakdownChart, AttendanceTrendChart,
-  TopClansList, MentorPerformanceTable, ReviewInsights, SessionsPanel, fmtDate, fmtMin,
+  TopClansList, MentorPerformanceTable, ReviewInsights, SessionsPanel, fmtDate, fmtMin, toDateKey,
   type SessionRow, type GroupRow, type Summary,
 } from '@/components/admin/review-records';
 import { SelectMenu } from '@/components/shared/SelectMenu';
@@ -16,6 +16,15 @@ import { clanApi } from '@/lib/services/clan-api';
 import { mentorApi } from '@/lib/services/mentor-api';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
+/** Quick date ranges — `days` back from today; null clears the range. */
+const RANGE_PRESETS: { label: string; days: number | null }[] = [
+  { label: 'Last 7 days', days: 7 },
+  { label: 'Last 30 days', days: 30 },
+  { label: 'Last 90 days', days: 90 },
+  { label: 'All time', days: null },
+];
+const presetFrom = (days: number) => { const d = new Date(); d.setDate(d.getDate() - days); return toDateKey(d); };
 
 export default function AdminReviewRecords() {
   const [clans, setClans] = useState<{ id: string; name: string; programId: string | null; programName: string | null; programStatus: string | null }[]>([]);
@@ -122,6 +131,29 @@ export default function AdminReviewRecords() {
           <label className="block text-xs font-medium text-slate-600 mb-1">Program</label>
           <SelectMenu value={programId} onChange={changeProgram} options={programOptions} ariaLabel="Filter by program" />
         </div>
+        <div className="flex w-full flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
+          <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Quick date range">
+            {RANGE_PRESETS.map((p) => {
+              const active = p.days == null ? !from && !to : !to && from === presetFrom(p.days);
+              return (
+                <button
+                  key={p.label}
+                  aria-pressed={active}
+                  onClick={() => { setFrom(p.days == null ? '' : presetFrom(p.days)); setTo(''); }}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${active ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                >
+                  {p.label}
+                </button>
+              );
+            })}
+          </div>
+          {!loading && summary && summary.sessions > 0 && (
+            <p className="text-xs text-slate-500" aria-live="polite">
+              Showing {summary.sessions.toLocaleString()} {summary.sessions === 1 ? 'session' : 'sessions'} · {byClan.length} {byClan.length === 1 ? 'clan' : 'clans'} · {byMentor.length} {byMentor.length === 1 ? 'mentor' : 'mentors'}
+              {sessions.length > 0 && ` · ${fmtDate(sessions[sessions.length - 1].sessionDate)} – ${fmtDate(sessions[0].sessionDate)}`}
+            </p>
+          )}
+        </div>
       </div>
 
       {loading ? (
@@ -134,6 +166,9 @@ export default function AdminReviewRecords() {
         <>
           {/* KPIs */}
           <ReviewKpis summary={summary} totalEntries={totalEntries} />
+
+          {/* Takeaways first, detail below */}
+          <ReviewInsights summary={summary} byClan={byClan} sessions={sessions} unmarked={unmarked} />
 
           {/* Clan-wise attendance */}
           <div className="grid lg:grid-cols-3 gap-6">
@@ -148,10 +183,7 @@ export default function AdminReviewRecords() {
           </div>
 
           {/* Mentor-wise */}
-          <div className="grid lg:grid-cols-3 gap-6 items-start">
-            <div className="lg:col-span-2 min-w-0"><MentorPerformanceTable rows={byMentor} sessions={sessions} /></div>
-            <ReviewInsights summary={summary} byClan={byClan} sessions={sessions} unmarked={unmarked} />
-          </div>
+          <MentorPerformanceTable rows={byMentor} sessions={sessions} />
 
           {/* Sessions */}
           <SessionsPanel sessions={sessions} onOpen={openDetail} />

@@ -1,5 +1,5 @@
-import { CalendarRange, Percent, Users, Clock, Video } from 'lucide-react';
-import { StatsCard } from '@/components/admin/ui';
+import { CalendarRange, Percent, Users, Clock } from 'lucide-react';
+import { MetricTile } from '@/components/shared/MetricTile';
 import { fmtMin, pct, type Summary } from './review-records-constants';
 
 interface ReviewKpisProps {
@@ -8,14 +8,14 @@ interface ReviewKpisProps {
   totalEntries: number;
 }
 
+/** Headline numbers, in the same tiles the admin Overview uses. */
 export function ReviewKpis({ summary, totalEntries }: ReviewKpisProps) {
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-      <StatsCard icon={CalendarRange} label="Sessions" value={summary.sessions} sub="review sessions held" colorClass="text-emerald-600 bg-emerald-50" />
-      <StatsCard icon={Percent} label="Attendance" value={`${summary.attendanceRate}%`} sub={`${summary.present} of ${summary.marked} marked present`} colorClass="text-amber-600 bg-amber-50" />
-      <StatsCard icon={Users} label="Mentees reviewed" value={summary.reviewed} sub={`${pct(summary.reviewed, totalEntries)}% of ${totalEntries.toLocaleString()} roster entries`} colorClass="text-blue-600 bg-blue-50" />
-      <StatsCard icon={Clock} label="Talk time" value={fmtMin(summary.talkSeconds)} sub={`${fmtMin(summary.sessions ? summary.talkSeconds / summary.sessions : 0)} avg per session`} colorClass="text-purple-600 bg-purple-50" />
-      <StatsCard icon={Video} label="Live video" value={`${pct(summary.withVideo, summary.sessions)}%`} sub={`${summary.withVideo} of ${summary.sessions} sessions`} colorClass="text-brand-600 bg-brand-50" />
+    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      <MetricTile compact tone={0} icon={CalendarRange} label="Review sessions" value={summary.sessions.toLocaleString()} hint={`${summary.withVideo} ran with live video (${pct(summary.withVideo, summary.sessions)}%)`} />
+      <MetricTile compact tone={1} icon={Percent} label="Attendance rate" value={`${summary.attendanceRate}%`} hint={`${summary.present.toLocaleString()} of ${summary.marked.toLocaleString()} marked present`} />
+      <MetricTile compact tone={2} icon={Users} label="Mentees reviewed" value={summary.reviewed.toLocaleString()} hint={`${pct(summary.reviewed, totalEntries)}% of ${totalEntries.toLocaleString()} roster entries`} />
+      <MetricTile compact tone={3} icon={Clock} label="Talk time" value={fmtMin(summary.talkSeconds)} hint={`${fmtMin(summary.sessions ? summary.talkSeconds / summary.sessions : 0)} average per session`} />
     </div>
   );
 }

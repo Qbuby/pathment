@@ -6,5 +6,5 @@ export { TopClansList } from './TopClansList';
 export { MentorPerformanceTable } from './MentorPerformanceTable';
 export { ReviewInsights } from './ReviewInsights';
 export { SessionsPanel } from './SessionsPanel';
-export { fmtDate, fmtMin } from './review-records-constants';
+export { fmtDate, fmtMin, toDateKey } from './review-records-constants';
 export type { SessionRow, GroupRow, Summary } from './review-records-constants';
