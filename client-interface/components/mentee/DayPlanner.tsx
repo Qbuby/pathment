@@ -3,13 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
-  CalendarClock, Check, EyeOff, GripVertical, LayoutTemplate, Loader2, Lock, Plus, Route,
-  Trash2, Unlock, X,
+  CalendarClock, Check, EyeOff, GripVertical, LayoutTemplate, Loader2, Lock, Plus, Repeat,
+  Route, Trash2, Unlock, X,
 } from 'lucide-react';
 
 import {
   scheduleApi,
-  type ChainRoadmapDetail, type PlanBoard, type PlanItem, type PlanSlot, type SelectableTemplate,
+  type ChainRoadmapDetail, type PlanBoard, type PlanItem, type PlanSlot,
+  type RepeatRule, type SelectableTemplate,
 } from '@/lib/services/schedule-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { Dropdown } from '@/components/shared/Dropdown';
@@ -154,8 +155,29 @@ export function DayPlanner({
         items: s.items.map((i) => (i.id === item.id ? { ...i, status: done ? 'completed' : 'assigned' } : i)),
         done: s.items.filter((i) => (i.id === item.id ? done : i.status === 'completed')).length,
       })),
-    }), () => scheduleApi.setPlanItemDone(item.id, done));
+    }), async () => {
+      const res = await scheduleApi.setPlanItemDone(item.id, done);
+      // A repeating item reappears dated forward; say so, or finishing one
+      // looks like it simply came back.
+      const next = res.data?.nextOccurrence;
+      if (next) {
+        toast.success('Done — back again on ' + new Date(`${next}T00:00:00`).toLocaleDateString(undefined, {
+          weekday: 'short', day: 'numeric', month: 'short',
+        }));
+      }
+      return res;
+    });
   };
+
+  /**
+   * The presets people actually choose, named the way they say them.
+   *
+   * A full recurrence editor is a form; this is four options and "doesn't
+   * repeat", which covers nearly every real case and costs one click. Anything
+   * more elaborate can come later without changing the rule that is stored.
+   */
+  const setRepeat = (item: PlanItem, repeat: Partial<RepeatRule> | null) =>
+    optimistic(item.id, (b) => b, () => scheduleApi.setPlanItemRepeat(item.id, repeat));
 
   const addItem = async (slotId: string, title: string) => {
     const text = title.trim();
@@ -276,6 +298,7 @@ export function DayPlanner({
             mine={mine}
             blockChoices={blockChoices}
             onMoveTo={moveItem}
+            onSetRepeat={setRepeat}
             itemBusy={busy}
           />
         ))}
@@ -404,6 +427,7 @@ export function DayPlanner({
                 blocks={blockChoices}
                 currentSlotId={null}
                 onMoveTo={(slotId) => moveItem(item.id, slotId)}
+                onSetRepeat={(repeat) => setRepeat(item, repeat)}
               />
             ))}
           </ul>
@@ -418,6 +442,7 @@ export function DayPlanner({
 function SlotCard({
   slot, busy, carrying, isDropTarget, onDropTarget, onDropItem,
   onToggleDone, onAddItem, onRetime, onRemove, onHide, itemBusy, mine, blockChoices, onMoveTo,
+  onSetRepeat,
 }: {
   slot: PlanSlot;
   busy: boolean;
@@ -435,6 +460,7 @@ function SlotCard({
   mine: boolean;
   blockChoices: { id: string; label: string; time: string }[];
   onMoveTo: (taskId: string, slotId: string | null) => void;
+  onSetRepeat: (item: PlanItem, repeat: Partial<RepeatRule> | null) => void;
 }) {
   const [draft, setDraft] = useState('');
   const [editing, setEditing] = useState(false);
@@ -565,6 +591,7 @@ function SlotCard({
             blocks={blockChoices}
             currentSlotId={slot.id}
             onMoveTo={(toSlot) => onMoveTo(item.id, toSlot)}
+            onSetRepeat={(repeat) => onSetRepeat(item, repeat)}
           />
         ))}
       </ul>
@@ -591,9 +618,24 @@ function SlotCard({
   );
 }
 
+/**
+ * The repeats people actually pick, in their own words.
+ *
+ * A full RRULE editor is a form nobody wants in a to-do row. These four plus
+ * "doesn't repeat" cover almost every case at one click, and they produce the
+ * same rule shape a richer editor would, so adding one later changes nothing
+ * that is already stored.
+ */
+const REPEAT_PRESETS: { label: string; rule: Partial<RepeatRule> }[] = [
+  { label: 'Every day', rule: { freq: 'daily' } },
+  { label: 'Every weekday', rule: { freq: 'weekly', days: [1, 2, 3, 4, 5] } },
+  { label: 'Every week', rule: { freq: 'weekly' } },
+  { label: 'Every month', rule: { freq: 'monthly' } },
+];
+
 /* ── one item ────────────────────────────────────────────────────────────── */
 
-function ItemRow({ item, busy, carrying, onToggleDone, blocks, currentSlotId, onMoveTo }: {
+function ItemRow({ item, busy, carrying, onToggleDone, blocks, currentSlotId, onMoveTo, onSetRepeat }: {
   item: PlanItem;
   busy: boolean;
   /** Mid-drag highlight. The handle now opens a menu rather than picking up. */
@@ -603,6 +645,7 @@ function ItemRow({ item, busy, carrying, onToggleDone, blocks, currentSlotId, on
   blocks: { id: string; label: string; time: string }[];
   currentSlotId: string | null;
   onMoveTo: (slotId: string | null) => void;
+  onSetRepeat: (repeat: Partial<RepeatRule> | null) => void;
 }) {
   const done = item.status === 'completed';
   const waiting = item.status === 'submitted';
@@ -665,6 +708,52 @@ function ItemRow({ item, busy, carrying, onToggleDone, blocks, currentSlotId, on
         )}
       </Dropdown>
 
+      <Dropdown
+        align="start"
+        width="w-48"
+        trigger={({ toggle }) => (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); toggle(); }}
+            aria-label={item.repeatLabel ? `Change how ${item.title} repeats` : `Make ${item.title} repeat`}
+            title={item.repeatLabel || 'Repeat'}
+            className={`mt-0.5 rounded p-0.5 transition-opacity hover:text-brand-600 ${
+              item.repeat ? 'text-brand-500 opacity-100' : 'text-slate-300 opacity-0 focus-visible:opacity-100 group-hover:opacity-100'
+            }`}
+          >
+            <Repeat className="h-3.5 w-3.5" />
+          </button>
+        )}
+      >
+        {(close) => (
+          <div onClick={(e) => e.stopPropagation()}>
+            <p className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Repeat</p>
+            {REPEAT_PRESETS.map((preset) => (
+              <button
+                key={preset.label}
+                type="button"
+                onClick={() => { onSetRepeat(preset.rule); close(); }}
+                className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-slate-50 dark:hover:bg-slate-800"
+              >
+                {preset.label}
+                {item.repeat?.freq === preset.rule?.freq
+                  && JSON.stringify(item.repeat?.days ?? null) === JSON.stringify(preset.rule?.days ?? null)
+                  && <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" aria-hidden />}
+              </button>
+            ))}
+            {item.repeat && (
+              <button
+                type="button"
+                onClick={() => { onSetRepeat(null); close(); }}
+                className="mt-1 w-full border-t border-slate-100 px-3 py-1.5 text-left text-sm text-muted-foreground hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800"
+              >
+                Doesn&rsquo;t repeat
+              </button>
+            )}
+          </div>
+        )}
+      </Dropdown>
+
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); onToggleDone(item); }}
@@ -694,6 +783,13 @@ function ItemRow({ item, busy, carrying, onToggleDone, blocks, currentSlotId, on
           {item.fromRoadmapSlot && (
             <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground" title="Here because this block runs its roadmap">
               <Route className="h-3 w-3" aria-hidden />roadmap
+            </span>
+          )}
+          {/* The repeat reads as part of the item, like a due date — it is a
+              property of the thing, not an action you take on it. */}
+          {item.repeatLabel && (
+            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-brand-700 dark:text-brand-300" title={`Repeats: ${item.repeatLabel}`}>
+              <Repeat className="h-3 w-3" aria-hidden />{item.repeatLabel}
             </span>
           )}
           {item.dueDate && !done && (

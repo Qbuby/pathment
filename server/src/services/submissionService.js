@@ -504,6 +504,19 @@ class SubmissionService {
       }
     }
 
+    /**
+     * A repeating item that has just been approved rolls forward here.
+     *
+     * Approval is the ONLY place work-for-review becomes complete, so it is the
+     * only place a mentor-set repeat can produce its next occurrence — the
+     * planner's own tick deliberately refuses to finish reviewable work. The
+     * spawner never throws and moves the rule onto the successor, so an
+     * approval processed twice cannot create two.
+     */
+    if (isApproved && task.repeatRule) {
+      await require('./scheduleBoardService').spawnNextOccurrence(task);
+    }
+
     // Update enrollment task stats so tasksCompleted/tasksTotal/overallProgressPercentage stay current
     const taskService = require('./taskService');
     await taskService.updateEnrollmentTaskStats(task.enrollmentId);

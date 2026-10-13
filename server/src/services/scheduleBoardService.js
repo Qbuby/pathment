@@ -5,6 +5,8 @@ const { PERMISSIONS } = require('../config/permissions');
 const { NotFoundError, ValidationError, ForbiddenError } = require('../utils/errors/errorTypes');
 const clanLifecycleService = require('./clanLifecycleService');
 const { todayInZone } = require('../utils/timezone');
+const { normalizeRepeat, nextOccurrence, describeRepeat } = require('../utils/repeatRule');
+const logger = require('../utils/logger');
 
 /**
  * A day as blocks that hold things.
@@ -192,7 +194,7 @@ class ScheduleBoardService {
       },
       attributes: [
         'id', 'scheduleSlotId', 'status', 'dueDate', 'selfAssigned', 'isCustomTask',
-        'titleOverride', 'pointsBase', 'occurrenceDate',
+        'titleOverride', 'pointsBase', 'occurrenceDate', 'repeatRule',
       ],
       include: [{
         model: models.RoadmapTask, as: 'roadmapTask', required: false,
@@ -218,6 +220,8 @@ class ScheduleBoardService {
       // it, or does it go to my mentor?
       kind: t.selfAssigned ? 'personal' : 'review',
       points: t.selfAssigned ? 0 : (t.pointsBase ?? null),
+      repeat: t.repeatRule || null,
+      repeatLabel: describeRepeat(t.repeatRule),
     });
 
     /**
@@ -309,7 +313,7 @@ class ScheduleBoardService {
    * nothing and never reaches the mentor's approvals queue. Anything else is
    * ordinary work for review, and only somebody who can assign may create it.
    */
-  async addItem(menteeId, slotId, { title, kind = 'personal', dueDate = null }, actor, clanId = null) {
+  async addItem(menteeId, slotId, { title, kind = 'personal', dueDate = null, repeat = null }, actor, clanId = null) {
     await this._assertCanPlan(actor, menteeId, clanId);
     const text = String(title || '').trim();
     if (!text) throw new ValidationError('Give the item a name');
@@ -319,6 +323,9 @@ class ScheduleBoardService {
     if (row.clanId) await clanLifecycleService.assertClanWritable(row.clanId);
 
     const personal = kind !== 'review';
+    // Throws on a frequency we cannot honour, so a bad rule is refused at the
+    // door rather than stored and discovered later by the spawner.
+    const repeatRule = normalizeRepeat(repeat);
     if (!personal && !(await this._canAssign(actor, this._effectiveClan(row, clanId)))) {
       throw new ForbiddenError('Only a mentor can set work for review. Add it as a personal item instead.');
     }
@@ -361,6 +368,10 @@ class ScheduleBoardService {
         isCustomTask: true,
         selfAssigned: personal,
         titleOverride: text,
+        repeatRule,
+        // A repeating item needs a day to count from; without one the first
+        // "next" would be measured from whenever it happened to be finished.
+        occurrenceDate: repeatRule ? (dueDate || null) : null,
       }, { transaction });
     });
 
@@ -424,7 +435,10 @@ class ScheduleBoardService {
     await task.update(done
       ? { status: 'completed', completedAt: new Date() }
       : { status: 'assigned', completedAt: null });
-    return { id: task.id, status: task.status };
+
+    // Ticking a repeating item is what produces the next one.
+    const next = done ? await this.spawnNextOccurrence(task) : null;
+    return { id: task.id, status: task.status, nextOccurrence: next?.occurrenceDate ?? null };
   }
 
   /** A block of the mentee's own, or one a mentor adds to their day. */
@@ -524,6 +538,102 @@ class ScheduleBoardService {
     slots.splice(index, 1);
     await this._save(row, slots);
     return { removed: slot.id };
+  }
+
+  /**
+   * Turn a repeat on, change it, or switch it off, on an item already on a plan.
+   *
+   * Separate from editing the item because this is the only property that
+   * changes what happens AFTER it is finished, and people reach for it long
+   * after they first wrote the thing down.
+   */
+  async setItemRepeat(taskId, repeat, actor) {
+    const task = await models.AssignedTask.findByPk(taskId);
+    if (!task) throw new NotFoundError('Item not found');
+    await this._assertCanPlan(actor, task.menteeId, task.clanId);
+    if (task.clanId) await clanLifecycleService.assertClanWritable(task.clanId);
+
+    let rule;
+    try {
+      rule = normalizeRepeat(repeat);
+    } catch (error) {
+      throw new ValidationError(error.message);
+    }
+    await task.update({
+      repeatRule: rule,
+      occurrenceDate: rule
+        ? (task.occurrenceDate || (task.dueDate ? String(task.dueDate).slice(0, 10) : null))
+        : task.occurrenceDate,
+    });
+    return { id: task.id, repeat: rule };
+  }
+
+  /**
+   * Write the next occurrence of a repeating item, once this one is finished.
+   *
+   * Called at the moment of completion rather than by a scheduler, so a repeat
+   * works whether or not a worker is alive, and a series nobody keeps up with
+   * stops instead of accumulating weeks of untouched copies.
+   *
+   * The rule MOVES to the successor. That is what makes this safe to call more
+   * than once: the finished task no longer repeats, so re-ticking it, a retried
+   * request, or an approval processed twice cannot produce a second copy. The
+   * explicit sibling check below covers the remaining race.
+   *
+   * Never throws. A repeat that failed to roll forward is a missing row; a
+   * completion that failed because of it would be a lost tick.
+   */
+  async spawnNextOccurrence(task) {
+    try {
+      const rule = task.repeatRule;
+      if (!rule) return null;
+
+      const from = task.occurrenceDate
+        || (task.dueDate ? String(task.dueDate).slice(0, 10) : null)
+        || await this._todayKey(task.menteeId);
+      const next = nextOccurrence(rule, from);
+      // The series has run out; let the rule die with this task.
+      if (!next) { await task.update({ repeatRule: null }); return null; }
+
+      // Somebody may already have rolled it forward — a double approval, a
+      // retried request. One open sibling on the same work is enough.
+      const existing = await models.AssignedTask.findOne({
+        where: {
+          menteeId: task.menteeId,
+          roadmapTaskId: task.roadmapTaskId,
+          status: { [Op.in]: ACTIVE_STATUSES },
+          scheduleSlotId: task.scheduleSlotId || null,
+        },
+      });
+      if (existing) { await task.update({ repeatRule: null }); return existing; }
+
+      const created = await models.AssignedTask.create({
+        organizationId: task.organizationId,
+        menteeId: task.menteeId,
+        mentorId: task.mentorId,
+        clanId: task.clanId,
+        roadmapTaskId: task.roadmapTaskId,
+        scheduleSlotId: task.scheduleSlotId,
+        status: 'assigned',
+        assignedAt: new Date(),
+        occurrenceDate: next,
+        dueDate: next,
+        isCustomTask: task.isCustomTask,
+        selfAssigned: task.selfAssigned,
+        titleOverride: task.titleOverride,
+        pointsBase: task.pointsBase,
+        repeatRule: rule,
+      });
+      // Hand the rule on, so this one is finished for good.
+      await task.update({ repeatRule: null });
+      logger.info('[plan] repeated item rolled forward', {
+        menteeId: task.menteeId, from, next, slot: task.scheduleSlotId,
+      });
+      return created;
+    } catch (error) {
+      logger.warn(`[plan] could not roll a repeat forward: ${error.message}`);
+      return null;
+    }
   }
 
   /**

@@ -77,6 +77,11 @@ const applyTemplate = catchAsync(async (req, res) => {
   res.status(200).json(successResponse(message, result));
 });
 
+const setItemRepeat = catchAsync(async (req, res) => {
+  const result = await board.setItemRepeat(req.params.taskId, req.body.repeat ?? null, req.user);
+  res.status(200).json(successResponse(result.repeat ? 'Repeat set' : 'Repeat turned off', result));
+});
+
 const strip = catchAsync(async (req, res) => {
   const data = await board.strip(targetId(req), clanOf(req), req.user);
   res.status(200).json(successResponse('Plan summary retrieved', data));
@@ -84,5 +89,5 @@ const strip = catchAsync(async (req, res) => {
 
 module.exports = {
   getBoard, addItem, moveItem, completeItem, addSlot, updateSlot, removeSlot, strip,
-  hideSlot, listTemplates, applyTemplate,
+  hideSlot, listTemplates, applyTemplate, setItemRepeat,
 };

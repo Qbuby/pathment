@@ -368,6 +368,121 @@ describe('the day planner', () => {
     });
   });
 
+  /**
+   * The next occurrence is written at the moment one is finished, so a repeat
+   * works with no scheduler alive and a series nobody keeps up with stops by
+   * itself rather than piling up untouched copies.
+   */
+  describe('items that repeat', () => {
+    const everyWeekday = { freq: 'weekly', days: [1, 2, 3, 4, 5] };
+
+    const openItemsIn = async (slotId) => {
+      const b = await board.board(mentee.id, { clanId: clan.id }, mentee);
+      return b.slots.find((x) => x.id === slotId).items;
+    };
+
+    it('creates the next one when a personal item is ticked', async () => {
+      const item = await board.addItem(
+        mentee.id, OPEN,
+        { title: 'Post on LinkedIn', repeat: { freq: 'weekly', days: [3] }, dueDate: '2026-10-14' },
+        mentee, clan.id,
+      );
+      const result = await board.completeItem(item.id, mentee);
+      expect(result.nextOccurrence).toBe('2026-10-21');
+
+      // It lands in the same block, open, carrying the rule forward.
+      const next = await models.AssignedTask.findOne({
+        where: { menteeId: mentee.id, status: 'assigned', scheduleSlotId: OPEN },
+      });
+      expect(next.titleOverride).toBe('Post on LinkedIn');
+      expect(next.repeatRule).toMatchObject({ freq: 'weekly', days: [3] });
+      expect(next.selfAssigned).toBe(true);
+    });
+
+    /**
+     * The rule moves to the successor, which is what makes a second tick — a
+     * retry, a double-click, a reopened item — unable to produce a duplicate.
+     */
+    it('does not produce a second copy when the same item is finished twice', async () => {
+      const item = await board.addItem(
+        mentee.id, OPEN, { title: 'Daily review', repeat: { freq: 'daily' }, dueDate: '2026-10-14' },
+        mentee, clan.id,
+      );
+      await board.completeItem(item.id, mentee);
+      await board.completeItem(item.id, mentee, false);
+      await board.completeItem(item.id, mentee);
+
+      const copies = await models.AssignedTask.count({
+        where: { menteeId: mentee.id, titleOverride: 'Daily review', status: { [require('sequelize').Op.ne]: 'completed' } },
+      });
+      expect(copies).toBe(1);
+    });
+
+    it('leaves a one-off item alone', async () => {
+      const item = await board.addItem(mentee.id, OPEN, { title: 'Just once' }, mentee, clan.id);
+      const result = await board.completeItem(item.id, mentee);
+      expect(result.nextOccurrence).toBeNull();
+
+      // It stays in its block for the rest of the day — that is what lets the
+      // ring reach full — but nothing new is created behind it.
+      const items = await openItemsIn(OPEN);
+      expect(items).toHaveLength(1);
+      expect(items[0]).toMatchObject({ id: item.id, status: 'completed' });
+    });
+
+    it('stops the series once it runs past its end date', async () => {
+      const item = await board.addItem(
+        mentee.id, OPEN,
+        { title: 'Short series', repeat: { freq: 'daily', until: '2026-10-14' }, dueDate: '2026-10-14' },
+        mentee, clan.id,
+      );
+      const result = await board.completeItem(item.id, mentee);
+      expect(result.nextOccurrence).toBeNull();
+    });
+
+    it('turns a repeat on and off after the fact', async () => {
+      const item = await board.addItem(mentee.id, OPEN, { title: 'Standup note' }, mentee, clan.id);
+      const on = await board.setItemRepeat(item.id, everyWeekday, mentee);
+      expect(on.repeat).toMatchObject({ freq: 'weekly', days: [1, 2, 3, 4, 5] });
+
+      const off = await board.setItemRepeat(item.id, null, mentee);
+      expect(off.repeat).toBeNull();
+    });
+
+    it('refuses a frequency it cannot honour', async () => {
+      const item = await board.addItem(mentee.id, OPEN, { title: 'Hourly?' }, mentee, clan.id);
+      await expect(board.setItemRepeat(item.id, { freq: 'hourly' }, mentee))
+        .rejects.toThrow(/daily, weekly or monthly/i);
+    });
+
+    it('does not let a stranger set a repeat on somebody else’s item', async () => {
+      const item = await board.addItem(mentee.id, OPEN, { title: 'Mine' }, mentee, clan.id);
+      await expect(board.setItemRepeat(item.id, everyWeekday, stranger))
+        .rejects.toThrow(/cannot change this plan/i);
+    });
+
+    it('sends the rule and a readable label down with the board', async () => {
+      await board.addItem(
+        mentee.id, OPEN, { title: 'Weekday ritual', repeat: everyWeekday }, mentee, clan.id,
+      );
+      const [item] = await openItemsIn(OPEN);
+      expect(item.repeat).toMatchObject({ freq: 'weekly' });
+      expect(item.repeatLabel).toBe('Every weekday');
+    });
+
+    /**
+     * Ticking never finishes work for review, so a mentor-set repeat must roll
+     * forward on APPROVAL instead — see submissionService.
+     */
+    it('will not roll a reviewable repeat forward from a tick', async () => {
+      const item = await board.addItem(
+        mentee.id, OPEN, { title: 'Weekly reflection', kind: 'review', repeat: { freq: 'weekly' } },
+        mentor, clan.id,
+      );
+      await expect(board.completeItem(item.id, mentee)).rejects.toThrow(/submit your work/i);
+    });
+  });
+
   describe('the clan-review strip', () => {
     it('counts what is planned and what is finished, per block', async () => {
       const a = await board.addItem(mentee.id, OPEN, { title: 'One' }, mentee, clan.id);
