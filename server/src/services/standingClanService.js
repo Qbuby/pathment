@@ -169,6 +169,10 @@ class StandingClanService {
           relatedEntityId: request.id,
         },
         dedupe: { relatedEntityType: 'standing_clan_request', relatedEntityId: request.id },
+        // A mentor who is also a workspace admin still gets the request in their
+        // bell — they may be the one who approves it — but not a second snackbar
+        // on top of their own "Request sent" confirmation.
+        silentFor: [mentor.id],
       });
     } catch (err) {
       console.warn('standingClanService: request notification failed', err?.message || err);
