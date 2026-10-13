@@ -12,6 +12,7 @@ import {
   type ChainRoadmapDetail, type PlanBoard, type PlanItem, type PlanSlot, type SelectableTemplate,
 } from '@/lib/services/schedule-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
+import { Dropdown } from '@/components/shared/Dropdown';
 
 /**
  * A day as blocks you can put things in.
@@ -161,7 +162,18 @@ export function DayPlanner({
     if (!text) return;
     mark(slotId, true);
     try {
-      await scheduleApi.addPlanItem(menteeId, slotId, { title: text, kind: 'personal', clanId });
+      /**
+       * What gets created depends on who is typing.
+       *
+       * This always sent `personal`, so a mentor adding "Ship the auth PR" to a
+       * mentee's block created a tick-box the mentee could close themselves —
+       * no submission, no review, no points. A mentor setting work means work,
+       * and a mentee adding to their own day means a personal item. The server
+       * refuses a mentee who asks for `review`, so this is a default, not a
+       * permission.
+       */
+      const kind = mine ? 'personal' : 'review';
+      await scheduleApi.addPlanItem(menteeId, slotId, { title: text, kind, clanId });
       await load(true);
       onChanged?.();
     } catch (e) {
@@ -179,6 +191,12 @@ export function DayPlanner({
    * shown "From your mentor" on blocks they had set themselves.
    */
   const mine = board?.viewer.isOwnerMentee ?? true;
+
+  /** Every block, as somewhere an item can be sent. */
+  const blockChoices = useMemo(
+    () => (board?.slots ?? []).map((s) => ({ id: s.id, label: s.label, time: s.time })),
+    [board],
+  );
 
   const totals = useMemo(() => {
     const all = (board?.slots ?? []).flatMap((s) => s.items);
@@ -247,7 +265,6 @@ export function DayPlanner({
             isDropTarget={dropTarget === slot.id}
             onDropTarget={setDropTarget}
             onDropItem={(taskId) => moveItem(taskId, slot.id)}
-            onCarry={setCarrying}
             onToggleDone={toggleDone}
             onAddItem={(title) => addItem(slot.id, title)}
             onRetime={(patch) => optimistic(slot.id, (b) => b,
@@ -257,6 +274,8 @@ export function DayPlanner({
             onHide={() => optimistic(slot.id, (b) => ({ ...b, slots: b.slots.filter((s) => s.id !== slot.id) }),
               () => scheduleApi.hidePlanSlot(menteeId, slot.id, true, clanId))}
             mine={mine}
+            blockChoices={blockChoices}
+            onMoveTo={moveItem}
             itemBusy={busy}
           />
         ))}
@@ -381,8 +400,10 @@ export function DayPlanner({
                 item={item}
                 busy={busy.has(item.id)}
                 carrying={carrying === item.id}
-                onCarry={setCarrying}
                 onToggleDone={toggleDone}
+                blocks={blockChoices}
+                currentSlotId={null}
+                onMoveTo={(slotId) => moveItem(item.id, slotId)}
               />
             ))}
           </ul>
@@ -395,8 +416,8 @@ export function DayPlanner({
 /* ── one block ───────────────────────────────────────────────────────────── */
 
 function SlotCard({
-  slot, busy, carrying, isDropTarget, onDropTarget, onDropItem, onCarry,
-  onToggleDone, onAddItem, onRetime, onRemove, onHide, itemBusy, mine,
+  slot, busy, carrying, isDropTarget, onDropTarget, onDropItem,
+  onToggleDone, onAddItem, onRetime, onRemove, onHide, itemBusy, mine, blockChoices, onMoveTo,
 }: {
   slot: PlanSlot;
   busy: boolean;
@@ -404,7 +425,6 @@ function SlotCard({
   isDropTarget: boolean;
   onDropTarget: (id: string | null) => void;
   onDropItem: (taskId: string) => void;
-  onCarry: (id: string | null) => void;
   onToggleDone: (item: PlanItem) => void;
   onAddItem: (title: string) => void;
   onRetime: (patch: { time?: string; label?: string; locked?: boolean }) => void;
@@ -413,6 +433,8 @@ function SlotCard({
   itemBusy: Set<string>;
   /** True when the viewer IS the mentee. Decides whose voice the block speaks in. */
   mine: boolean;
+  blockChoices: { id: string; label: string; time: string }[];
+  onMoveTo: (taskId: string, slotId: string | null) => void;
 }) {
   const [draft, setDraft] = useState('');
   const [editing, setEditing] = useState(false);
@@ -539,8 +561,10 @@ function SlotCard({
             item={item}
             busy={itemBusy.has(item.id)}
             carrying={carrying === item.id}
-            onCarry={onCarry}
             onToggleDone={onToggleDone}
+            blocks={blockChoices}
+            currentSlotId={slot.id}
+            onMoveTo={(toSlot) => onMoveTo(item.id, toSlot)}
           />
         ))}
       </ul>
@@ -569,12 +593,16 @@ function SlotCard({
 
 /* ── one item ────────────────────────────────────────────────────────────── */
 
-function ItemRow({ item, busy, carrying, onCarry, onToggleDone }: {
+function ItemRow({ item, busy, carrying, onToggleDone, blocks, currentSlotId, onMoveTo }: {
   item: PlanItem;
   busy: boolean;
+  /** Mid-drag highlight. The handle now opens a menu rather than picking up. */
   carrying: boolean;
-  onCarry: (id: string | null) => void;
   onToggleDone: (item: PlanItem) => void;
+  /** Every block this item could go to, for the move menu. */
+  blocks: { id: string; label: string; time: string }[];
+  currentSlotId: string | null;
+  onMoveTo: (slotId: string | null) => void;
 }) {
   const done = item.status === 'completed';
   const waiting = item.status === 'submitted';
@@ -586,16 +614,56 @@ function ItemRow({ item, busy, carrying, onCarry, onToggleDone }: {
         carrying ? 'border-brand-400 ring-2 ring-brand-500/20' : 'border-slate-200 dark:border-slate-800'
       }`}
     >
-      {/* Keyboard route to the same thing dragging does, so the planner is not
-          mouse-only. Space picks up, then a block takes it. */}
-      <button
-        type="button"
-        onClick={(e) => { e.stopPropagation(); onCarry(carrying ? null : item.id); }}
-        aria-label={carrying ? `Put ${item.title} back` : `Pick up ${item.title} to move it`}
-        className="mt-0.5 cursor-grab rounded p-0.5 text-slate-300 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100 hover:text-slate-500"
+      {/*
+          Dragging is lovely with a mouse on a wide page and miserable on a
+          phone, or inside a drawer where the drop targets are half off-screen.
+          So the handle names its destinations instead of asking you to aim: one
+          click to open, one to land. Dragging still works for anyone who prefers
+          it — this is the route that always works.
+      */}
+      <Dropdown
+        align="start"
+        width="w-56"
+        trigger={({ toggle }) => (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); toggle(); }}
+            aria-label={`Move ${item.title} to another block`}
+            title="Move to a block"
+            className="mt-0.5 rounded p-0.5 text-slate-300 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100 hover:text-slate-600"
+          >
+            {carrying ? <X className="h-3.5 w-3.5" /> : <GripVertical className="h-3.5 w-3.5" />}
+          </button>
+        )}
       >
-        {carrying ? <X className="h-3.5 w-3.5" /> : <GripVertical className="h-3.5 w-3.5" />}
-      </button>
+        {(close) => (
+          <div onClick={(e) => e.stopPropagation()}>
+            <p className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Move to</p>
+            {blocks.map((b) => (
+              <button
+                key={b.id}
+                type="button"
+                disabled={b.id === currentSlotId}
+                onClick={() => { onMoveTo(b.id); close(); }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
+              >
+                <span className="font-mono text-[11px] tabular-nums text-muted-foreground">{b.time}</span>
+                <span className="min-w-0 flex-1 truncate">{b.label}</span>
+                {b.id === currentSlotId && <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" aria-hidden />}
+              </button>
+            ))}
+            {currentSlotId && (
+              <button
+                type="button"
+                onClick={() => { onMoveTo(null); close(); }}
+                className="mt-1 flex w-full items-center gap-2 border-t border-slate-100 px-3 py-1.5 text-left text-sm text-muted-foreground hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800"
+              >
+                Take off the day
+              </button>
+            )}
+          </div>
+        )}
+      </Dropdown>
 
       <button
         type="button"

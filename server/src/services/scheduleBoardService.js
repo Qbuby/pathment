@@ -105,6 +105,24 @@ class ScheduleBoardService {
   }
 
   /**
+   * The clan this action happens in.
+   *
+   * A `mentee_schedules` row may carry no clan at all — the older flows created
+   * them that way, and most of the seeded ones are null. That made the planner
+   * tell a mentor one thing and then refuse them: `board` resolved their grant
+   * against the clan in the REQUEST and rendered a lock button, while every
+   * write resolved it against the ROW's clan, which was null, where a
+   * clan-scoped grant reaches nothing. The mentor got "Only a mentor can lock a
+   * block" on their own clan's mentee.
+   *
+   * One answer for both: the row's clan when it has one, otherwise the clan the
+   * viewer is acting in.
+   */
+  _effectiveClan(row, requestedClanId) {
+    return row?.clanId || requestedClanId || null;
+  }
+
+  /**
    * Midnight at the start of the mentee's today, in their own zone.
    *
    * Their day is the unit this screen counts in, so a mentee eight hours ahead
@@ -301,7 +319,7 @@ class ScheduleBoardService {
     if (row.clanId) await clanLifecycleService.assertClanWritable(row.clanId);
 
     const personal = kind !== 'review';
-    if (!personal && !(await this._canAssign(actor, row.clanId))) {
+    if (!personal && !(await this._canAssign(actor, this._effectiveClan(row, clanId)))) {
       throw new ForbiddenError('Only a mentor can set work for review. Add it as a personal item instead.');
     }
 
@@ -424,7 +442,7 @@ class ScheduleBoardService {
     }
     if (row.clanId) await clanLifecycleService.assertClanWritable(row.clanId);
 
-    const mentorSide = await this._canAssign(actor, row.clanId);
+    const mentorSide = await this._canAssign(actor, this._effectiveClan(row, clanId));
     const byMentee = String(actor.id) === String(menteeId);
     const slots = (Array.isArray(row.schedule) ? row.schedule : []).map(normalizeSlot);
     const slot = {
@@ -450,7 +468,7 @@ class ScheduleBoardService {
     const { row, slots, index, slot } = await this._locate(menteeId, slotId, clanId);
     if (row.clanId) await clanLifecycleService.assertClanWritable(row.clanId);
 
-    const canAssign = await this._canAssign(actor, row.clanId);
+    const canAssign = await this._canAssign(actor, this._effectiveClan(row, clanId));
     const rights = slotRights(slot, { isOwnerMentee: String(actor.id) === String(menteeId), canAssign });
 
     const next = { ...slot };
@@ -493,7 +511,7 @@ class ScheduleBoardService {
     const { row, slots, index, slot } = await this._locate(menteeId, slotId, clanId);
     if (row.clanId) await clanLifecycleService.assertClanWritable(row.clanId);
 
-    const canAssign = await this._canAssign(actor, row.clanId);
+    const canAssign = await this._canAssign(actor, this._effectiveClan(row, clanId));
     const rights = slotRights(slot, { isOwnerMentee: String(actor.id) === String(menteeId), canAssign });
     if (!rights.canRemove) {
       throw new ForbiddenError('This block came from your mentor. You can empty it, but not delete it.');
@@ -520,7 +538,7 @@ class ScheduleBoardService {
     const { row, slots, index, slot } = await this._locate(menteeId, slotId, clanId);
     if (row.clanId) await clanLifecycleService.assertClanWritable(row.clanId);
 
-    const canAssign = await this._canAssign(actor, row.clanId);
+    const canAssign = await this._canAssign(actor, this._effectiveClan(row, clanId));
     const rights = slotRights(slot, { isOwnerMentee: String(actor.id) === String(menteeId), canAssign });
     if (!rights.canHide) {
       throw new ValidationError('This block is yours to change — remove or retime it instead of hiding it.');

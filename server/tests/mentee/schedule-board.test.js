@@ -322,6 +322,52 @@ describe('the day planner', () => {
     });
   });
 
+  /**
+   * The board offered a control the write then refused.
+   *
+   * `mentee_schedules.clan_id` is nullable and most rows in the wild have no
+   * clan — the older flows never set one. `board` resolved the viewer's grant
+   * against the clan in the REQUEST and rendered a lock button; every write
+   * resolved it against the ROW's clan, which was null, where a clan-scoped
+   * grant covers nothing. A lead mentor clicked lock on their own clan's mentee
+   * and got "Only a mentor can lock a block".
+   */
+  describe('a schedule row with no clan of its own', () => {
+    beforeEach(async () => {
+      await schedule.update({ clanId: null });
+    });
+
+    it('still lets the clan’s mentor lock a block', async () => {
+      const b = await board.board(mentee.id, { clanId: clan.id }, mentor);
+      expect(slotOf(b, OPEN).rights.canLock).toBe(true);
+
+      // The part that used to throw.
+      const slot = await board.updateSlot(mentee.id, OPEN, { locked: true }, mentor, clan.id);
+      expect(slot.locked).toBe(true);
+    });
+
+    it('offers and allows exactly the same things', async () => {
+      const b = await board.board(mentee.id, { clanId: clan.id }, mentor);
+      const rights = slotOf(b, OPEN).rights;
+      expect(rights.canRetime).toBe(true);
+      expect(rights.canRemove).toBe(true);
+      await expect(board.updateSlot(mentee.id, OPEN, { time: '11:00' }, mentor, clan.id)).resolves.toBeTruthy();
+      await expect(board.removeSlot(mentee.id, OPEN, mentor, clan.id)).resolves.toBeTruthy();
+    });
+
+    it('lets the mentor set work for review there', async () => {
+      const item = await board.addItem(mentee.id, OPEN, { title: 'Ship the auth PR', kind: 'review' }, mentor, clan.id);
+      expect(item.kind).toBe('review');
+    });
+
+    /** The looseness must not leak: a stranger is still a stranger. */
+    it('does not let an unrelated mentor in through the gap', async () => {
+      await expect(
+        board.updateSlot(mentee.id, OPEN, { locked: true }, outsiderMentor, clan.id),
+      ).rejects.toThrow(/cannot change this plan/i);
+    });
+  });
+
   describe('the clan-review strip', () => {
     it('counts what is planned and what is finished, per block', async () => {
       const a = await board.addItem(mentee.id, OPEN, { title: 'One' }, mentee, clan.id);
