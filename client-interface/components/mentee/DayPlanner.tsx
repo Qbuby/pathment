@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
-  Check, EyeOff, GripVertical, LayoutTemplate, Loader2, Lock, Plus, Route, Trash2, Unlock, X,
+  CalendarClock, Check, EyeOff, GripVertical, LayoutTemplate, Loader2, Lock, Plus, Route,
+  Trash2, Unlock, X,
 } from 'lucide-react';
 
 import {
@@ -128,11 +129,19 @@ export function DayPlanner({
 
   const toggleDone = (item: PlanItem) => {
     if (item.kind === 'review') {
-      // Deliberately not silent. Ticking work for review would tell the mentor
-      // nothing — it has to go through a submission, which is where the
-      // feedback and the points come from.
-      toast.message('This one goes to your mentor', {
-        description: 'Open it from My learning and submit your work.',
+      /**
+       * Deliberately not silent — ticking work for review would tell nobody
+       * anything; it has to go through a submission, which is where the
+       * feedback and the points come from.
+       *
+       * And deliberately in the right voice. This said "open it from My
+       * learning and submit your work" to EVERYONE, so a mentor looking at
+       * their mentee's day was told to go and submit it themselves.
+       */
+      toast.message(mine ? 'This one goes to your mentor' : 'This one is theirs to submit', {
+        description: mine
+          ? 'Open it from My learning and submit your work.'
+          : 'It reaches your Approvals queue once they send it in.',
       });
       return;
     }
@@ -162,6 +171,15 @@ export function DayPlanner({
     }
   };
 
+  /**
+   * Whose day this is, from the server rather than from a prop.
+   *
+   * Every piece of copy below turns on it. The planner used to be written
+   * entirely in the mentee's voice and handed unchanged to mentors, who were
+   * shown "From your mentor" on blocks they had set themselves.
+   */
+  const mine = board?.viewer.isOwnerMentee ?? true;
+
   const totals = useMemo(() => {
     const all = (board?.slots ?? []).flatMap((s) => s.items);
     return { total: all.length, done: all.filter((i) => i.status === 'completed').length };
@@ -182,13 +200,27 @@ export function DayPlanner({
 
   return (
     <div className="space-y-4">
+      {/*
+        It has to say what it is.
+        
+        This opened as a bare "Today" above three empty boxes, dropped into the
+        middle of the mentee's dashboard with nothing to explain it — so the
+        first thing a mentee met was three identical prompts and no idea what
+        they were for. The heading names the thing, and the line under it says
+        what to do, which is the only job an empty state has.
+      */}
       <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-card px-4 py-3 dark:border-slate-800">
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-foreground">Today</p>
-          <p className="text-xs text-muted-foreground">
+        <div className="min-w-0 flex-1">
+          <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+            <CalendarClock className="h-4 w-4 text-brand-600" aria-hidden />
+            {mine ? 'Your day' : 'Their day'}
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
             {totals.total === 0
-              ? 'Nothing planned yet — add something to a block below.'
-              : `${totals.done} of ${totals.total} done`}
+              ? (mine
+                ? 'Blocks are the shape of your day. Put work in one to plan it — type and press Enter.'
+                : 'Nothing in their blocks yet. Type into a block to put work there.')
+              : `${totals.done} of ${totals.total} done today`}
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -224,6 +256,7 @@ export function DayPlanner({
               () => scheduleApi.removePlanSlot(menteeId, slot.id, clanId))}
             onHide={() => optimistic(slot.id, (b) => ({ ...b, slots: b.slots.filter((s) => s.id !== slot.id) }),
               () => scheduleApi.hidePlanSlot(menteeId, slot.id, true, clanId))}
+            mine={mine}
             itemBusy={busy}
           />
         ))}
@@ -326,8 +359,20 @@ export function DayPlanner({
             dropTarget === '__tray__' ? 'border-brand-400 bg-brand-50/60' : 'border-slate-200 dark:border-slate-800'
           }`}
         >
+          {/*
+            This read "NOT ON THE DAY YET · 2" and sat directly above the
+            dashboard's own work queue showing the same two tasks, so a mentee
+            met the same work twice on one screen with no hint that these two
+            lists did different jobs. Saying what to DO with them is what tells
+            them apart: the queue is for reading, this is for planning.
+          */}
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Not on the day yet · {board.unplanned.length}
+            {mine ? 'Work to plan' : 'Not in a block yet'} · {board.unplanned.length}
+          </p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            {mine
+              ? 'Drag one into a block above to decide when you’ll do it — or use the handle and tap a block.'
+              : 'Drag one into a block to give it a time in their day.'}
           </p>
           <ul className="mt-2.5 space-y-1.5">
             {board.unplanned.map((item) => (
@@ -351,7 +396,7 @@ export function DayPlanner({
 
 function SlotCard({
   slot, busy, carrying, isDropTarget, onDropTarget, onDropItem, onCarry,
-  onToggleDone, onAddItem, onRetime, onRemove, onHide, itemBusy,
+  onToggleDone, onAddItem, onRetime, onRemove, onHide, itemBusy, mine,
 }: {
   slot: PlanSlot;
   busy: boolean;
@@ -366,16 +411,24 @@ function SlotCard({
   onRemove: () => void;
   onHide: () => void;
   itemBusy: Set<string>;
+  /** True when the viewer IS the mentee. Decides whose voice the block speaks in. */
+  mine: boolean;
 }) {
   const [draft, setDraft] = useState('');
   const [editing, setEditing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const ownerChip = slot.owner === 'mentee'
-    ? { text: 'Your block', cls: 'bg-brand-500/10 text-brand-700 dark:text-brand-300' }
+    ? {
+      text: mine ? 'Your block' : 'Theirs',
+      cls: 'bg-brand-500/10 text-brand-700 dark:text-brand-300',
+    }
     : slot.locked
       ? { text: 'Locked', cls: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300' }
-      : { text: 'From your mentor', cls: 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300' };
+      : {
+        text: mine ? 'From your mentor' : 'You set this',
+        cls: 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300',
+      };
 
   return (
     <li
@@ -443,7 +496,9 @@ function SlotCard({
               type="button"
               onClick={(e) => { e.stopPropagation(); onRemove(); }}
               aria-label={`Remove ${slot.label}`}
-              title="Remove this block — anything in it goes back to your list"
+              title={mine
+                ? 'Remove this block — anything in it goes back to your list'
+                : 'Remove this block — anything in it goes back to their list'}
               className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -501,7 +556,9 @@ function SlotCard({
             if (e.key === 'Enter' && draft.trim()) { onAddItem(draft); setDraft(''); }
             if (e.key === 'Escape') setDraft('');
           }}
-          placeholder={slot.items.length ? 'Add another…' : 'What goes in this block?'}
+          placeholder={slot.items.length
+            ? (mine ? 'Add another…' : 'Add another for them…')
+            : (mine ? 'What goes in this block?' : `Add work to ${slot.label}…`)}
           aria-label={`Add an item to ${slot.label}`}
           className="w-full rounded-xl border border-transparent bg-slate-50 px-3 py-2 text-sm text-foreground placeholder:text-slate-400 hover:border-slate-200 focus:border-brand-300 focus:bg-card focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:bg-slate-800/60 dark:hover:border-slate-700"
         />

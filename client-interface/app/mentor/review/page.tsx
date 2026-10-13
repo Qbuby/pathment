@@ -1073,7 +1073,12 @@ export default function CohortReview() {
 
           {/* Today's blocks and how far through them they are — the schedule
               finally showing up in review, where the conversation happens. */}
-          <PlanStripCard menteeId={mentee.id} clanId={effectiveClanId} />
+          <PlanStripCard
+            menteeId={mentee.id}
+            menteeName={mentee.name}
+            clanId={effectiveClanId}
+            readOnly={historical}
+          />
 
           {/* What they have actually been doing, day by day, on the work that is
               open right now. The mentor is already here going person by person,
