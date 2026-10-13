@@ -178,12 +178,14 @@ export const scheduleApi = {
     apiClient.post<{ data: { item: PlanItem } }>(`/schedules/board/${menteeId}/slots/${slotId}/items`, body),
   movePlanItem: (taskId: string, slotId: string | null, clanId?: string | null) =>
     apiClient.patch(`/schedules/board/items/${taskId}/move`, { slotId, clanId }),
-  setPlanItemDone: (taskId: string, done: boolean) =>
+  // These two carry the clan for the same reason `movePlanItem` does: a
+  // mentor's grant is clan-scoped, and the task itself may carry no clan.
+  setPlanItemDone: (taskId: string, done: boolean, clanId?: string | null) =>
     apiClient.patch<{ data: { status: string; nextOccurrence: string | null } }>(
-      `/schedules/board/items/${taskId}/done`, { done }),
-  setPlanItemRepeat: (taskId: string, repeat: Partial<RepeatRule> | null) =>
+      `/schedules/board/items/${taskId}/done`, { done, clanId }),
+  setPlanItemRepeat: (taskId: string, repeat: Partial<RepeatRule> | null, clanId?: string | null) =>
     apiClient.patch<{ data: { repeat: RepeatRule | null } }>(
-      `/schedules/board/items/${taskId}/repeat`, { repeat }),
+      `/schedules/board/items/${taskId}/repeat`, { repeat, clanId }),
   addPlanSlot: (menteeId: string, body: { label: string; time: string; clanId?: string | null }) =>
     apiClient.post<{ data: { slot: PlanSlot } }>(`/schedules/board/${menteeId}/slots`, body),
   updatePlanSlot: (menteeId: string, slotId: string, patch: { label?: string; time?: string; locked?: boolean; clanId?: string | null }) =>

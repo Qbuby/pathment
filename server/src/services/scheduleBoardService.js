@@ -359,7 +359,15 @@ class ScheduleBoardService {
          * "not for review"; this column only ever said who set it.
          */
         mentorId: personal ? menteeId : actor.id,
-        clanId: row.clanId || null,
+        /**
+         * The clan this was set IN, not only the one stamped on the schedule
+         * row — which is null on most of them. Stamping null here put a
+         * mentor's review work outside every clan-scoped read: it never
+         * reached the clan's approvals queue, and the mentor could not even
+         * tick the item they had just written, because the next write
+         * resolved their clan-scoped grant against a null clan.
+         */
+        clanId: this._effectiveClan(row, clanId),
         roadmapTaskId: roadmapTask.id,
         scheduleSlotId: slots[index].id,
         status: 'assigned',
@@ -421,10 +429,14 @@ class ScheduleBoardService {
    * submission flow that already exists, so a tick on a plan and a submission
    * from the task page are the same event and produce the same record.
    */
-  async completeItem(taskId, actor, done = true) {
+  async completeItem(taskId, actor, done = true, clanId = null) {
     const task = await models.AssignedTask.findByPk(taskId);
     if (!task) throw new NotFoundError('Item not found');
-    await this._assertCanPlan(actor, task.menteeId, task.clanId);
+    // The task's own clan when it has one, otherwise the clan the actor is
+    // acting in — the same rule `_effectiveClan` states for slots. A
+    // clan-scoped grant reaches nothing when this resolves to null, which is
+    // how a mentor was told they could not change a plan they had just set.
+    await this._assertCanPlan(actor, task.menteeId, task.clanId || clanId);
     if (task.clanId) await clanLifecycleService.assertClanWritable(task.clanId);
 
     if (!task.selfAssigned) {
@@ -547,10 +559,10 @@ class ScheduleBoardService {
    * changes what happens AFTER it is finished, and people reach for it long
    * after they first wrote the thing down.
    */
-  async setItemRepeat(taskId, repeat, actor) {
+  async setItemRepeat(taskId, repeat, actor, clanId = null) {
     const task = await models.AssignedTask.findByPk(taskId);
     if (!task) throw new NotFoundError('Item not found');
-    await this._assertCanPlan(actor, task.menteeId, task.clanId);
+    await this._assertCanPlan(actor, task.menteeId, task.clanId || clanId);
     if (task.clanId) await clanLifecycleService.assertClanWritable(task.clanId);
 
     let rule;

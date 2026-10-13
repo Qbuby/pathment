@@ -36,7 +36,7 @@ const moveItem = catchAsync(async (req, res) => {
 });
 
 const completeItem = catchAsync(async (req, res) => {
-  const result = await board.completeItem(req.params.taskId, req.user, req.body.done !== false);
+  const result = await board.completeItem(req.params.taskId, req.user, req.body.done !== false, clanOf(req));
   res.status(200).json(successResponse('Updated', result));
 });
 
@@ -78,7 +78,7 @@ const applyTemplate = catchAsync(async (req, res) => {
 });
 
 const setItemRepeat = catchAsync(async (req, res) => {
-  const result = await board.setItemRepeat(req.params.taskId, req.body.repeat ?? null, req.user);
+  const result = await board.setItemRepeat(req.params.taskId, req.body.repeat ?? null, req.user, clanOf(req));
   res.status(200).json(successResponse(result.repeat ? 'Repeat set' : 'Repeat turned off', result));
 });
 

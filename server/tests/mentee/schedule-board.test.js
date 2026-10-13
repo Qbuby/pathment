@@ -360,6 +360,40 @@ describe('the day planner', () => {
       expect(item.kind).toBe('review');
     });
 
+    /**
+     * The clan has to land ON the task, not just on the request that made it.
+     *
+     * Stamping the row's null clan put a mentor's review work outside every
+     * clan-scoped read — it never reached the clan's approvals queue — and made
+     * the next write resolve the mentor's clan-scoped grant against nothing.
+     */
+    it('stamps the clan the mentor is acting in onto the work', async () => {
+      const item = await board.addItem(mentee.id, OPEN, { title: 'Ship the auth PR', kind: 'review' }, mentor, clan.id);
+      const row = await models.AssignedTask.findByPk(item.id);
+      expect(row.clanId).toBe(clan.id);
+    });
+
+    /**
+     * A task that already carries no clan — anything created before the stamp
+     * above, and every item a mentee writes on a clanless row — is still
+     * reachable, because the actor's clan answers for it.
+     */
+    it('lets the mentor tick a clanless item when they say which clan they are in', async () => {
+      const item = await board.addItem(mentee.id, OPEN, { title: 'Read the brief' }, mentee, clan.id);
+      await models.AssignedTask.update({ clanId: null }, { where: { id: item.id } });
+
+      await expect(board.completeItem(item.id, mentor, true)).rejects.toThrow(/cannot change this plan/i);
+      await expect(board.completeItem(item.id, mentor, true, clan.id)).resolves.toMatchObject({ status: 'completed' });
+    });
+
+    it('still refuses an outsider who names the clan', async () => {
+      const item = await board.addItem(mentee.id, OPEN, { title: 'Read the brief' }, mentee, clan.id);
+      await models.AssignedTask.update({ clanId: null }, { where: { id: item.id } });
+      await expect(
+        board.completeItem(item.id, outsiderMentor, true, clan.id),
+      ).rejects.toThrow(/cannot change this plan/i);
+    });
+
     /** The looseness must not leak: a stranger is still a stranger. */
     it('does not let an unrelated mentor in through the gap', async () => {
       await expect(
