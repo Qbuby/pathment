@@ -1,10 +1,12 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import Link from 'next/link';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Check, Star, ExternalLink, Loader2, Clock, ShieldCheck } from 'lucide-react';
+import { Check, ChevronRight, Star, ExternalLink, Loader2, Clock, ShieldCheck } from 'lucide-react';
 import { submissionService } from '@/lib/services/submissionService';
 import { Drawer } from '@/components/shared/Drawer';
+import { Avatar } from '@/components/shared/Avatar';
 import { FeedbackAssist } from '@/components/mentor/FeedbackAssist';
 import { looksLikeHtml } from '@/lib/utils/html';
 import { toExternalHref } from '@/lib/utils/url';
@@ -31,11 +33,20 @@ export function ReviewDrawer({
   onClose,
   onReviewed,
   readOnly = false,
+  showMentee = false,
+  next,
 }: {
   item: ApprovalItem;
   onClose: () => void;
   onReviewed: () => void;
   readOnly?: boolean;
+  /** Show the mentee's photo beside the title (links to their profile). */
+  showMentee?: boolean;
+  /**
+   * Step to the next submission in the caller's queue without closing. Pass it
+   * only when there is more than one; `disabled` marks the last one.
+   */
+  next?: { onClick: () => void; disabled: boolean; position?: string };
 }) {
   const [checked, setChecked] = useState<Set<string>>(new Set());
   // `total` is the task's max (set by difficulty). A late task is pre-penalized:
@@ -48,6 +59,21 @@ export function ReviewDrawer({
   const [rating, setRating] = useState(isLate ? 4 : 5);
   const [notes, setNotes] = useState(isLate ? 'Submitted late — points and rating reduced accordingly.' : '');
   const [busy, setBusy] = useState<Decision | null>(null);
+
+  // Stepping to another submission keeps the drawer open, so the form has to
+  // start over — one mentee's ticks, points and notes must never carry across.
+  const [formFor, setFormFor] = useState(item.submissionId);
+  if (formFor !== item.submissionId) {
+    setFormFor(item.submissionId);
+    setChecked(new Set());
+    setPoints(total - latePenalty);
+    setRating(isLate ? 4 : 5);
+    setNotes(isLate ? 'Submitted late — points and rating reduced accordingly.' : '');
+  }
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    bodyRef.current?.parentElement?.scrollTo({ top: 0 });
+  }, [item.submissionId]);
 
   // Split criteria into hard gates (~60%) + soft checks (the rest), like the
   // prototype: Approve is blocked until every REQUIRED criterion is ticked.
@@ -121,9 +147,53 @@ export function ReviewDrawer({
     <Drawer
       open
       onClose={onClose}
-      title={`Review · ${item.title}`}
-      subtitle={`${item.mentee?.name ?? 'Mentee'} · v${item.version}`}
+      // With the mentee row below, the heading is just the task — the first
+      // thing a mentor reads — and who it belongs to sits right under it.
+      title={showMentee ? item.title : `Review · ${item.title}`}
+      subtitle={showMentee ? undefined : `${item.mentee?.name ?? 'Mentee'} · v${item.version}`}
       width="lg"
+      headerMeta={showMentee ? (
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <Avatar
+              name={item.mentee?.name}
+              src={item.mentee?.profilePictureUrl}
+              initials={item.mentee?.avatar}
+              size="sm"
+              href={item.mentee?.id ? `/mentor/mentees/${item.mentee.id}` : undefined}
+              title={item.mentee?.name ? `View ${item.mentee.name}'s profile` : undefined}
+            />
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              {item.mentee?.id ? (
+                <Link href={`/mentor/mentees/${item.mentee.id}`} className="truncate text-sm font-medium text-slate-800 hover:text-brand-700 hover:underline">
+                  {item.mentee.name}
+                </Link>
+              ) : (
+                <span className="truncate text-sm font-medium text-slate-800">{item.mentee?.name ?? 'Mentee'}</span>
+              )}
+              <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-500 tabular-nums dark:bg-slate-800">v{item.version}</span>
+              {item.isLate && (
+                <span className="inline-flex items-center gap-1 rounded-md bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-700 dark:bg-red-950/30 dark:text-red-400">
+                  <Clock className="h-3 w-3" aria-hidden="true" />Late
+                </span>
+              )}
+            </div>
+          </div>
+          {next && (
+            <div className="flex shrink-0 items-center gap-2">
+              {next.position && <span className="hidden text-xs text-slate-400 tabular-nums sm:inline">{next.position}</span>}
+              <button
+                onClick={next.onClick}
+                disabled={next.disabled || !!busy}
+                title={next.disabled ? 'This is the last submission to review' : 'Go to the next submission'}
+                className="inline-flex items-center gap-0.5 rounded-lg border border-slate-200 py-1.5 pl-2.5 pr-1.5 text-xs font-medium text-slate-700 hover:border-brand-300 hover:text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-slate-200 disabled:hover:text-slate-700"
+              >
+                Next<ChevronRight className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+          )}
+        </div>
+      ) : undefined}
       footer={
         readOnly ? (
           <p className="w-full text-sm text-slate-500">This clan is completed — grading is unavailable.</p>
@@ -149,7 +219,7 @@ export function ReviewDrawer({
         )
       }
     >
-      <div className="space-y-6">
+      <div ref={bodyRef} className="space-y-6">
         {item.isLate && (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400 text-xs"><Clock className="w-3 h-3" />Submitted late</span>
         )}
@@ -298,6 +368,7 @@ export function ReviewDrawer({
             {isLate && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-rose-500 font-semibold">reason required</span>}
           </h3>
           <FeedbackAssist
+            key={item.submissionId}
             templates={FEEDBACK_TEMPLATES}
             getCurrentText={() => notes}
             getDraftContext={() => ({
