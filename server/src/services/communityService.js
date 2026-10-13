@@ -22,6 +22,23 @@ const REPORT_CATEGORIES = {
   other: 'Something else',
 };
 const REPORT_DETAILS_MAX = 1000;
+const REPORT_SEPARATOR = ' — ';
+/**
+ * Split a stored report line back into the reason that was picked and what the
+ * reporter wrote. Reports from before the reason picker have neither a known
+ * label nor a separator, so the whole line is treated as their own words.
+ */
+const parseReportReason = (reason) => {
+  const text = typeof reason === 'string' ? reason.trim() : '';
+  if (!text) return { category: null, categoryLabel: null, details: null };
+  for (const [category, categoryLabel] of Object.entries(REPORT_CATEGORIES)) {
+    if (text === categoryLabel) return { category, categoryLabel, details: null };
+    if (text.startsWith(`${categoryLabel}${REPORT_SEPARATOR}`)) {
+      return { category, categoryLabel, details: text.slice(categoryLabel.length + REPORT_SEPARATOR.length).trim() || null };
+    }
+  }
+  return { category: null, categoryLabel: null, details: text };
+};
 
 // Points awarded by community activity (no-op for non-mentees, which have no profile).
 const POINTS = { KUDOS_RECEIVED: 15, ANSWER_ACCEPTED: 25 };
@@ -523,7 +540,7 @@ class CommunityService {
       if (category === 'other' && !note) {
         throw new ValidationError('Tell us what is wrong so a moderator knows what to look at');
       }
-      storedReason = note ? `${label} — ${note}` : label;
+      storedReason = note ? `${label}${REPORT_SEPARATOR}${note}` : label;
     }
     // Confirm the target exists and the reporter can see its space.
     if (targetType === 'post') {
@@ -541,13 +558,13 @@ class CommunityService {
     const reports = await models.CommunityReport.findAll({
       where: status ? { status } : {},
       order: [['created_at', 'DESC']],
-      include: [{ model: models.User, as: 'reporter', attributes: ['id', 'firstName', 'lastName'] }]
+      include: [{ model: models.User, as: 'reporter', attributes: ['id', 'firstName', 'lastName', 'role', 'profilePictureUrl'] }]
     });
 
     // Attach a preview of each reported target so a moderator can judge without leaving the queue.
     const postIds = reports.filter((r) => r.targetType === 'post').map((r) => r.targetId);
     const commentIds = reports.filter((r) => r.targetType === 'comment').map((r) => r.targetId);
-    const authorInc = [{ model: models.User, as: 'author', attributes: ['id', 'firstName', 'lastName'] }];
+    const authorInc = [{ model: models.User, as: 'author', attributes: ['id', 'firstName', 'lastName', 'role', 'profilePictureUrl'] }];
     const [posts, comments] = await Promise.all([
       postIds.length ? models.CommunityPost.findAll({ where: { id: { [Op.in]: postIds } }, include: authorInc, paranoid: false }) : [],
       commentIds.length ? models.CommunityComment.findAll({ where: { id: { [Op.in]: commentIds } }, include: authorInc, paranoid: false }) : []
@@ -563,11 +580,16 @@ class CommunityService {
         targetType: r.targetType,
         targetId: r.targetId,
         reason: r.reason,
+        // The same line, split for display: the picked reason and their words.
+        ...parseReportReason(r.reason),
         status: r.status,
         at: r.createdAt,
-        reporter: { id: r.reporter?.id, name: fullName(r.reporter) },
+        reporter: { id: r.reporter?.id, name: fullName(r.reporter), role: r.reporter?.role || null, avatarUrl: photo(r.reporter) },
         preview,
         targetAuthor: t ? fullName(t.author) : null,
+        targetAuthorId: t?.author?.id || null,
+        targetAuthorRole: t?.author?.role || null,
+        targetAuthorAvatarUrl: t ? photo(t.author) : null,
         targetDeleted: t ? Boolean(t.deletedAt) : true
       };
     });
