@@ -12,6 +12,16 @@ const photo = (u) => (u && u.profilePictureUrl) || null;
 
 const POST_TYPES = ['kudos', 'win', 'question', 'discussion', 'resource', 'meme', 'standup'];
 const REACTION_TYPES = ['cheers', 'celebrate', 'helpful', 'insightful'];
+// Why something was reported. "other" says nothing by itself, so it is the one
+// category that must come with an explanation. Keep in step with the client.
+const REPORT_CATEGORIES = {
+  spam: 'Spam',
+  scam: 'Scam or fraud',
+  hate: 'Hateful content',
+  violence: 'Violence or threats',
+  other: 'Something else',
+};
+const REPORT_DETAILS_MAX = 1000;
 
 // Points awarded by community activity (no-op for non-mentees, which have no profile).
 const POINTS = { KUDOS_RECEIVED: 15, ANSWER_ACCEPTED: 25 };
@@ -497,8 +507,24 @@ class CommunityService {
   }
 
   // ── moderation ────────────────────────────────────────────────────────
-  async report(user, { targetType, targetId, reason }) {
+  async report(user, { targetType, targetId, reason, category, details }) {
     if (!['post', 'comment'].includes(targetType)) throw new ValidationError('Invalid report target');
+    // A categorised report is stored as one readable line ("Spam — <details>")
+    // in the existing `reason` column, which is what the moderation queue
+    // already shows. A bare `reason` is still accepted from older clients.
+    let storedReason = typeof reason === 'string' ? reason.trim().slice(0, REPORT_DETAILS_MAX) : '';
+    if (category !== undefined && category !== null && category !== '') {
+      const label = REPORT_CATEGORIES[category];
+      if (!label) throw new ValidationError('Choose a reason for the report');
+      const note = typeof details === 'string' ? details.trim() : '';
+      if (note.length > REPORT_DETAILS_MAX) {
+        throw new ValidationError(`Keep the details under ${REPORT_DETAILS_MAX} characters`);
+      }
+      if (category === 'other' && !note) {
+        throw new ValidationError('Tell us what is wrong so a moderator knows what to look at');
+      }
+      storedReason = note ? `${label} — ${note}` : label;
+    }
     // Confirm the target exists and the reporter can see its space.
     if (targetType === 'post') {
       await this._loadPostWithAccess(user, targetId);
@@ -507,7 +533,7 @@ class CommunityService {
       if (!comment) throw new NotFoundError('Comment not found');
       await this._loadPostWithAccess(user, comment.postId);
     }
-    await models.CommunityReport.create({ targetType, targetId, reporterId: user.id, reason: reason || null });
+    await models.CommunityReport.create({ targetType, targetId, reporterId: user.id, reason: storedReason || null });
     return { reported: true };
   }
 

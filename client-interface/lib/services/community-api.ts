@@ -32,6 +32,20 @@ const params = (q: Record<string, unknown>) => {
 };
 
 /** Community v2 - scoped spaces, posts, threads, Q&A, moderation. */
+/** Why a member is reporting something. Keep in step with the server's list. */
+export type ReportCategory = 'spam' | 'scam' | 'hate' | 'violence' | 'other';
+
+export const REPORT_CATEGORIES: { value: ReportCategory; label: string }[] = [
+  { value: 'spam', label: 'Spam' },
+  { value: 'scam', label: 'Scam or fraud' },
+  { value: 'hate', label: 'Hateful content' },
+  { value: 'violence', label: 'Violence or threats' },
+  { value: 'other', label: 'Something else' },
+];
+/** The one reason that says nothing on its own, so the details become mandatory. */
+export const REPORT_DETAILS_REQUIRED_FOR: ReportCategory = 'other';
+export const REPORT_DETAILS_MAX = 1000;
+
 export const communityApi = {
   // spaces & people
   spaces: () => apiClient.get('/community/spaces'),
@@ -70,7 +84,7 @@ export const communityApi = {
   deleteComment: (id: string) => apiClient.delete(`/community/comments/${id}`),
 
   // moderation
-  report: (data: { targetType: 'post' | 'comment'; targetId: string; reason?: string }) =>
+  report: (data: { targetType: 'post' | 'comment'; targetId: string; category: ReportCategory; details?: string }) =>
     apiClient.post('/community/reports', data),
   reports: (status = 'open') => apiClient.get('/community/reports', { params: params({ status }) }),
   resolveReport: (id: string, status: 'reviewed' | 'dismissed') =>

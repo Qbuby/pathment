@@ -12,6 +12,7 @@ import { useCommunityHub, type CommunityPost, type CommunityComment, type Commun
 import { communityApi, type PostType, type ReactionType } from '@/lib/services/community-api';
 import FileUploader from '@/components/shared/FileUploader';
 import { MenuPanel } from '@/components/shared/MenuPanel';
+import { ReportPostDialog } from '@/components/community/ReportPostDialog';
 import { toExternalHref } from '@/lib/utils/url';
 
 /* ── Mention picker ─────────────────────────────────────────────────────── */
@@ -186,6 +187,7 @@ function Thread({ post, canModerate, readOnly, people, onChanged }: { post: Comm
 function PostCard({ post, canModerate, hub }: { post: CommunityPost; canModerate: boolean; hub: ReturnType<typeof useCommunityHub> }) {
   const [open, setOpen] = useState(false);
   const [menu, setMenu] = useState(false);
+  const [reporting, setReporting] = useState(false);
   const meta = TYPE_META[post.type] ?? TYPE_META.discussion;
 
   return (
@@ -219,7 +221,7 @@ function PostCard({ post, canModerate, hub }: { post: CommunityPost; canModerate
                     <Trash2 className="w-3.5 h-3.5" />Delete
                   </button>
                 )}
-                <button onClick={() => { hub.report('post', post.id); setMenu(false); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-slate-700 dark:text-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800">
+                <button onClick={() => { setReporting(true); setMenu(false); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-slate-700 dark:text-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800">
                   <Flag className="w-3.5 h-3.5" />Report
                 </button>
               </MenuPanel>
@@ -288,6 +290,12 @@ function PostCard({ post, canModerate, hub }: { post: CommunityPost; canModerate
       </div>
 
       {open && <Thread post={post} canModerate={canModerate} readOnly={!!hub.active?.readOnly} people={hub.people} onChanged={hub.refetch} />}
+
+      <ReportPostDialog
+        open={reporting}
+        onClose={() => setReporting(false)}
+        onSubmit={(reason) => hub.report('post', post.id, reason)}
+      />
     </div>
   );
 }
