@@ -8,7 +8,7 @@ import { ScheduleJsonPanel } from '@/components/shared/ScheduleJsonPanel';
 import { downloadScheduleTemplateJson } from '@/lib/utils/schedule-json';
 import { useConfirm } from '@/lib/context/ConfirmContext';
 
-interface OrgTemplate { id: string; name: string; description?: string | null; blocks: ScheduleBlock[] }
+interface OrgTemplate { id: string; name: string; description?: string | null; blocks: ScheduleBlock[]; menteeSelectable?: boolean }
 interface DraftBlock { label: string; time: string; days: string; bookable: boolean }
 
 const DAY_OPTS = ['everyday', 'weekdays', 'weekends'];
@@ -101,8 +101,35 @@ function TemplateDrawer({ template, onClose, onSaved }: { template: OrgTemplate 
     template?.blocks?.length ? template.blocks.map((b) => ({ label: b.label, time: b.time, days: b.days, bookable: b.bookable })) : [blankBlock()]
   );
   const [saving, setSaving] = useState(false);
+  /**
+   * Whether mentees may take this one themselves.
+   *
+   * Off by default on purpose: some templates ARE the programme's shape and
+   * should only ever arrive from a mentor. The ones that are just useful
+   * day-shapes — "Evening study", "Weekend sprint" — are better taken by
+   * whoever knows how they work than requested from somebody who does not.
+   */
+  const [menteeSelectable, setMenteeSelectable] = useState(template?.menteeSelectable ?? false);
 
   const setBlock = (i: number, patch: Partial<DraftBlock>) => setBlocks((prev) => prev.map((b, j) => (j === i ? { ...b, ...patch } : b)));
+
+  const offerToggle = (
+    <label className="flex items-start gap-2.5 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+      <input
+        type="checkbox"
+        id="template-mentee-selectable"
+        checked={menteeSelectable}
+        onChange={(e) => setMenteeSelectable(e.target.checked)}
+        className="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+      />
+      <span className="min-w-0">
+        <span className="block text-sm font-medium text-slate-900 dark:text-slate-100">Mentees can choose this themselves</span>
+        <span className="mt-0.5 block text-xs text-slate-500">
+          It appears in their planner to take without asking. Taking it adds the blocks to their day — it never replaces what a mentor set.
+        </span>
+      </span>
+    </label>
+  );
 
   const submit = async () => {
     const clean = blocks.map((b) => ({ ...b, label: b.label.trim() })).filter((b) => b.label);
@@ -110,7 +137,7 @@ function TemplateDrawer({ template, onClose, onSaved }: { template: OrgTemplate 
     if (clean.length === 0) { toast.error('Add at least one block'); return; }
     try {
       setSaving(true);
-      const payload = { name: name.trim(), description: description.trim() || undefined, blocks: clean };
+      const payload = { name: name.trim(), description: description.trim() || undefined, blocks: clean, menteeSelectable };
       if (template) await scheduleApi.updateOrgTemplate(template.id, payload);
       else await scheduleApi.createOrgTemplate(payload);
       toast.success(template ? 'Template updated' : 'Template created');
@@ -134,6 +161,10 @@ function TemplateDrawer({ template, onClose, onSaved }: { template: OrgTemplate 
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className={`${field} resize-none`} />
+          </div>
+
+          <div>
+            {offerToggle}
           </div>
           <ScheduleJsonPanel
             current={{ name, description, blocks }}

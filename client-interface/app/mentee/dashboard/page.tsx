@@ -26,6 +26,7 @@ import { ProgressBar, StatusBadge } from "@/components/admin/ui";
 import { MentorFeedbackDrawer } from "@/components/mentee/MentorFeedbackDrawer";
 import { ActivityCard } from "@/components/shared/ActivityCard";
 import { RecurringRitualsCard } from "@/components/mentee/RecurringRitualsCard";
+import { DayPlanner } from "@/components/mentee/DayPlanner";
 import { AnnouncementsCard } from "@/components/shared/AnnouncementsCard";
 import { ClanWorkspaceNotice } from "@/components/shared/ClanWorkspaceNotice";
 import { useClan } from "@/lib/context/ClanContext";
@@ -377,6 +378,17 @@ function MenteeDashboardInner() {
           ))}
         </section>
       </div>
+      {/*
+        The day, as blocks you can put work in.
+        
+        It lives on This Week rather than behind a new nav item because this is
+        already the screen a mentee opens first — a planner one click away is a
+        planner that gets used, and a planner behind a menu is one that does not.
+      */}
+      <section aria-label="Your plan for today" className="mt-6">
+        <DayPlanner menteeId="me" clanId={menteeActiveClanId || null} />
+      </section>
+
       {/* Recurring rituals (from your schedule) */}
       <RecurringRitualsCard />
 

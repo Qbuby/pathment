@@ -63,6 +63,7 @@ import { TracksPanel } from '@/components/mentor/TracksPanel';
 import { Drawer } from '@/components/shared/Drawer';
 import { Avatar } from '@/components/shared/Avatar';
 import { MenteeRecordPanel } from '@/components/mentor/MenteeRecordPanel';
+import { DayPlanner } from '@/components/mentee/DayPlanner';
 import { MenteeScheduleView } from '@/components/shared/MenteeScheduleView';
 
 // ── Small presentational helpers (current indigo/slate design system) ────────
@@ -738,7 +739,15 @@ export default function MenteeDetail() {
           so the tab costs nothing until it is opened. */}
       {section === 'history' && <MenteeRecordPanel menteeId={menteeId} />}
 
-      {section === 'schedule' && <MenteeScheduleView menteeId={menteeId} />}
+      {section === 'schedule' && (
+        <div className="space-y-5">
+          {/* The same planner the mentee uses. The server sends per-block rights,
+              so a mentor gets the lock and the blocks they own without a second
+              component that could drift from theirs. */}
+          <DayPlanner menteeId={menteeId} clanId={activeClanId !== ALL_CLANS ? activeClanId : null} />
+          <MenteeScheduleView menteeId={menteeId} />
+        </div>
+      )}
 
       {section === 'work' && (
         <>

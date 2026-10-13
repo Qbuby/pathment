@@ -89,6 +89,19 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: false,
       field: 'is_late'
     },
+    /**
+     * The mentee put this on their own plan.
+     *
+     * Still a real task — it keeps the progress log, the clan scoping and the
+     * lifecycle — but it is not the mentor's to approve, so it never enters
+     * their approvals queue and earns no points. See migration 128.
+     */
+    selfAssigned: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      field: 'self_assigned'
+    },
     isCustomTask: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,

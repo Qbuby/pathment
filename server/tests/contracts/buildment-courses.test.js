@@ -16,7 +16,7 @@ const request = require('supertest');
 const app = require('../../src/index');
 const { models, sequelize } = require('../../src/db');
 const { cleanDb, createAdmin, createMentor, createMentee, createProgram, createClan, authHeader } = require('../helpers/seed');
-const appsAndCourses = require('../../scripts/migrations/126_external_apps_buildment_courses');
+const appsAndCourses = require('../../scripts/migrations/127_external_apps_buildment_courses');
 
 const KEYS = { accessKey: 'bm_access_key_1234', secretKey: 'bm_secret_key_5678' };
 const COURSE = {

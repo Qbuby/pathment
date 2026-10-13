@@ -88,6 +88,8 @@ export const qk = {
     enrollments: (menteeId: string) => ['mentee', 'enrollments', menteeId] as const,
     matches: (mentorId: string, menteeId: string) => ['mentee', 'matches', mentorId, menteeId] as const,
     schedule: (menteeId: string, clanId?: string | null) => ['mentee', 'schedule', menteeId, clanId ?? ''] as const,
+    /** Today's blocks and their counts — the compact read for clan review. */
+    planStrip: (menteeId: string, clanId?: string | null) => ['mentee', 'plan-strip', menteeId, clanId ?? ''] as const,
   },
 
   me: {

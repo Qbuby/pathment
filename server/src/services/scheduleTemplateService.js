@@ -60,7 +60,7 @@ class ScheduleTemplateService {
     return models.ScheduleTemplate.findAll({ where: { source: 'org' }, order: [['created_at', 'DESC']] });
   }
 
-  async createOrgTemplate(adminId, { name, description, blocks }) {
+  async createOrgTemplate(adminId, { name, description, blocks, menteeSelectable }) {
     if (!name || !name.trim()) throw new ValidationError('name is required');
     return models.ScheduleTemplate.create({
       name: name.trim(),
@@ -68,6 +68,9 @@ class ScheduleTemplateService {
       source: 'org',
       ownerMentorId: null,
       blocks: this._normalizeBlocks(blocks),
+      // Offered to mentees only when an admin says so. Some templates are the
+      // programme's shape and should only ever arrive from a mentor.
+      menteeSelectable: menteeSelectable === true,
       createdBy: adminId
     });
   }
@@ -78,6 +81,7 @@ class ScheduleTemplateService {
     if (updates.name !== undefined) t.name = updates.name;
     if (updates.description !== undefined) t.description = updates.description;
     if (updates.blocks !== undefined) t.blocks = this._normalizeBlocks(updates.blocks);
+    if (updates.menteeSelectable !== undefined) t.menteeSelectable = updates.menteeSelectable === true;
     await t.save();
     return t;
   }
@@ -359,12 +363,33 @@ class ScheduleTemplateService {
    * shortcut: configure a block once, push it to all, then tweak individuals.
    * Returns { applied } (how many mentee schedules had the slot).
    */
-  async applySlotToAll(mentorId, slotId, patch, menteeIds = null) {
+  /**
+   * Push one block's contents to a whole roster.
+   *
+   * It now LEAVES ALONE anybody who has made that block their own, and says
+   * whose it skipped. Before, this overwrote every copy unconditionally: a
+   * mentee who had moved their deep-work block to the evening because they work
+   * evenings would find it back at 10am with no explanation and no way to tell
+   * it had happened. A mentor pushing an update to twenty people should not have
+   * to choose between keeping everyone in step and bulldozing the few who have
+   * adapted it — so they get both, plus the names.
+   *
+   * A mentee's OWN block is never touched either, whatever it is called. That
+   * one is not a copy of anything.
+   *
+   * `force: true` is the deliberate override, for when the point really is to
+   * reset everybody.
+   */
+  async applySlotToAll(mentorId, slotId, patch, menteeIds = null, { force = false } = {}) {
     const where = Array.isArray(menteeIds) && menteeIds.length
       ? { menteeId: menteeIds, assignedBy: mentorId }
       : { assignedBy: mentorId };
-    const schedules = await models.MenteeSchedule.findAll({ where });
+    const schedules = await models.MenteeSchedule.findAll({
+      where,
+      include: [{ model: models.User, as: 'mentee', attributes: ['id', 'firstName', 'lastName'], required: false }],
+    });
     let applied = 0;
+    const skipped = [];
     for (const ms of schedules) {
       const sched = Array.isArray(ms.schedule) ? ms.schedule : [];
       let idx = sched.findIndex((s, i) => (s.id || slug(s.label) || `block-${i}`) === slotId);
@@ -374,12 +399,23 @@ class ScheduleTemplateService {
       }
       if (idx === -1) continue;
 
-      const targetSlotId = sched[idx].id || slotId;
+      const slot = sched[idx];
+      const theirs = slot.owner === 'mentee' || slot.editedByMentee === true;
+      if (theirs && !force) {
+        skipped.push({
+          menteeId: ms.menteeId,
+          name: [ms.mentee?.firstName, ms.mentee?.lastName].filter(Boolean).join(' ') || 'A mentee',
+          reason: slot.owner === 'mentee' ? 'their own block' : 'they changed this block',
+        });
+        continue;
+      }
+
+      const targetSlotId = slot.id || slotId;
       // Pass each row's clanId so dual-clan mentees get the right schedule updated.
       await this.updateSlot(ms.menteeId, targetSlotId, patch, mentorId, ms.clanId || null);
       applied += 1;
     }
-    return { applied };
+    return { applied, skipped };
   }
 
   /**

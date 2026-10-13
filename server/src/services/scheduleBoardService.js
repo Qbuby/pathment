@@ -1,0 +1,618 @@
+const { Op } = require('sequelize');
+const { models, sequelize } = require('../db');
+const authz = require('./authzService');
+const { PERMISSIONS } = require('../config/permissions');
+const { NotFoundError, ValidationError, ForbiddenError } = require('../utils/errors/errorTypes');
+const clanLifecycleService = require('./clanLifecycleService');
+const { todayInZone } = require('../utils/timezone');
+
+/**
+ * A day as blocks that hold things.
+ *
+ * A schedule slot used to be a RULE ("make a discussion task every Monday") or
+ * a POINTER ("work through these roadmaps"). It was never "here are the three
+ * things in this block today", which is why nothing could be dragged into a
+ * block, out of one, or ticked off: there was no "in".
+ *
+ * Nothing new is stored to fix that. `assigned_tasks.schedule_slot_id` already
+ * existed and was already indexed — only the recurring materializer wrote it,
+ * and nothing read it. So:
+ *
+ *   what is in this block   → one indexed read
+ *   move it to another      → one column write
+ *   mark it done            → the task lifecycle that already exists
+ *
+ * An item on a plan is an ordinary task, so submissions, mentor feedback,
+ * points and the daily progress log keep working with no second system to
+ * disagree with the first.
+ *
+ * ── Who may change what ────────────────────────────────────────────────────
+ * Every slot carries `owner` and `locked`. Slots written before this shipped
+ * have neither, and are read as mentor-owned and unlocked, which is what they
+ * were.
+ *
+ *   mentor-owned, unlocked  mentee fills it, moves it, renames it (marked as
+ *                           changed, so "apply to all" leaves it alone)
+ *   mentor-owned, locked    mentee fills it and nothing else — the standup
+ *                           stays at 09:00
+ *   mentee-owned            the mentee's own time; a mentor can see it and
+ *                           never overwrites it
+ *
+ * Locking protects a block's SHAPE, not its contents. What you bring to the
+ * standup is always yours.
+ */
+
+/** Slots written before ownership existed were mentor-owned and unlocked. */
+function normalizeSlot(slot, index) {
+  return {
+    ...slot,
+    id: slot.id || `slot-${index}`,
+    owner: slot.owner === 'mentee' ? 'mentee' : 'mentor',
+    locked: slot.locked === true,
+    editedByMentee: slot.editedByMentee === true,
+    hiddenOn: slot.hiddenOn || null,
+  };
+}
+
+/** What this actor may do to this slot, decided once and sent to the client. */
+function slotRights(slot, { isOwnerMentee, canAssign }) {
+  const mentorSide = canAssign;
+  const mine = slot.owner === 'mentee' && isOwnerMentee;
+  return {
+    // Anyone who can see the plan can put work in a block, locked or not.
+    canAddItems: true,
+    canRetime: mentorSide || mine || !slot.locked,
+    canRemove: mentorSide || mine,
+    canLock: mentorSide,
+    // You cannot delete a block you were given, but you can sit out one day of
+    // it. The mentor's intent survives; today's reality is respected.
+    canHide: !mentorSide && !mine,
+  };
+}
+
+const ACTIVE_STATUSES = ['assigned', 'in_progress', 'submitted', 'revision_needed'];
+
+/**
+ * A day's plan has to show what you FINISHED today, not only what is left.
+ *
+ * Reading active statuses alone made a ticked item disappear from its block the
+ * moment it was ticked, so "2 of 3 done" was unreachable — the total shrank
+ * with every tick and the ring never filled. Finished work stays in its block
+ * for the rest of the day and drops off tomorrow, which is what makes the count
+ * mean "today" rather than "ever".
+ *
+ * Only items that are IN a block get this. Unplanned stays a list of things
+ * still to do, not an archive of everything ever completed.
+ */
+const PLANNED_STATUSES = [...ACTIVE_STATUSES, 'completed'];
+
+class ScheduleBoardService {
+  /**
+   * One resource covers both readings of "may you plan this day".
+   *
+   * A mentee holds `schedule.plan` at self scope, so `userId` admits them. A
+   * mentor holds it at clan scope, so `clanId` admits them. Passing both means
+   * neither needs a special case, and an admin's org grant covers everything.
+   */
+  async _assertCanPlan(actor, menteeId, clanId) {
+    const resource = { userId: menteeId, clanId: clanId || null };
+    if (await authz.can(actor, PERMISSIONS.SCHEDULE_PLAN, resource)) return;
+    throw new ForbiddenError('You cannot change this plan');
+  }
+
+  async _canAssign(actor, clanId) {
+    return authz.can(actor, PERMISSIONS.SCHEDULE_ASSIGN, { clanId: clanId || null });
+  }
+
+  /**
+   * Midnight at the start of the mentee's today, in their own zone.
+   *
+   * Their day is the unit this screen counts in, so a mentee eight hours ahead
+   * must not watch this morning's work fall off the plan because a server in
+   * another zone has already turned the page.
+   */
+  async _todayKey(menteeId) {
+    const settings = await models.UserSettings.findOne({
+      where: { userId: menteeId }, attributes: ['timezone'],
+    });
+    return todayInZone(settings?.timezone || 'UTC');
+  }
+
+  async _startOfToday(menteeId) {
+    return new Date(`${await this._todayKey(menteeId)}T00:00:00Z`);
+  }
+
+  async _scheduleRow(menteeId, clanId) {
+    const where = { menteeId };
+    if (clanId) where.clanId = clanId;
+    const row = await models.MenteeSchedule.findOne({ where, order: [['assignedAt', 'DESC']] });
+    // A mentee with no template yet still has a day — they just start empty.
+    return row || models.MenteeSchedule.findOne({ where: { menteeId }, order: [['assignedAt', 'DESC']] });
+  }
+
+  /**
+   * The whole board in two queries: the schedule row, and every task that is
+   * either in one of its blocks or waiting to be put in one.
+   */
+  async board(menteeId, { clanId = null } = {}, actor) {
+    await this._assertCanPlan(actor, menteeId, clanId);
+    const canAssign = await this._canAssign(actor, clanId);
+    const isOwnerMentee = String(actor.id) === String(menteeId);
+
+    const row = await this._scheduleRow(menteeId, clanId);
+    // Sorted on READ, not just on write. Slots created before the planner were
+    // stored in whatever order they were authored, and a day that lists 18:00
+    // above 09:00 is simply wrong however it got that way.
+    const todayKey = await this._todayKey(menteeId);
+    const slots = (Array.isArray(row?.schedule) ? row.schedule : [])
+      .map(normalizeSlot)
+      // Hidden only for the day it was hidden on. A mentee skipping standup
+      // because they are travelling should not have to undo it tomorrow, and a
+      // mentor's block must come back by itself — that is the difference
+      // between hiding and deleting.
+      .filter((slot) => slot.hiddenOn !== todayKey)
+      .sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')));
+
+    const slotIds = slots.map((s) => s.id);
+    const startOfToday = await this._startOfToday(menteeId);
+    const tasks = await models.AssignedTask.findAll({
+      where: {
+        menteeId,
+        ...(row?.clanId ? { clanId: row.clanId } : {}),
+        [Op.or]: [
+          // In a block: everything still open, plus whatever was finished today.
+          {
+            scheduleSlotId: { [Op.in]: slotIds.length ? slotIds : ['__none__'] },
+            [Op.or]: [
+              { status: { [Op.in]: ACTIVE_STATUSES } },
+              { status: 'completed', completedAt: { [Op.gte]: startOfToday } },
+            ],
+          },
+          // Waiting to be planned: open work only.
+          { scheduleSlotId: null, status: { [Op.in]: ACTIVE_STATUSES } },
+        ],
+      },
+      attributes: [
+        'id', 'scheduleSlotId', 'status', 'dueDate', 'selfAssigned', 'isCustomTask',
+        'titleOverride', 'pointsBase', 'occurrenceDate',
+      ],
+      include: [{
+        model: models.RoadmapTask, as: 'roadmapTask', required: false,
+        attributes: ['id', 'title', 'type', 'estimatedHours', 'difficulty', 'roadmapId'],
+      }],
+      order: [['dueDate', 'ASC'], ['createdAt', 'ASC']],
+    });
+
+    const shape = (t, { derived = false } = {}) => ({
+      id: t.id,
+      /**
+       * Here because its roadmap is, not because anyone put it here. The
+       * planner says so, since moving it is then a different kind of act: it
+       * detaches the task from the roadmap's block for good.
+       */
+      fromRoadmapSlot: derived,
+      title: t.titleOverride || t.roadmapTask?.title || 'Untitled',
+      type: t.roadmapTask?.type || 'custom',
+      status: t.status,
+      dueDate: t.dueDate,
+      estimatedHours: t.roadmapTask?.estimatedHours ?? null,
+      // The one distinction a mentee actually feels: does ticking this finish
+      // it, or does it go to my mentor?
+      kind: t.selfAssigned ? 'personal' : 'review',
+      points: t.selfAssigned ? 0 : (t.pointsBase ?? null),
+    });
+
+    /**
+     * Which block a roadmap task belongs to.
+     *
+     * A roadmap slot does not own tasks the way a plain block does — it points
+     * at roadmaps, and `linearRoadmapService` records the slot on
+     * `RoadmapProgress.slot`, never on the task. So the task's own
+     * `schedule_slot_id` is null and, read naively, every piece of roadmap work
+     * a mentee has fell into "not on the day yet" while the block meant to
+     * govern it sat there looking empty — the worst of both readings.
+     *
+     * A roadmap task belongs to the block because its ROADMAP does. An explicit
+     * `schedule_slot_id` still wins: that means somebody deliberately moved this
+     * one somewhere else, and a derived rule must not drag it back.
+     */
+    const slotByRoadmap = new Map();
+    for (const slot of slots) {
+      if (slot.kind !== 'roadmap') continue;
+      for (const roadmapId of (Array.isArray(slot.roadmapChain) ? slot.roadmapChain : [])) {
+        if (roadmapId && !slotByRoadmap.has(roadmapId)) slotByRoadmap.set(roadmapId, slot.id);
+      }
+    }
+
+    const bySlot = new Map(slots.map((s) => [s.id, []]));
+    const unplanned = [];
+    for (const task of tasks) {
+      const explicit = task.scheduleSlotId && bySlot.has(task.scheduleSlotId) ? task.scheduleSlotId : null;
+      const derived = !task.scheduleSlotId && task.roadmapTask?.roadmapId
+        ? slotByRoadmap.get(task.roadmapTask.roadmapId) || null
+        : null;
+      const target = explicit || derived;
+      (target ? bySlot.get(target) : unplanned).push(shape(task, { derived: !!derived }));
+    }
+
+    /**
+     * Live progress per roadmap in a chain, from the service that already owns
+     * that read — the mentor's read-only week view uses exactly this, so a
+     * roadmap block cannot say one thing here and another there.
+     */
+    const enriched = slots.some((s) => s.kind === 'roadmap')
+      ? await require('./scheduleTemplateService')._enrichSchedule(menteeId, slots)
+      : slots;
+    const chainById = new Map(enriched.map((s) => [s.id, s.chainDetails || null]));
+
+    const withItems = slots.map((slot) => {
+      const items = bySlot.get(slot.id) || [];
+      return {
+        ...slot,
+        items,
+        done: items.filter((i) => i.status === 'completed').length,
+        chainDetails: chainById.get(slot.id) || null,
+        rights: slotRights(slot, { isOwnerMentee, canAssign }),
+      };
+    });
+
+    return {
+      menteeId,
+      clanId: row?.clanId ?? clanId ?? null,
+      hasSchedule: !!row,
+      templateId: row?.templateId ?? null,
+      timezone: row?.timezone ?? null,
+      slots: withItems,
+      unplanned,
+      viewer: { isOwnerMentee, canAssign },
+    };
+  }
+
+  /** Locate a slot and the row holding it, or say so clearly. */
+  async _locate(menteeId, slotId, clanId) {
+    const row = await this._scheduleRow(menteeId, clanId);
+    if (!row) throw new NotFoundError('This mentee has no schedule yet');
+    const slots = (Array.isArray(row.schedule) ? row.schedule : []).map(normalizeSlot);
+    const index = slots.findIndex((s) => s.id === slotId);
+    if (index === -1) throw new NotFoundError('Block not found');
+    return { row, slots, index, slot: slots[index] };
+  }
+
+  async _save(row, slots) {
+    row.schedule = slots;
+    row.changed('schedule', true);
+    await row.save();
+  }
+
+  /**
+   * Put a new item in a block.
+   *
+   * `kind: 'personal'` is the mentee's own — it finishes on a tick, earns
+   * nothing and never reaches the mentor's approvals queue. Anything else is
+   * ordinary work for review, and only somebody who can assign may create it.
+   */
+  async addItem(menteeId, slotId, { title, kind = 'personal', dueDate = null }, actor, clanId = null) {
+    await this._assertCanPlan(actor, menteeId, clanId);
+    const text = String(title || '').trim();
+    if (!text) throw new ValidationError('Give the item a name');
+    if (text.length > 200) throw new ValidationError('Keep the name under 200 characters');
+
+    const { row, slots, index } = await this._locate(menteeId, slotId, clanId);
+    if (row.clanId) await clanLifecycleService.assertClanWritable(row.clanId);
+
+    const personal = kind !== 'review';
+    if (!personal && !(await this._canAssign(actor, row.clanId))) {
+      throw new ForbiddenError('Only a mentor can set work for review. Add it as a personal item instead.');
+    }
+
+    const created = await sequelize.transaction(async (transaction) => {
+      // `assigned_tasks.roadmap_task_id` is NOT NULL, so a one-off needs a
+      // roadmap task behind it. `roadmap_id` is nullable, so it belongs to no
+      // roadmap — the same shape `isCustomTask` has always used.
+      const roadmapTask = await models.RoadmapTask.create({
+        title: text,
+        description: personal ? 'Added by the mentee to their own plan.' : 'Set by a mentor.',
+        type: 'custom',
+        difficulty: 'medium',
+        taskOrder: 0,
+        deliverable: personal ? 'No submission needed' : 'Complete the assigned task',
+        acceptanceCriteria: [],
+        estimatedHours: 1,
+        isMandatory: false,
+        isCustomTask: true,
+      }, { transaction });
+
+      return models.AssignedTask.create({
+        organizationId: row.organizationId || undefined,
+        menteeId,
+        /**
+         * `mentor_id` is NOT NULL, and a personal item genuinely has no mentor
+         * — so it records the person who set it, which for their own item is
+         * the mentee. That also reads correctly everywhere else:
+         * `authzService.canActOnTask` admits on `task.mentorId === userId`, so
+         * a mentee can act on the item they wrote. `self_assigned` is what says
+         * "not for review"; this column only ever said who set it.
+         */
+        mentorId: personal ? menteeId : actor.id,
+        clanId: row.clanId || null,
+        roadmapTaskId: roadmapTask.id,
+        scheduleSlotId: slots[index].id,
+        status: 'assigned',
+        assignedAt: new Date(),
+        dueDate: dueDate || null,
+        isCustomTask: true,
+        selfAssigned: personal,
+        titleOverride: text,
+      }, { transaction });
+    });
+
+    await this._markEdited(row, slots, index, actor, menteeId);
+    return { id: created.id, title: text, kind: personal ? 'personal' : 'review', status: 'assigned' };
+  }
+
+  /**
+   * A mentee changing a mentor's block leaves a mark on it.
+   *
+   * That mark is what makes "apply to all" safe to keep: a mentor pushing one
+   * block to a whole roster can skip the people who have already made it their
+   * own, instead of silently flattening their day.
+   */
+  async _markEdited(row, slots, index, actor, menteeId) {
+    const slot = slots[index];
+    if (slot.owner !== 'mentor') return;
+    if (String(actor.id) !== String(menteeId)) return;
+    if (slot.editedByMentee) return;
+    slots[index] = { ...slot, editedByMentee: true };
+    await this._save(row, slots);
+  }
+
+  /** Move one item into a block, or out of the day entirely (`slotId: null`). */
+  async moveItem(taskId, slotId, actor, clanId = null) {
+    const task = await models.AssignedTask.findByPk(taskId);
+    if (!task) throw new NotFoundError('Item not found');
+    await this._assertCanPlan(actor, task.menteeId, task.clanId || clanId);
+    if (task.clanId) await clanLifecycleService.assertClanWritable(task.clanId);
+
+    if (slotId === null || slotId === undefined || slotId === '') {
+      await task.update({ scheduleSlotId: null });
+      return { id: task.id, scheduleSlotId: null };
+    }
+
+    const { row, slots, index } = await this._locate(task.menteeId, slotId, task.clanId || clanId);
+    await task.update({ scheduleSlotId: slots[index].id });
+    await this._markEdited(row, slots, index, actor, task.menteeId);
+    return { id: task.id, scheduleSlotId: slots[index].id };
+  }
+
+  /**
+   * Tick an item off.
+   *
+   * A personal item finishes here, because there is nobody waiting on it. Work
+   * for review deliberately does NOT: it goes to the mentor through the
+   * submission flow that already exists, so a tick on a plan and a submission
+   * from the task page are the same event and produce the same record.
+   */
+  async completeItem(taskId, actor, done = true) {
+    const task = await models.AssignedTask.findByPk(taskId);
+    if (!task) throw new NotFoundError('Item not found');
+    await this._assertCanPlan(actor, task.menteeId, task.clanId);
+    if (task.clanId) await clanLifecycleService.assertClanWritable(task.clanId);
+
+    if (!task.selfAssigned) {
+      throw new ValidationError(
+        'This one goes to your mentor. Open it and submit your work — ticking it off would not tell them anything.',
+      );
+    }
+    await task.update(done
+      ? { status: 'completed', completedAt: new Date() }
+      : { status: 'assigned', completedAt: null });
+    return { id: task.id, status: task.status };
+  }
+
+  /** A block of the mentee's own, or one a mentor adds to their day. */
+  async addSlot(menteeId, { label, time }, actor, clanId = null) {
+    await this._assertCanPlan(actor, menteeId, clanId);
+    const name = String(label || '').trim();
+    if (!name) throw new ValidationError('Give the block a name');
+    if (!/^\d{2}:\d{2}$/.test(String(time || ''))) throw new ValidationError('Use a time like 09:00');
+
+    let row = await this._scheduleRow(menteeId, clanId);
+    if (!row) {
+      row = await models.MenteeSchedule.create({
+        menteeId, clanId: clanId || null, schedule: [], assignedBy: actor.id,
+      });
+    }
+    if (row.clanId) await clanLifecycleService.assertClanWritable(row.clanId);
+
+    const mentorSide = await this._canAssign(actor, row.clanId);
+    const byMentee = String(actor.id) === String(menteeId);
+    const slots = (Array.isArray(row.schedule) ? row.schedule : []).map(normalizeSlot);
+    const slot = {
+      id: `slot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      label: name,
+      time,
+      days: 'everyday',
+      kind: 'empty',
+      // A mentee's own block, unless a mentor made it for them.
+      owner: byMentee && !mentorSide ? 'mentee' : (byMentee ? 'mentee' : 'mentor'),
+      locked: false,
+      editedByMentee: false,
+    };
+    slots.push(slot);
+    slots.sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')));
+    await this._save(row, slots);
+    return slot;
+  }
+
+  /** Rename or retime a block, or (mentor only) lock it. */
+  async updateSlot(menteeId, slotId, patch, actor, clanId = null) {
+    await this._assertCanPlan(actor, menteeId, clanId);
+    const { row, slots, index, slot } = await this._locate(menteeId, slotId, clanId);
+    if (row.clanId) await clanLifecycleService.assertClanWritable(row.clanId);
+
+    const canAssign = await this._canAssign(actor, row.clanId);
+    const rights = slotRights(slot, { isOwnerMentee: String(actor.id) === String(menteeId), canAssign });
+
+    const next = { ...slot };
+    if (patch.label !== undefined || patch.time !== undefined) {
+      if (!rights.canRetime) {
+        throw new ForbiddenError('Your mentor locked this block. You can still put your own work in it.');
+      }
+      if (patch.label !== undefined) {
+        const name = String(patch.label).trim();
+        if (!name) throw new ValidationError('Give the block a name');
+        next.label = name;
+      }
+      if (patch.time !== undefined) {
+        if (!/^\d{2}:\d{2}$/.test(String(patch.time))) throw new ValidationError('Use a time like 09:00');
+        next.time = patch.time;
+      }
+    }
+    if (patch.locked !== undefined) {
+      if (!rights.canLock) throw new ForbiddenError('Only a mentor can lock a block');
+      next.locked = !!patch.locked;
+    }
+
+    if (next.owner === 'mentor' && String(actor.id) === String(menteeId)) next.editedByMentee = true;
+    slots[index] = next;
+    slots.sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')));
+    await this._save(row, slots);
+    return next;
+  }
+
+  /**
+   * Remove a block.
+   *
+   * A mentee may remove their own and never a mentor's — a block they were
+   * given is somebody else's intent, and deleting it loses information that
+   * tomorrow still needs. Whatever was inside goes back to unplanned rather
+   * than disappearing with the block.
+   */
+  async removeSlot(menteeId, slotId, actor, clanId = null) {
+    await this._assertCanPlan(actor, menteeId, clanId);
+    const { row, slots, index, slot } = await this._locate(menteeId, slotId, clanId);
+    if (row.clanId) await clanLifecycleService.assertClanWritable(row.clanId);
+
+    const canAssign = await this._canAssign(actor, row.clanId);
+    const rights = slotRights(slot, { isOwnerMentee: String(actor.id) === String(menteeId), canAssign });
+    if (!rights.canRemove) {
+      throw new ForbiddenError('This block came from your mentor. You can empty it, but not delete it.');
+    }
+
+    await models.AssignedTask.update(
+      { scheduleSlotId: null },
+      { where: { menteeId, scheduleSlotId: slot.id } },
+    );
+    slots.splice(index, 1);
+    await this._save(row, slots);
+    return { removed: slot.id };
+  }
+
+  /**
+   * Sit out one day of a block somebody else set.
+   *
+   * The honest alternative to letting a mentee delete a mentor's block. Nothing
+   * is lost: the block returns tomorrow on its own, and the mentor can still see
+   * it was skipped. Hiding your own block makes no sense — remove it.
+   */
+  async hideSlotToday(menteeId, slotId, actor, clanId = null, hide = true) {
+    await this._assertCanPlan(actor, menteeId, clanId);
+    const { row, slots, index, slot } = await this._locate(menteeId, slotId, clanId);
+    if (row.clanId) await clanLifecycleService.assertClanWritable(row.clanId);
+
+    const canAssign = await this._canAssign(actor, row.clanId);
+    const rights = slotRights(slot, { isOwnerMentee: String(actor.id) === String(menteeId), canAssign });
+    if (!rights.canHide) {
+      throw new ValidationError('This block is yours to change — remove or retime it instead of hiding it.');
+    }
+
+    slots[index] = { ...slot, hiddenOn: hide ? await this._todayKey(menteeId) : null };
+    await this._save(row, slots);
+    return { id: slot.id, hiddenOn: slots[index].hiddenOn };
+  }
+
+  /**
+   * Day-shapes this mentee may take for themselves.
+   *
+   * Only org templates an admin has offered. A mentor's private templates and
+   * the programme's own shape stay out of it.
+   */
+  async selectableTemplates(menteeId, actor, clanId = null) {
+    await this._assertCanPlan(actor, menteeId, clanId);
+    const rows = await models.ScheduleTemplate.findAll({
+      where: { source: 'org', menteeSelectable: true },
+      attributes: ['id', 'name', 'description', 'blocks'],
+      order: [['name', 'ASC']],
+    });
+    return rows.map((t) => ({
+      id: t.id,
+      name: t.name,
+      description: t.description,
+      blocks: (Array.isArray(t.blocks) ? t.blocks : []).map((b) => ({ label: b.label, time: b.time })),
+    }));
+  }
+
+  /**
+   * Take a template, without losing the day you already have.
+   *
+   * This MERGES. A block already sitting at that time is left exactly as it is,
+   * so choosing a template can never overwrite something a mentor set — the
+   * worst it can do is add blocks the mentee then removes. Everything it adds
+   * is theirs, so a later "apply to all" from a mentor leaves it alone too.
+   */
+  async applyTemplate(menteeId, templateId, actor, clanId = null) {
+    await this._assertCanPlan(actor, menteeId, clanId);
+    const template = await models.ScheduleTemplate.findOne({
+      where: { id: templateId, source: 'org', menteeSelectable: true },
+    });
+    if (!template) throw new NotFoundError('That template is not available to choose');
+
+    let row = await this._scheduleRow(menteeId, clanId);
+    if (!row) {
+      row = await models.MenteeSchedule.create({
+        menteeId, clanId: clanId || null, schedule: [], assignedBy: actor.id,
+      });
+    }
+    if (row.clanId) await clanLifecycleService.assertClanWritable(row.clanId);
+
+    const slots = (Array.isArray(row.schedule) ? row.schedule : []).map(normalizeSlot);
+    const taken = new Set(slots.map((s) => `${s.time}|${String(s.label || '').toLowerCase()}`));
+    const added = [];
+    for (const block of (Array.isArray(template.blocks) ? template.blocks : [])) {
+      const label = String(block.label || '').trim();
+      const time = String(block.time || '').trim();
+      if (!label || !/^\d{2}:\d{2}$/.test(time)) continue;
+      if (taken.has(`${time}|${label.toLowerCase()}`)) continue;
+      const slot = {
+        id: `slot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        label, time, days: 'everyday', kind: 'empty',
+        owner: 'mentee', locked: false, editedByMentee: false, hiddenOn: null,
+      };
+      slots.push(slot);
+      taken.add(`${time}|${label.toLowerCase()}`);
+      added.push(slot);
+    }
+    slots.sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')));
+    await this._save(row, slots);
+    return { added: added.length, skipped: (template.blocks || []).length - added.length, templateId };
+  }
+
+  /**
+   * The compact read for clan review: today's blocks and how far through them
+   * this mentee is. Deliberately not the board — review is a stepping-through
+   * flow and does not need a second planner inside it.
+   */
+  async strip(menteeId, clanId, actor) {
+    const board = await this.board(menteeId, { clanId }, actor);
+    return {
+      hasSchedule: board.hasSchedule,
+      blocks: board.slots.map((s) => ({
+        id: s.id, time: s.time, label: s.label,
+        total: s.items.length, done: s.done,
+      })),
+      unplanned: board.unplanned.length,
+    };
+  }
+}
+
+module.exports = new ScheduleBoardService();

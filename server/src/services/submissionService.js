@@ -61,6 +61,18 @@ class SubmissionService {
       throw new ValidationError('Task is already completed');
     }
 
+    /**
+     * An item the mentee put on their own plan has nothing to submit.
+     *
+     * It is a real task so that it keeps the progress log and the clan scoping,
+     * but it was never the mentor's to approve. Without this guard a mentee
+     * could push their own "read chapter 3" into the approvals queue, and a
+     * queue that fills with other people's private to-dos stops being read.
+     */
+    if (task.selfAssigned) {
+      throw new ValidationError('This is your own item — tick it off on your plan instead of submitting it.');
+    }
+
     // Interview and quiz tasks are ONLY completed through their own runners
     // (which create their own submission). A plain "Submit Work" submission must
     // never attach to them — otherwise a stale client / bookmarked submit page

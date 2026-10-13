@@ -455,7 +455,24 @@ function FillTab() {
         }
         const r: any = await scheduleApi.applySlotToAll(slotId, { kind: slot.kind, roadmapChain: slot.roadmapChain, startStep: slot.startStep, recurring: slot.recurring }, targetIds);
         const count = r?.data?.applied ?? 0;
-        toast.success(`Applied "${slot.label}" to ${count} mentee${count === 1 ? '' : 's'}`);
+        const skipped: { name: string; reason: string }[] = r?.data?.skipped ?? [];
+        /**
+         * Say who was left alone, by name.
+         *
+         * This used to overwrite every copy of the block silently, so a mentee
+         * who had moved their deep-work slot to the evening would find it back
+         * at 10am with nothing to explain it. They are skipped now — but a
+         * mentor who is told "applied to 18" and not told about the other two
+         * would reasonably believe everybody got it.
+         */
+        if (skipped.length) {
+          toast.success(`Applied "${slot.label}" to ${count} mentee${count === 1 ? '' : 's'}`, {
+            description: `Left unchanged for ${skipped.map((x) => x.name).join(', ')} — they had made this block their own.`,
+            duration: 8000,
+          });
+        } else {
+          toast.success(`Applied "${slot.label}" to ${count} mentee${count === 1 ? '' : 's'}`);
+        }
       }
       setRefreshTick((t) => t + 1);
     } catch { toast.error('Could not save slot config'); } finally { setBusy(null); }

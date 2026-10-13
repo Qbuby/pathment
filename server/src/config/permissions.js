@@ -36,6 +36,24 @@ const PERMISSIONS = {
   TASK_ASSIGN: 'task.assign',
   TASK_REVIEW: 'task.review',
 
+  // Day planning
+  /**
+   * Organise YOUR OWN day: put work into a time block, move it between blocks,
+   * tick it off, keep blocks of your own.
+   *
+   * A mentee holds this at `self` scope, which is the point of it. Until now
+   * every schedule route was gated on `authorize(['mentor','admin'])` — the
+   * legacy role array — so a mentee had exactly one endpoint and could only
+   * read. Widening that array would have handed mentees a mentor's powers; a
+   * permission is what lets them arrange their own time and nothing else.
+   */
+  SCHEDULE_PLAN: 'schedule.plan',
+  /**
+   * Shape somebody ELSE's day: assign a template, lock a block so it cannot be
+   * moved, push one block to a whole roster.
+   */
+  SCHEDULE_ASSIGN: 'schedule.assign',
+
   // Certificates
   // Signing off on the grade a mentee's certificate will be issued at. Held by
   // lead mentors and, by default, co-mentors — a lead can revoke it per person
@@ -115,6 +133,8 @@ const PERMISSION_GROUPS = [
     label: 'The work itself',
     permissions: [
       { key: P.TASK_ASSIGN, label: 'Set work' },
+      { key: P.SCHEDULE_PLAN, label: 'Plan your own day' },
+      { key: P.SCHEDULE_ASSIGN, label: 'Assign and lock schedules' },
       { key: P.TASK_REVIEW, label: 'Mark work' },
       { key: P.CERTIFICATE_VERIFY, label: 'Sign off certificate grades' },
       { key: P.LIBRARY_MANAGE, label: 'Manage the library' }

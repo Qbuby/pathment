@@ -25,6 +25,11 @@ export const PERMISSIONS = {
   USER_MANAGE: 'user.manage',
   TASK_ASSIGN: 'task.assign',
   TASK_REVIEW: 'task.review',
+
+  /** Arrange your own day. A mentee holds this at self scope. */
+  SCHEDULE_PLAN: 'schedule.plan',
+  /** Shape somebody else's day: assign a template, lock a block, push to all. */
+  SCHEDULE_ASSIGN: 'schedule.assign',
   /** Sign off the grade a mentee's certificate is issued at. */
   CERTIFICATE_VERIFY: 'certificate.verify',
   LIBRARY_MANAGE: 'library.manage',
@@ -52,6 +57,8 @@ export const CO_MENTOR_PERMISSIONS: { key: Permission; label: string; descriptio
   { key: PERMISSIONS.MENTEE_TRANSFER, label: 'Move mentees between clans', description: 'Ask another clan to take a mentee, and accept mentees moving into this clan.' },
   { key: PERMISSIONS.TASK_ASSIGN, label: 'Assign tasks', description: 'Create and assign tasks to mentees.' },
   { key: PERMISSIONS.TASK_REVIEW, label: 'Review work', description: 'Mark tasks complete and leave feedback.' },
+  { key: PERMISSIONS.SCHEDULE_PLAN, label: 'Plan a day', description: 'Put work into a mentee\'s time blocks, move it, and tick it off with them.' },
+  { key: PERMISSIONS.SCHEDULE_ASSIGN, label: 'Assign schedules', description: 'Give a mentee a day-shape, lock a block, and push one block to the whole clan.' },
   { key: PERMISSIONS.CERTIFICATE_VERIFY, label: 'Verify certificates', description: 'Confirm or change the grade a mentee\'s certificate is issued at.' },
   { key: PERMISSIONS.CLAN_AVATAR, label: 'Change clan photo', description: 'Upload or replace the clan photo. On by default; the lead can turn this off.' },
   { key: PERMISSIONS.ROADMAP_PUBLISH_LOCAL, label: 'Publish roadmaps', description: "Build and publish the clan's roadmap." },

@@ -42,6 +42,7 @@ import { getViewerTimeZone } from '@/lib/utils/datetime';
 import { MobileReviewActionBar } from '@/components/mentor/MobileReviewActionBar';
 import { ContinueWorkLauncher } from '@/components/mentor/ContinueWorkLauncher';
 import { MenteeRecordPanel } from '@/components/mentor/MenteeRecordPanel';
+import { PlanStripCard } from '@/components/mentor/PlanStripCard';
 
 type Attendance = 'present' | 'absent' | 'excused';
 type EntryStatus = 'pending' | 'reviewed' | 'deferred';
@@ -1069,6 +1070,10 @@ export default function CohortReview() {
             <div className="mt-4"><DualProgress absolute={mentee!.absoluteProgress} relative={mentee!.relativeProgress} compact /></div>
             {mentee!.riskReason && <p className="mt-3 text-xs text-slate-500 border-t border-slate-100 pt-3">{mentee!.riskReason}</p>}
           </div>
+
+          {/* Today's blocks and how far through them they are — the schedule
+              finally showing up in review, where the conversation happens. */}
+          <PlanStripCard menteeId={mentee.id} clanId={effectiveClanId} />
 
           {/* What they have actually been doing, day by day, on the work that is
               open right now. The mentor is already here going person by person,

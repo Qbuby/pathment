@@ -36,6 +36,76 @@ export interface ScheduleSlot {
   chainDetails?: ChainRoadmapDetail[];
 }
 
+
+// ── The day planner ─────────────────────────────────────────────────────────
+
+/** What this viewer may do to one block, decided on the server and sent down. */
+export interface SlotRights {
+  canAddItems: boolean;
+  canRetime: boolean;
+  canRemove: boolean;
+  canLock: boolean;
+  /** Sit out one day of a block somebody else set, without deleting it. */
+  canHide: boolean;
+}
+
+export interface PlanItem {
+  id: string;
+  title: string;
+  type: string;
+  status: 'assigned' | 'in_progress' | 'submitted' | 'revision_needed' | 'completed';
+  dueDate: string | null;
+  estimatedHours: number | null;
+  /**
+   * `personal` finishes on a tick. `review` goes to the mentor through the
+   * submission flow — the one distinction a mentee actually feels.
+   */
+  kind: 'personal' | 'review';
+  points: number | null;
+  /** In this block because its roadmap is, rather than because it was put here. */
+  fromRoadmapSlot?: boolean;
+}
+
+export interface PlanSlot {
+  id: string;
+  label: string;
+  time: string;
+  kind: 'roadmap' | 'recurring' | 'empty';
+  owner: 'mentor' | 'mentee';
+  locked: boolean;
+  /** The mentee made this block their own, so "apply to all" skips it. */
+  editedByMentee: boolean;
+  items: PlanItem[];
+  done: number;
+  /** Live progress per roadmap, on a `kind: 'roadmap'` block. Null otherwise. */
+  chainDetails: ChainRoadmapDetail[] | null;
+  rights: SlotRights;
+}
+
+export interface PlanBoard {
+  menteeId: string;
+  clanId: string | null;
+  hasSchedule: boolean;
+  timezone: string | null;
+  slots: PlanSlot[];
+  unplanned: PlanItem[];
+  viewer: { isOwnerMentee: boolean; canAssign: boolean };
+}
+
+/** A day-shape an admin has published for mentees to take. */
+export interface SelectableTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  blocks: { label: string; time: string }[];
+}
+
+export interface PlanStrip {
+  hasSchedule: boolean;
+  blocks: { id: string; time: string; label: string; total: number; done: number }[];
+  unplanned: number;
+}
+
 /** One slot of a mentee's filled schedule (what the read-only views render). */
 export interface MenteeScheduleResult {
   templateId: string | null;
@@ -71,8 +141,42 @@ export const scheduleApi = {
   // Push one slot's config to ALL (or selected) the mentor's mentees who have that slot.
   applySlotToAll: (slotId: string, patch: {
     kind?: string; roadmapChain?: string[]; startStep?: number; recurring?: Partial<RecurringSlotConfig> | null;
-  }, menteeIds?: string[]) => apiClient.post<{ data: { applied: number } }>(`/schedules/slot/${slotId}/apply-all`, { ...patch, menteeIds }),
+    /** Reset even the mentees who had adapted this block. Ask for it by name. */
+    force?: boolean;
+  }, menteeIds?: string[]) => apiClient.post<{
+    message?: string;
+    data: { applied: number; skipped: { menteeId: string; name: string; reason: string }[] };
+  }>(`/schedules/slot/${slotId}/apply-all`, { ...patch, menteeIds }),
   // Materialize recurring slot tasks immediately for all (or selected) assigned mentees.
   activateSlot: (slotId: string, menteeIds?: string[]) =>
     apiClient.post<{ data: { appliedMentees: number; createdTasks: number } }>(`/schedules/slot/${slotId}/activate`, { menteeIds }),
+
+  // ── The day planner ───────────────────────────────────────────────────────
+  // `menteeId` is 'me' for a mentee looking at their own day; the server
+  // resolves it, so there is one set of endpoints rather than a mentee copy and
+  // a mentor copy that drift apart.
+  getBoard: (menteeId: string, clanId?: string | null) =>
+    apiClient.get<{ data: PlanBoard }>(`/schedules/board/${menteeId}${clanId ? `?clanId=${clanId}` : ''}`),
+  getStrip: (menteeId: string, clanId?: string | null) =>
+    apiClient.get<{ data: PlanStrip }>(`/schedules/board/${menteeId}/strip${clanId ? `?clanId=${clanId}` : ''}`),
+  addPlanItem: (menteeId: string, slotId: string, body: { title: string; kind?: 'personal' | 'review'; clanId?: string | null }) =>
+    apiClient.post<{ data: { item: PlanItem } }>(`/schedules/board/${menteeId}/slots/${slotId}/items`, body),
+  movePlanItem: (taskId: string, slotId: string | null, clanId?: string | null) =>
+    apiClient.patch(`/schedules/board/items/${taskId}/move`, { slotId, clanId }),
+  setPlanItemDone: (taskId: string, done: boolean) =>
+    apiClient.patch(`/schedules/board/items/${taskId}/done`, { done }),
+  addPlanSlot: (menteeId: string, body: { label: string; time: string; clanId?: string | null }) =>
+    apiClient.post<{ data: { slot: PlanSlot } }>(`/schedules/board/${menteeId}/slots`, body),
+  updatePlanSlot: (menteeId: string, slotId: string, patch: { label?: string; time?: string; locked?: boolean; clanId?: string | null }) =>
+    apiClient.patch<{ data: { slot: PlanSlot } }>(`/schedules/board/${menteeId}/slots/${slotId}`, patch),
+  removePlanSlot: (menteeId: string, slotId: string, clanId?: string | null) =>
+    apiClient.delete(`/schedules/board/${menteeId}/slots/${slotId}${clanId ? `?clanId=${clanId}` : ''}`),
+  hidePlanSlot: (menteeId: string, slotId: string, hide: boolean, clanId?: string | null) =>
+    apiClient.post(`/schedules/board/${menteeId}/slots/${slotId}/hide`, { hide, clanId }),
+  listSelectableTemplates: (menteeId: string, clanId?: string | null) =>
+    apiClient.get<{ data: { templates: SelectableTemplate[] } }>(
+      `/schedules/board/${menteeId}/templates${clanId ? `?clanId=${clanId}` : ''}`),
+  applySelectableTemplate: (menteeId: string, templateId: string, clanId?: string | null) =>
+    apiClient.post<{ data: { added: number; skipped: number } }>(
+      `/schedules/board/${menteeId}/apply-template`, { templateId, clanId }),
 };
