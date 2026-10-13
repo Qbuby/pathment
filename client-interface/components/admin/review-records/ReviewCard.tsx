@@ -1,4 +1,5 @@
 import React from 'react';
+import { MousePointerClick } from 'lucide-react';
 import { ATTENDANCE_SERIES } from './review-records-constants';
 
 interface ReviewCardProps {
@@ -45,10 +46,12 @@ interface AttendanceTooltipProps {
   values: { present: number; excused: number; absent: number };
   /** Extra line under the totals, e.g. "4 sessions" */
   footer?: string;
+  /** What clicking the mark does, e.g. "Click to open session" */
+  action?: string;
 }
 
 /** Tooltip body shared by the attendance charts. */
-export function AttendanceTooltip({ title, values, footer }: AttendanceTooltipProps) {
+export function AttendanceTooltip({ title, values, footer, action }: AttendanceTooltipProps) {
   const total = values.present + values.excused + values.absent;
   return (
     <div className="min-w-[9rem] rounded-lg border border-slate-200 bg-card px-3 py-2 text-xs shadow-lg">
@@ -69,6 +72,12 @@ export function AttendanceTooltip({ title, values, footer }: AttendanceTooltipPr
         </li>
       </ul>
       {footer && <div className="mt-1.5 text-slate-400">{footer}</div>}
+      {action && (
+        <div className="mt-2 flex items-center gap-1.5 border-t border-slate-100 pt-2 font-medium text-brand-600">
+          <MousePointerClick className="h-3.5 w-3.5" aria-hidden="true" />
+          {action}
+        </div>
+      )}
     </div>
   );
 }

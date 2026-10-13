@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { BarChart, Bar, CartesianGrid, Rectangle, XAxis, YAxis, type RectangleProps } from 'recharts';
-import { CheckCircle2, ChevronRight, Video } from 'lucide-react';
+import { CheckCircle2, ChevronRight, MousePointerClick, Video } from 'lucide-react';
 import { ChartContainer, ChartTooltip } from '@/components/ui/chart';
 import { TabBar } from '@/components/admin/ui';
 import { Avatar } from '@/components/shared/Avatar';
@@ -60,6 +60,8 @@ interface SessionsPanelProps {
 export function SessionsPanel({ sessions, onOpen }: SessionsPanelProps) {
   const [filter, setFilter] = useState<SessionFilter>('all');
   const [page, setPage] = useState(1);
+  // The session column under the pointer — it stays solid while the rest fade.
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
 
   const tabs = useMemo(() => [
     { id: 'all', label: 'All', count: sessions.length },
@@ -94,29 +96,43 @@ export function SessionsPanel({ sessions, onOpen }: SessionsPanelProps) {
       subtitle="Each bar is one review session — how its marked attendance split. Click a bar or a row to open the session."
       action={<AttendanceLegend />}
     >
-      <TabBar
-        variant="pill"
-        tabs={tabs}
-        activeTab={filter}
-        onChange={(id) => { setFilter(id as SessionFilter); setPage(1); }}
-        className="mb-4"
-      />
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <TabBar
+          variant="pill"
+          tabs={tabs}
+          activeTab={filter}
+          onChange={(id) => { setFilter(id as SessionFilter); setPage(1); }}
+        />
+        {filtered.length > 0 && (
+          <span className="inline-flex items-center gap-1.5 rounded-lg bg-brand-50 px-2.5 py-1.5 text-xs font-medium text-brand-700">
+            <MousePointerClick className="h-3.5 w-3.5" aria-hidden="true" />
+            Click any bar to see who attended
+          </span>
+        )}
+      </div>
 
       {filtered.length === 0 ? (
         <p className="py-10 text-center text-sm text-slate-400">No sessions match this filter.</p>
       ) : (
         <>
-          <ChartContainer config={{}} className="aspect-auto h-56 w-full">
-            <BarChart data={chartData} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+          <ChartContainer config={{}} className={`aspect-auto h-56 w-full ${hoveredId ? 'cursor-pointer' : ''}`}>
+            <BarChart
+              data={chartData}
+              margin={{ top: 8, right: 8, left: -12, bottom: 0 }}
+              onMouseMove={(state) => setHoveredId((state?.activePayload?.[0]?.payload as ChartDatum | undefined)?.id ?? null)}
+              onMouseLeave={() => setHoveredId(null)}
+              // The whole column is the target, not just the coloured part of it.
+              onClick={(state) => { const id = (state?.activePayload?.[0]?.payload as ChartDatum | undefined)?.id; if (id) onOpen(id); }}
+            >
               <CartesianGrid vertical={false} />
               <XAxis dataKey="id" tickLine={false} axisLine={false} minTickGap={16} tick={{ fontSize: 11 }} tickFormatter={(id: string) => fmtShortDate(dateById.get(id) || '')} />
               <YAxis tickLine={false} axisLine={false} domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tick={{ fontSize: 11 }} tickFormatter={(v: number) => `${v}%`} />
               <ChartTooltip
-                cursor={{ fill: 'rgba(15, 23, 42, 0.04)' }}
+                cursor={{ fill: 'rgba(15, 23, 42, 0.07)' }}
                 content={({ active, payload }) => {
                   if (!active || !payload?.length) return null;
                   const d = payload[0].payload as ChartDatum;
-                  return <AttendanceTooltip title={`${d.clan} · ${fmtShortDate(d.date)}`} values={d.counts} footer={`${d.mentor} · click to open`} />;
+                  return <AttendanceTooltip title={`${d.clan} · ${fmtShortDate(d.date)}`} values={d.counts} footer={d.mentor} action="Click to open session" />;
                 }}
               />
               {ATTENDANCE_SERIES.map((a) => (
@@ -130,11 +146,9 @@ export function SessionsPanel({ sessions, onOpen }: SessionsPanelProps) {
                   strokeWidth={2}
                   maxBarSize={22}
                   isAnimationActive={false}
-                  cursor="pointer"
-                  onClick={(d: { id?: string; payload?: ChartDatum }) => { const id = d?.payload?.id ?? d?.id; if (id) onOpen(id); }}
                   shape={(props: unknown) => {
                     const p = props as RectangleProps & { payload: ChartDatum };
-                    return <Rectangle {...p} radius={p.payload.top === a.key ? [4, 4, 0, 0] : 0} />;
+                    return <Rectangle {...p} radius={p.payload.top === a.key ? [4, 4, 0, 0] : 0} opacity={hoveredId && p.payload.id !== hoveredId ? 0.4 : 1} />;
                   }}
                 />
               ))}
