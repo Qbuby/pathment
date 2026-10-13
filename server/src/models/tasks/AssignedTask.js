@@ -96,6 +96,18 @@ module.exports = (sequelize, DataTypes) => {
      * lifecycle — but it is not the mentor's to approve, so it never enters
      * their approvals queue and earns no points. See migration 128.
      */
+    /**
+     * How this item repeats, or null when it does not.
+     *
+     * The rule rides on the task and the next occurrence is written when one
+     * is finished — no scheduler has to be alive for a repeat to work. See
+     * src/utils/repeatRule.js and migration 130.
+     */
+    repeatRule: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+      field: 'repeat_rule'
+    },
     selfAssigned: {
       type: DataTypes.BOOLEAN,
       allowNull: false,

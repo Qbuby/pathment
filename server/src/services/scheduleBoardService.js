@@ -4,7 +4,9 @@ const authz = require('./authzService');
 const { PERMISSIONS } = require('../config/permissions');
 const { NotFoundError, ValidationError, ForbiddenError } = require('../utils/errors/errorTypes');
 const clanLifecycleService = require('./clanLifecycleService');
-const { todayInZone } = require('../utils/timezone');
+const { todayInZone, endOfDayInZone } = require('../utils/timezone');
+const { normalizeRepeat, nextOccurrence, describeRepeat } = require('../utils/repeatRule');
+const logger = require('../utils/logger');
 
 /**
  * A day as blocks that hold things.
@@ -105,17 +107,54 @@ class ScheduleBoardService {
   }
 
   /**
+   * The clan this action happens in.
+   *
+   * A `mentee_schedules` row may carry no clan at all — the older flows created
+   * them that way, and most of the seeded ones are null. That made the planner
+   * tell a mentor one thing and then refuse them: `board` resolved their grant
+   * against the clan in the REQUEST and rendered a lock button, while every
+   * write resolved it against the ROW's clan, which was null, where a
+   * clan-scoped grant reaches nothing. The mentor got "Only a mentor can lock a
+   * block" on their own clan's mentee.
+   *
+   * One answer for both: the row's clan when it has one, otherwise the clan the
+   * viewer is acting in.
+   */
+  _effectiveClan(row, requestedClanId) {
+    return row?.clanId || requestedClanId || null;
+  }
+
+  /**
    * Midnight at the start of the mentee's today, in their own zone.
    *
    * Their day is the unit this screen counts in, so a mentee eight hours ahead
    * must not watch this morning's work fall off the plan because a server in
    * another zone has already turned the page.
    */
-  async _todayKey(menteeId) {
+  async _zoneOf(menteeId) {
     const settings = await models.UserSettings.findOne({
       where: { userId: menteeId }, attributes: ['timezone'],
     });
-    return todayInZone(settings?.timezone || 'UTC');
+    return settings?.timezone || 'UTC';
+  }
+
+  async _todayKey(menteeId) {
+    return todayInZone(await this._zoneOf(menteeId));
+  }
+
+  /**
+   * A day key becomes a deadline at the END of that day, in the mentee's zone.
+   *
+   * The planner used to store the day key straight into `due_date`, which
+   * Postgres reads as midnight at the START of it — so every item a mentor set
+   * for today, and every occurrence a repeat rolled forward, was already
+   * overdue the moment it appeared. The rest of the product has always used
+   * `endOfDayInZone` for a day-only deadline; this now does too.
+   */
+  async _dueAtEndOfDay(menteeId, dayKey) {
+    if (!dayKey) return null;
+    const key = String(dayKey).slice(0, 10);
+    return endOfDayInZone(key, await this._zoneOf(menteeId)) || new Date(`${key}T23:59:59Z`);
   }
 
   async _startOfToday(menteeId) {
@@ -159,6 +198,21 @@ class ScheduleBoardService {
       where: {
         menteeId,
         ...(row?.clanId ? { clanId: row.clanId } : {}),
+        /**
+         * A repeat that lands on weekdays must not put Monday's copy on the
+         * Saturday board. The next occurrence is written the moment one is
+         * finished, so it exists days before it is due — real, but not yet
+         * today's work.
+         *
+         * Anything already due stays, however late: an occurrence nobody did
+         * is exactly what the mentee needs to still see.
+         */
+        [Op.and]: [{
+          [Op.or]: [
+            { occurrenceDate: null },
+            { occurrenceDate: { [Op.lte]: todayKey } },
+          ],
+        }],
         [Op.or]: [
           // In a block: everything still open, plus whatever was finished today.
           {
@@ -174,7 +228,7 @@ class ScheduleBoardService {
       },
       attributes: [
         'id', 'scheduleSlotId', 'status', 'dueDate', 'selfAssigned', 'isCustomTask',
-        'titleOverride', 'pointsBase', 'occurrenceDate',
+        'titleOverride', 'pointsBase', 'occurrenceDate', 'repeatRule',
       ],
       include: [{
         model: models.RoadmapTask, as: 'roadmapTask', required: false,
@@ -200,6 +254,10 @@ class ScheduleBoardService {
       // it, or does it go to my mentor?
       kind: t.selfAssigned ? 'personal' : 'review',
       points: t.selfAssigned ? 0 : (t.pointsBase ?? null),
+      repeat: t.repeatRule || null,
+      repeatLabel: describeRepeat(t.repeatRule),
+      /** The day this instance is for — null when it is not one of a series. */
+      occurrenceDate: t.occurrenceDate || null,
     });
 
     /**
@@ -291,7 +349,7 @@ class ScheduleBoardService {
    * nothing and never reaches the mentor's approvals queue. Anything else is
    * ordinary work for review, and only somebody who can assign may create it.
    */
-  async addItem(menteeId, slotId, { title, kind = 'personal', dueDate = null }, actor, clanId = null) {
+  async addItem(menteeId, slotId, { title, kind = 'personal', dueDate = null, repeat = null }, actor, clanId = null) {
     await this._assertCanPlan(actor, menteeId, clanId);
     const text = String(title || '').trim();
     if (!text) throw new ValidationError('Give the item a name');
@@ -300,8 +358,16 @@ class ScheduleBoardService {
     const { row, slots, index } = await this._locate(menteeId, slotId, clanId);
     if (row.clanId) await clanLifecycleService.assertClanWritable(row.clanId);
 
+    // A due date arrives as a day key ('YYYY-MM-DD'); it becomes an instant at
+    // the end of that day in the mentee's zone, like every other deadline.
+    const dayKey = dueDate ? String(dueDate).slice(0, 10) : null;
+    const due = await this._dueAtEndOfDay(menteeId, dayKey);
+
     const personal = kind !== 'review';
-    if (!personal && !(await this._canAssign(actor, row.clanId))) {
+    // Throws on a frequency we cannot honour, so a bad rule is refused at the
+    // door rather than stored and discovered later by the spawner.
+    const repeatRule = normalizeRepeat(repeat);
+    if (!personal && !(await this._canAssign(actor, this._effectiveClan(row, clanId)))) {
       throw new ForbiddenError('Only a mentor can set work for review. Add it as a personal item instead.');
     }
 
@@ -334,15 +400,33 @@ class ScheduleBoardService {
          * "not for review"; this column only ever said who set it.
          */
         mentorId: personal ? menteeId : actor.id,
-        clanId: row.clanId || null,
+        /**
+         * The clan this was set IN, not only the one stamped on the schedule
+         * row — which is null on most of them. Stamping null here put a
+         * mentor's review work outside every clan-scoped read: it never
+         * reached the clan's approvals queue, and the mentor could not even
+         * tick the item they had just written, because the next write
+         * resolved their clan-scoped grant against a null clan.
+         */
+        clanId: this._effectiveClan(row, clanId),
         roadmapTaskId: roadmapTask.id,
         scheduleSlotId: slots[index].id,
         status: 'assigned',
         assignedAt: new Date(),
-        dueDate: dueDate || null,
+        dueDate: due,
         isCustomTask: true,
         selfAssigned: personal,
         titleOverride: text,
+        repeatRule,
+        /**
+         * The day this instance is FOR. A repeat needs one to count from, or
+         * the first "next" would be measured from whenever it happened to be
+         * finished rather than from the day it was set for.
+         *
+         * A repeat with no day given starts today — in the mentee's zone, so
+         * "every day" means their day.
+         */
+        occurrenceDate: dayKey || (repeatRule ? await this._todayKey(menteeId) : null),
       }, { transaction });
     });
 
@@ -392,10 +476,14 @@ class ScheduleBoardService {
    * submission flow that already exists, so a tick on a plan and a submission
    * from the task page are the same event and produce the same record.
    */
-  async completeItem(taskId, actor, done = true) {
+  async completeItem(taskId, actor, done = true, clanId = null) {
     const task = await models.AssignedTask.findByPk(taskId);
     if (!task) throw new NotFoundError('Item not found');
-    await this._assertCanPlan(actor, task.menteeId, task.clanId);
+    // The task's own clan when it has one, otherwise the clan the actor is
+    // acting in — the same rule `_effectiveClan` states for slots. A
+    // clan-scoped grant reaches nothing when this resolves to null, which is
+    // how a mentor was told they could not change a plan they had just set.
+    await this._assertCanPlan(actor, task.menteeId, task.clanId || clanId);
     if (task.clanId) await clanLifecycleService.assertClanWritable(task.clanId);
 
     if (!task.selfAssigned) {
@@ -406,7 +494,10 @@ class ScheduleBoardService {
     await task.update(done
       ? { status: 'completed', completedAt: new Date() }
       : { status: 'assigned', completedAt: null });
-    return { id: task.id, status: task.status };
+
+    // Ticking a repeating item is what produces the next one.
+    const next = done ? await this.spawnNextOccurrence(task) : null;
+    return { id: task.id, status: task.status, nextOccurrence: next?.occurrenceDate ?? null };
   }
 
   /** A block of the mentee's own, or one a mentor adds to their day. */
@@ -424,7 +515,7 @@ class ScheduleBoardService {
     }
     if (row.clanId) await clanLifecycleService.assertClanWritable(row.clanId);
 
-    const mentorSide = await this._canAssign(actor, row.clanId);
+    const mentorSide = await this._canAssign(actor, this._effectiveClan(row, clanId));
     const byMentee = String(actor.id) === String(menteeId);
     const slots = (Array.isArray(row.schedule) ? row.schedule : []).map(normalizeSlot);
     const slot = {
@@ -450,7 +541,7 @@ class ScheduleBoardService {
     const { row, slots, index, slot } = await this._locate(menteeId, slotId, clanId);
     if (row.clanId) await clanLifecycleService.assertClanWritable(row.clanId);
 
-    const canAssign = await this._canAssign(actor, row.clanId);
+    const canAssign = await this._canAssign(actor, this._effectiveClan(row, clanId));
     const rights = slotRights(slot, { isOwnerMentee: String(actor.id) === String(menteeId), canAssign });
 
     const next = { ...slot };
@@ -493,7 +584,7 @@ class ScheduleBoardService {
     const { row, slots, index, slot } = await this._locate(menteeId, slotId, clanId);
     if (row.clanId) await clanLifecycleService.assertClanWritable(row.clanId);
 
-    const canAssign = await this._canAssign(actor, row.clanId);
+    const canAssign = await this._canAssign(actor, this._effectiveClan(row, clanId));
     const rights = slotRights(slot, { isOwnerMentee: String(actor.id) === String(menteeId), canAssign });
     if (!rights.canRemove) {
       throw new ForbiddenError('This block came from your mentor. You can empty it, but not delete it.');
@@ -509,6 +600,112 @@ class ScheduleBoardService {
   }
 
   /**
+   * Turn a repeat on, change it, or switch it off, on an item already on a plan.
+   *
+   * Separate from editing the item because this is the only property that
+   * changes what happens AFTER it is finished, and people reach for it long
+   * after they first wrote the thing down.
+   */
+  async setItemRepeat(taskId, repeat, actor, clanId = null) {
+    const task = await models.AssignedTask.findByPk(taskId);
+    if (!task) throw new NotFoundError('Item not found');
+    await this._assertCanPlan(actor, task.menteeId, task.clanId || clanId);
+    if (task.clanId) await clanLifecycleService.assertClanWritable(task.clanId);
+
+    let rule;
+    try {
+      rule = normalizeRepeat(repeat);
+    } catch (error) {
+      throw new ValidationError(error.message);
+    }
+    await task.update({
+      repeatRule: rule,
+      occurrenceDate: rule
+        ? (task.occurrenceDate || (task.dueDate ? String(task.dueDate).slice(0, 10) : null))
+        : task.occurrenceDate,
+    });
+    return { id: task.id, repeat: rule };
+  }
+
+  /**
+   * Write the next occurrence of a repeating item, once this one is finished.
+   *
+   * Called at the moment of completion rather than by a scheduler, so a repeat
+   * works whether or not a worker is alive, and a series nobody keeps up with
+   * stops instead of accumulating weeks of untouched copies.
+   *
+   * The rule MOVES to the successor. That is what makes this safe to call more
+   * than once: the finished task no longer repeats, so re-ticking it, a retried
+   * request, or an approval processed twice cannot produce a second copy. The
+   * explicit sibling check below covers the remaining race.
+   *
+   * Never throws. A repeat that failed to roll forward is a missing row; a
+   * completion that failed because of it would be a lost tick.
+   */
+  async spawnNextOccurrence(task) {
+    try {
+      const rule = task.repeatRule;
+      if (!rule) return null;
+
+      // Count from the day this instance was FOR. Falling back to its deadline
+      // would be wrong the moment a deadline is an end-of-day instant in a zone
+      // ahead of UTC, so the mentee's own today is the last resort.
+      const from = task.occurrenceDate
+        ? String(task.occurrenceDate).slice(0, 10)
+        : await this._todayKey(task.menteeId);
+      const next = nextOccurrence(rule, from);
+      // The series has run out; let the rule die with this task.
+      if (!next) { await task.update({ repeatRule: null }); return null; }
+
+      // Somebody may already have rolled it forward — a double approval, a
+      // retried request. One open sibling on the same work is enough.
+      const existing = await models.AssignedTask.findOne({
+        where: {
+          // Never the one being rolled forward. It is still open at this point
+          // when the roll happens at submission — 'submitted' is an active
+          // status — so without this it would match itself, decide the work was
+          // already done and quietly end the series.
+          id: { [Op.ne]: task.id },
+          menteeId: task.menteeId,
+          roadmapTaskId: task.roadmapTaskId,
+          status: { [Op.in]: ACTIVE_STATUSES },
+          scheduleSlotId: task.scheduleSlotId || null,
+        },
+      });
+      if (existing) { await task.update({ repeatRule: null }); return existing; }
+
+      const created = await models.AssignedTask.create({
+        organizationId: task.organizationId,
+        menteeId: task.menteeId,
+        mentorId: task.mentorId,
+        clanId: task.clanId,
+        roadmapTaskId: task.roadmapTaskId,
+        scheduleSlotId: task.scheduleSlotId,
+        status: 'assigned',
+        assignedAt: new Date(),
+        occurrenceDate: next,
+        // End of ITS day in the mentee's zone — not midnight at the start of
+        // it, which made every rolled-forward occurrence born overdue.
+        dueDate: await this._dueAtEndOfDay(task.menteeId, next),
+        isCustomTask: task.isCustomTask,
+        selfAssigned: task.selfAssigned,
+        titleOverride: task.titleOverride,
+        pointsBase: task.pointsBase,
+        repeatRule: rule,
+      });
+      // Hand the rule on, so this one is finished for good.
+      await task.update({ repeatRule: null });
+      logger.info('[plan] repeated item rolled forward', {
+        menteeId: task.menteeId, from, next, slot: task.scheduleSlotId,
+      });
+      return created;
+    } catch (error) {
+      logger.warn(`[plan] could not roll a repeat forward: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
    * Sit out one day of a block somebody else set.
    *
    * The honest alternative to letting a mentee delete a mentor's block. Nothing
@@ -520,7 +717,7 @@ class ScheduleBoardService {
     const { row, slots, index, slot } = await this._locate(menteeId, slotId, clanId);
     if (row.clanId) await clanLifecycleService.assertClanWritable(row.clanId);
 
-    const canAssign = await this._canAssign(actor, row.clanId);
+    const canAssign = await this._canAssign(actor, this._effectiveClan(row, clanId));
     const rights = slotRights(slot, { isOwnerMentee: String(actor.id) === String(menteeId), canAssign });
     if (!rights.canHide) {
       throw new ValidationError('This block is yours to change — remove or retime it instead of hiding it.');

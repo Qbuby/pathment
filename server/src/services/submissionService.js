@@ -185,6 +185,24 @@ class SubmissionService {
         .catch((err) => console.error('Roadmap advance-on-submission failed (non-fatal):', err.message));
     }
 
+    /**
+     * A repeating item rolls forward at SUBMISSION too, for exactly the reason
+     * the roadmap advances here: a daily habit the mentee has already done must
+     * not wait on how fast their mentor gets to it. Tomorrow's copy is
+     * tomorrow's obligation; if changes are asked for, those belong to THIS
+     * occurrence, which is still open and still theirs to fix.
+     *
+     * The spawner moves the rule onto the successor and never throws, so the
+     * approval hook further down becomes a no-op rather than a second copy.
+     */
+    // Awaited, unlike the roadmap advance above: the spawner already swallows
+    // its own errors and returns null, so awaiting cannot fail the submission —
+    // and it means the next occurrence is there before the mentee's plan
+    // reloads, rather than racing it.
+    if (task.repeatRule) {
+      await require('./scheduleBoardService').spawnNextOccurrence(task);
+    }
+
     // Return complete submission with files
     const fullSubmission = await this.getSubmissionById(submission.id);
 
@@ -502,6 +520,19 @@ class SubmissionService {
       } catch (err) {
         console.error('Roadmap auto-advance failed (non-fatal):', err.message);
       }
+    }
+
+    /**
+     * A repeating item that has just been approved rolls forward here.
+     *
+     * Approval is the ONLY place work-for-review becomes complete, so it is the
+     * only place a mentor-set repeat can produce its next occurrence — the
+     * planner's own tick deliberately refuses to finish reviewable work. The
+     * spawner never throws and moves the rule onto the successor, so an
+     * approval processed twice cannot create two.
+     */
+    if (isApproved && task.repeatRule) {
+      await require('./scheduleBoardService').spawnNextOccurrence(task);
     }
 
     // Update enrollment task stats so tasksCompleted/tasksTotal/overallProgressPercentage stay current

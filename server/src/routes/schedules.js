@@ -56,5 +56,6 @@ router.get('/board/:menteeId/templates', canPlan, c2.listTemplates);
 router.post('/board/:menteeId/apply-template', canPlan, c2.applyTemplate);
 router.patch('/board/items/:taskId/move', canPlan, c2.moveItem);
 router.patch('/board/items/:taskId/done', canPlan, c2.completeItem);
+router.patch('/board/items/:taskId/repeat', canPlan, c2.setItemRepeat);
 
 module.exports = router;

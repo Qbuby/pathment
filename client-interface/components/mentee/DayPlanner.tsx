@@ -3,15 +3,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
-  CalendarClock, Check, EyeOff, GripVertical, LayoutTemplate, Loader2, Lock, Plus, Route,
-  Trash2, Unlock, X,
+  CalendarClock, Check, ChevronDown, EyeOff, LayoutTemplate, Loader2, Lock, MoreHorizontal,
+  Plus, Repeat, Route, Trash2, Unlock,
 } from 'lucide-react';
 
 import {
   scheduleApi,
-  type ChainRoadmapDetail, type PlanBoard, type PlanItem, type PlanSlot, type SelectableTemplate,
+  type ChainRoadmapDetail, type PlanBoard, type PlanItem, type PlanSlot,
+  type RepeatRule, type SelectableTemplate,
 } from '@/lib/services/schedule-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
+import { Dropdown } from '@/components/shared/Dropdown';
+import { TaskDrawer } from '@/components/mentee/TaskDrawer';
+import { SubmitTaskDrawer, type SubmitTaskTarget } from '@/components/mentee/SubmitTaskDrawer';
+import { TaskDrawerById } from '@/components/mentor/TaskDrawerById';
+import { taskApi } from '@/lib/services/task-api';
 
 /**
  * A day as blocks you can put things in.
@@ -46,12 +52,21 @@ export function DayPlanner({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
-  /** The item picked up by keyboard, for people not using a mouse. */
-  const [carrying, setCarrying] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [addingBlock, setAddingBlock] = useState(false);
   const [templates, setTemplates] = useState<SelectableTemplate[] | null>(null);
   const [pickingTemplate, setPickingTemplate] = useState(false);
+  /**
+   * The item being read, in a drawer over the plan.
+   *
+   * A block used to be a list of titles you could tick and nothing else — the
+   * brief, the acceptance criteria and the mentor's feedback all lived a page
+   * away, and clicking an item did nothing at all. Both sides open the drawer
+   * they already have elsewhere, so a task reads and reviews identically
+   * wherever it is met.
+   */
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [submitTarget, setSubmitTarget] = useState<SubmitTaskTarget | null>(null);
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -106,7 +121,6 @@ export function DayPlanner({
   };
 
   const moveItem = (taskId: string, toSlot: string | null) => {
-    setCarrying(null);
     setDropTarget(null);
     void optimistic(taskId, (b) => {
       let moved: PlanItem | undefined;
@@ -153,17 +167,68 @@ export function DayPlanner({
         items: s.items.map((i) => (i.id === item.id ? { ...i, status: done ? 'completed' : 'assigned' } : i)),
         done: s.items.filter((i) => (i.id === item.id ? done : i.status === 'completed')).length,
       })),
-    }), () => scheduleApi.setPlanItemDone(item.id, done));
+    }), async () => {
+      const res = await scheduleApi.setPlanItemDone(item.id, done, clanId);
+      // A repeating item reappears dated forward; say so, or finishing one
+      // looks like it simply came back.
+      const next = res.data?.nextOccurrence;
+      if (next) {
+        toast.success('Done — back again on ' + new Date(`${next}T00:00:00`).toLocaleDateString(undefined, {
+          weekday: 'short', day: 'numeric', month: 'short',
+        }));
+      }
+      return res;
+    });
   };
 
-  const addItem = async (slotId: string, title: string) => {
+  /**
+   * The presets people actually choose, named the way they say them.
+   *
+   * A full recurrence editor is a form; this is four options and "doesn't
+   * repeat", which covers nearly every real case and costs one click. Anything
+   * more elaborate can come later without changing the rule that is stored.
+   */
+  const setRepeat = (item: PlanItem, repeat: Partial<RepeatRule> | null) =>
+    optimistic(item.id, (b) => b, () => scheduleApi.setPlanItemRepeat(item.id, repeat, clanId));
+
+  const addItem = async (
+    slotId: string,
+    title: string,
+    opts: { dueDate?: string | null; repeat?: Partial<RepeatRule> | null } = {},
+  ) => {
     const text = title.trim();
     if (!text) return;
     mark(slotId, true);
     try {
-      await scheduleApi.addPlanItem(menteeId, slotId, { title: text, kind: 'personal', clanId });
+      /**
+       * What gets created depends on who is typing.
+       *
+       * This always sent `personal`, so a mentor adding "Ship the auth PR" to a
+       * mentee's block created a tick-box the mentee could close themselves —
+       * no submission, no review, no points. A mentor setting work means work,
+       * and a mentee adding to their own day means a personal item. The server
+       * refuses a mentee who asks for `review`, so this is a default, not a
+       * permission.
+       */
+      const kind = mine ? 'personal' : 'review';
+      await scheduleApi.addPlanItem(menteeId, slotId, {
+        title: text, kind, clanId, dueDate: opts.dueDate ?? null, repeat: opts.repeat ?? null,
+      });
       await load(true);
       onChanged?.();
+      /**
+       * Say what was actually created, because the two differ in a way that
+       * matters: a mentor's item has to be submitted and reviewed, a mentee's
+       * finishes on a tick. Naming the repeat here is the only confirmation
+       * that it took.
+       */
+      const repeatWord = opts.repeat ? REPEAT_PRESETS.find(
+        (r) => r.rule.freq === opts.repeat?.freq
+          && JSON.stringify(r.rule.days ?? null) === JSON.stringify(opts.repeat?.days ?? null),
+      )?.label.toLowerCase() : null;
+      toast.success(mine
+        ? `Added${repeatWord ? `, ${repeatWord}` : ''}`
+        : `Set for review${repeatWord ? `, ${repeatWord}` : ''}`);
     } catch (e) {
       toast.error(extractApiErrorMessage(e, 'Could not add that'));
     } finally {
@@ -179,6 +244,12 @@ export function DayPlanner({
    * shown "From your mentor" on blocks they had set themselves.
    */
   const mine = board?.viewer.isOwnerMentee ?? true;
+
+  /** Every block, as somewhere an item can be sent. */
+  const blockChoices = useMemo(
+    () => (board?.slots ?? []).map((s) => ({ id: s.id, label: s.label, time: s.time })),
+    [board],
+  );
 
   const totals = useMemo(() => {
     const all = (board?.slots ?? []).flatMap((s) => s.items);
@@ -216,11 +287,19 @@ export function DayPlanner({
             {mine ? 'Your day' : 'Their day'}
           </p>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            {totals.total === 0
-              ? (mine
-                ? 'Blocks are the shape of your day. Put work in one to plan it — type and press Enter.'
-                : 'Nothing in their blocks yet. Type into a block to put work there.')
-              : `${totals.done} of ${totals.total} done today`}
+            {/*
+                The empty state names the next action on THIS screen, and when
+                there is work sitting unplanned it says so — "nothing in their
+                blocks yet" was true and useless while two tasks waited just
+                below it for someone to give them a time.
+            */}
+            {totals.total > 0
+              ? `${totals.done} of ${totals.total} done today`
+              : board.unplanned.length > 0
+                ? `${board.unplanned.length} ${board.unplanned.length === 1 ? 'thing is' : 'things are'} waiting for a block — put ${board.unplanned.length === 1 ? 'it' : 'them'} in one below.`
+                : (mine
+                  ? 'Blocks are the shape of your day. Type in one and press Enter to put work there.'
+                  : 'Nothing in their blocks yet. Type in a block to set work there.')}
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -231,25 +310,17 @@ export function DayPlanner({
         </div>
       </div>
 
-      {carrying && (
-        <p className="rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 text-xs font-medium text-brand-700 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300">
-          Carrying an item. Choose a block to drop it in, or press Escape to put it back.
-        </p>
-      )}
-
       <ul className="space-y-3">
         {board.slots.map((slot) => (
           <SlotCard
             key={slot.id}
             slot={slot}
             busy={busy.has(slot.id)}
-            carrying={carrying}
             isDropTarget={dropTarget === slot.id}
             onDropTarget={setDropTarget}
             onDropItem={(taskId) => moveItem(taskId, slot.id)}
-            onCarry={setCarrying}
             onToggleDone={toggleDone}
-            onAddItem={(title) => addItem(slot.id, title)}
+            onAddItem={(title, opts) => addItem(slot.id, title, opts)}
             onRetime={(patch) => optimistic(slot.id, (b) => b,
               () => scheduleApi.updatePlanSlot(menteeId, slot.id, { ...patch, clanId }))}
             onRemove={() => optimistic(slot.id, (b) => ({ ...b, slots: b.slots.filter((s) => s.id !== slot.id) }),
@@ -257,6 +328,10 @@ export function DayPlanner({
             onHide={() => optimistic(slot.id, (b) => ({ ...b, slots: b.slots.filter((s) => s.id !== slot.id) }),
               () => scheduleApi.hidePlanSlot(menteeId, slot.id, true, clanId))}
             mine={mine}
+            blockChoices={blockChoices}
+            onMoveTo={moveItem}
+            onSetRepeat={setRepeat}
+            onOpen={setOpenTaskId}
             itemBusy={busy}
           />
         ))}
@@ -354,7 +429,6 @@ export function DayPlanner({
           onDragOver={(e) => { e.preventDefault(); setDropTarget('__tray__'); }}
           onDragLeave={() => setDropTarget(null)}
           onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData('text/plain'); if (id) moveItem(id, null); }}
-          onClick={() => { if (carrying) moveItem(carrying, null); }}
           className={`rounded-2xl border bg-card p-4 transition-colors dark:bg-slate-900/40 ${
             dropTarget === '__tray__' ? 'border-brand-400 bg-brand-50/60' : 'border-slate-200 dark:border-slate-800'
           }`}
@@ -371,8 +445,8 @@ export function DayPlanner({
           </p>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
             {mine
-              ? 'Drag one into a block above to decide when you’ll do it — or use the handle and tap a block.'
-              : 'Drag one into a block to give it a time in their day.'}
+              ? 'Pick a block for each so it has a time in your day. Dragging works too.'
+              : 'Pick a block for each so it has a time in their day. Dragging works too.'}
           </p>
           <ul className="mt-2.5 space-y-1.5">
             {board.unplanned.map((item) => (
@@ -380,14 +454,67 @@ export function DayPlanner({
                 key={item.id}
                 item={item}
                 busy={busy.has(item.id)}
-                carrying={carrying === item.id}
-                onCarry={setCarrying}
                 onToggleDone={toggleDone}
+                blocks={blockChoices}
+                currentSlotId={null}
+                unplanned
+                onMoveTo={(slotId) => moveItem(item.id, slotId)}
+                onSetRepeat={(repeat) => setRepeat(item, repeat)}
+                onOpen={setOpenTaskId}
               />
             ))}
           </ul>
         </section>
       )}
+
+      {/*
+          Two drawers, because the two sides are doing different jobs on the
+          same object: the mentee reads the brief and submits, the mentor reads
+          the submission and decides. Both are the drawers those people already
+          use on their own screens — the planner opens them rather than growing
+          a third, worse copy.
+      */}
+      {mine ? (
+        <>
+          <TaskDrawer
+            taskId={openTaskId}
+            open={!!openTaskId}
+            onClose={() => setOpenTaskId(null)}
+            onStart={async (id) => {
+              try {
+                await taskApi.updateTaskStatus(id, 'in_progress');
+                toast.success('Started');
+                await load(true);
+              } catch (e) {
+                toast.error(extractApiErrorMessage(e, 'Could not start that'));
+              }
+            }}
+            onSubmit={(task) => {
+              // One drawer at a time: hand off rather than stack a second panel.
+              setOpenTaskId(null);
+              setSubmitTarget({
+                id: task.id,
+                title: task.roadmapTask?.title || task.title || 'Task',
+                status: task.status,
+                deliverable: task.roadmapTask?.deliverable,
+                acceptanceCriteria: task.roadmapTask?.acceptanceCriteria || [],
+              });
+            }}
+          />
+          <SubmitTaskDrawer
+            open={!!submitTarget}
+            task={submitTarget}
+            onClose={() => setSubmitTarget(null)}
+            onSubmitted={() => { void load(true); onChanged?.(); }}
+          />
+        </>
+      ) : openTaskId ? (
+        <TaskDrawerById
+          taskId={openTaskId}
+          onClose={() => setOpenTaskId(null)}
+          onChanged={() => { void load(true); onChanged?.(); }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -395,28 +522,47 @@ export function DayPlanner({
 /* ── one block ───────────────────────────────────────────────────────────── */
 
 function SlotCard({
-  slot, busy, carrying, isDropTarget, onDropTarget, onDropItem, onCarry,
-  onToggleDone, onAddItem, onRetime, onRemove, onHide, itemBusy, mine,
+  slot, busy, isDropTarget, onDropTarget, onDropItem,
+  onToggleDone, onAddItem, onRetime, onRemove, onHide, itemBusy, mine, blockChoices, onMoveTo,
+  onSetRepeat, onOpen,
 }: {
   slot: PlanSlot;
   busy: boolean;
-  carrying: string | null;
   isDropTarget: boolean;
   onDropTarget: (id: string | null) => void;
   onDropItem: (taskId: string) => void;
-  onCarry: (id: string | null) => void;
   onToggleDone: (item: PlanItem) => void;
-  onAddItem: (title: string) => void;
+  onAddItem: (title: string, opts?: { dueDate?: string | null; repeat?: Partial<RepeatRule> | null }) => void;
   onRetime: (patch: { time?: string; label?: string; locked?: boolean }) => void;
   onRemove: () => void;
   onHide: () => void;
   itemBusy: Set<string>;
   /** True when the viewer IS the mentee. Decides whose voice the block speaks in. */
   mine: boolean;
+  blockChoices: { id: string; label: string; time: string }[];
+  onMoveTo: (taskId: string, slotId: string | null) => void;
+  onSetRepeat: (item: PlanItem, repeat: Partial<RepeatRule> | null) => void;
+  onOpen: (taskId: string) => void;
 }) {
   const [draft, setDraft] = useState('');
   const [editing, setEditing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  /** What the composer has collected so far, beyond the title. */
+  const [due, setDue] = useState<string>('');
+  const [repeat, setRepeat] = useState<Partial<RepeatRule> | null>(null);
+  const [showDone, setShowDone] = useState(false);
+
+  /** What is still to do, and what has been finished today. */
+  const open = slot.items.filter((i) => i.status !== 'completed');
+  const finished = slot.items.filter((i) => i.status === 'completed');
+
+  const submitDraft = () => {
+    if (!draft.trim()) return;
+    onAddItem(draft, { dueDate: due || null, repeat });
+    setDraft('');
+    setDue('');
+    setRepeat(null);
+  };
 
   const ownerChip = slot.owner === 'mentee'
     ? {
@@ -435,7 +581,6 @@ function SlotCard({
       onDragOver={(e) => { e.preventDefault(); onDropTarget(slot.id); }}
       onDragLeave={() => onDropTarget(null)}
       onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData('text/plain'); if (id) onDropItem(id); }}
-      onClick={() => { if (carrying) onDropItem(carrying); }}
       className={`rounded-2xl border bg-card transition-colors dark:bg-slate-900/40 ${
         isDropTarget ? 'border-brand-400 bg-brand-50/60 dark:bg-brand-500/10' : 'border-slate-200 dark:border-slate-800'
       }`}
@@ -533,48 +678,213 @@ function SlotCard({
       )}
 
       <ul className="mt-2.5 space-y-1.5 px-4">
-        {slot.items.map((item) => (
+        {open.map((item) => (
           <ItemRow
             key={item.id}
             item={item}
             busy={itemBusy.has(item.id)}
-            carrying={carrying === item.id}
-            onCarry={onCarry}
             onToggleDone={onToggleDone}
+            blocks={blockChoices}
+            currentSlotId={slot.id}
+            onMoveTo={(toSlot) => onMoveTo(item.id, toSlot)}
+            onSetRepeat={(repeat) => onSetRepeat(item, repeat)}
+            onOpen={onOpen}
           />
         ))}
       </ul>
 
-      {/* Always present, never behind a button: adding something is one action. */}
-      <div className="px-4 pb-3.5 pt-2" onClick={(e) => e.stopPropagation()}>
-        <input
-          ref={inputRef}
-          value={draft}
-          id={`plan-add-${slot.id}`}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && draft.trim()) { onAddItem(draft); setDraft(''); }
-            if (e.key === 'Escape') setDraft('');
-          }}
-          placeholder={slot.items.length
-            ? (mine ? 'Add another…' : 'Add another for them…')
-            : (mine ? 'What goes in this block?' : `Add work to ${slot.label}…`)}
-          aria-label={`Add an item to ${slot.label}`}
-          className="w-full rounded-xl border border-transparent bg-slate-50 px-3 py-2 text-sm text-foreground placeholder:text-slate-400 hover:border-slate-200 focus:border-brand-300 focus:bg-card focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:bg-slate-800/60 dark:hover:border-slate-700"
-        />
+      {/*
+          Finished work settles to the bottom, folded away.
+
+          It has to stay on the day — a block that empties as you work it makes
+          "2 of 3 done" unreachable and the ring never fills. But it has
+          stopped being something to do, so it stops sitting among the things
+          that are. It drops off by itself tomorrow.
+      */}
+      {finished.length > 0 && (
+        <div className="mt-2 px-4">
+          <button
+            type="button"
+            onClick={() => setShowDone((v) => !v)}
+            aria-expanded={showDone}
+            className="inline-flex items-center gap-1.5 rounded-lg py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground"
+          >
+            <ChevronDown className={`h-3 w-3 transition-transform ${showDone ? '' : '-rotate-90'}`} aria-hidden />
+            Done · {finished.length}
+          </button>
+          {showDone && (
+            <ul className="mt-1.5 space-y-1.5 opacity-70">
+              {finished.map((item) => (
+                <ItemRow
+                  key={item.id}
+                  item={item}
+                  busy={itemBusy.has(item.id)}
+                  onToggleDone={onToggleDone}
+                  blocks={blockChoices}
+                  currentSlotId={slot.id}
+                  onMoveTo={(toSlot) => onMoveTo(item.id, toSlot)}
+                  onSetRepeat={(repeat) => onSetRepeat(item, repeat)}
+                  onOpen={onOpen}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/*
+          Always present, never behind a button: adding something is one action.
+
+          The deadline and the repeat appear only once there is a title, so the
+          resting state stays a single quiet field and the fast path — type,
+          Enter — never grows a form in front of it. A mentor setting real work
+          needs both without leaving the block; that was the missing half of
+          "assign a task here".
+      */}
+      <div className="px-4 pb-3.5 pt-2">
+        <div className="flex items-center gap-2">
+          <div className="relative min-w-0 flex-1">
+            <Plus className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" aria-hidden />
+            <input
+              ref={inputRef}
+              value={draft}
+              id={`plan-add-${slot.id}`}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') submitDraft();
+                if (e.key === 'Escape') { setDraft(''); setDue(''); setRepeat(null); }
+              }}
+              placeholder={slot.items.length
+                ? (mine ? 'Add another…' : 'Add another for them…')
+                : (mine ? 'What goes in this block?' : `Set work in ${slot.label}…`)}
+              aria-label={mine ? `Add an item to ${slot.label}` : `Set work in ${slot.label}`}
+              className="w-full rounded-xl border border-transparent bg-slate-50 py-2 pl-8 pr-3 text-sm text-foreground placeholder:text-slate-400 hover:border-slate-200 focus:border-brand-300 focus:bg-card focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:bg-slate-800/60 dark:hover:border-slate-700"
+            />
+          </div>
+          {draft.trim() && (
+            <button
+              type="button"
+              onClick={submitDraft}
+              disabled={busy}
+              className="inline-flex shrink-0 items-center gap-1 rounded-xl bg-brand-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-700 disabled:opacity-60"
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
+              {mine ? 'Add' : 'Assign'}
+            </button>
+          )}
+        </div>
+
+        {draft.trim() && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-1">
+            <label className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-[11px] text-muted-foreground focus-within:border-brand-300 dark:border-slate-700">
+              <CalendarClock className="h-3 w-3" aria-hidden />
+              <span className="sr-only">Due date</span>
+              <input
+                type="date"
+                value={due}
+                onChange={(e) => setDue(e.target.value)}
+                className="bg-transparent text-[11px] text-foreground focus:outline-none"
+              />
+            </label>
+
+            <Dropdown
+              align="start"
+              width="w-48"
+              trigger={({ toggle }) => (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); toggle(); }}
+                  className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] transition-colors ${
+                    repeat
+                      ? 'border-brand-300 bg-brand-50/70 text-brand-700 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300'
+                      : 'border-slate-200 text-muted-foreground hover:border-brand-300 dark:border-slate-700'
+                  }`}
+                >
+                  <Repeat className="h-3 w-3" aria-hidden />
+                  {repeat
+                    ? REPEAT_PRESETS.find((r) => r.rule.freq === repeat.freq
+                      && JSON.stringify(r.rule.days ?? null) === JSON.stringify(repeat.days ?? null))?.label
+                      ?? 'Repeats'
+                    : 'Once'}
+                </button>
+              )}
+            >
+              {(close) => (
+                <div onClick={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    onClick={() => { setRepeat(null); close(); }}
+                    className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-foreground hover:bg-slate-50 dark:hover:bg-slate-800"
+                  >
+                    Just once
+                    {!repeat && <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" aria-hidden />}
+                  </button>
+                  {REPEAT_PRESETS.map((preset) => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => { setRepeat(preset.rule); close(); }}
+                      className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-foreground hover:bg-slate-50 dark:hover:bg-slate-800"
+                    >
+                      {preset.label}
+                      {repeat?.freq === preset.rule.freq
+                        && JSON.stringify(repeat?.days ?? null) === JSON.stringify(preset.rule.days ?? null)
+                        && <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" aria-hidden />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Dropdown>
+
+            {/* Says what will happen, in the voice of whoever is typing. */}
+            <span className="text-[11px] text-muted-foreground">
+              {mine
+                ? (repeat ? 'comes back after you tick it' : 'finishes when you tick it')
+                : (repeat ? 'they submit it each time' : 'they submit it for review')}
+            </span>
+          </div>
+        )}
       </div>
     </li>
   );
 }
 
+/**
+ * The repeats people actually pick, in their own words.
+ *
+ * A full RRULE editor is a form nobody wants in a to-do row. These four plus
+ * "doesn't repeat" cover almost every case at one click, and they produce the
+ * same rule shape a richer editor would, so adding one later changes nothing
+ * that is already stored.
+ */
+const REPEAT_PRESETS: { label: string; rule: Partial<RepeatRule> }[] = [
+  { label: 'Every day', rule: { freq: 'daily' } },
+  { label: 'Every weekday', rule: { freq: 'weekly', days: [1, 2, 3, 4, 5] } },
+  { label: 'Every week', rule: { freq: 'weekly' } },
+  { label: 'Every month', rule: { freq: 'monthly' } },
+];
+
 /* ── one item ────────────────────────────────────────────────────────────── */
 
-function ItemRow({ item, busy, carrying, onCarry, onToggleDone }: {
+function ItemRow({
+  item, busy, onToggleDone, blocks, currentSlotId, onMoveTo, onSetRepeat, onOpen,
+  unplanned = false,
+}: {
   item: PlanItem;
   busy: boolean;
-  carrying: boolean;
-  onCarry: (id: string | null) => void;
   onToggleDone: (item: PlanItem) => void;
+  /** Every block this item could go to, for the move menu. */
+  blocks: { id: string; label: string; time: string }[];
+  currentSlotId: string | null;
+  onMoveTo: (slotId: string | null) => void;
+  onSetRepeat: (repeat: Partial<RepeatRule> | null) => void;
+  onOpen: (taskId: string) => void;
+  /**
+   * This item is not in a block yet, so putting it in one is the entire point
+   * of the row — it gets a button with words on it rather than an icon someone
+   * has to go looking for.
+   */
+  unplanned?: boolean;
 }) {
   const done = item.status === 'completed';
   const waiting = item.status === 'submitted';
@@ -582,21 +892,8 @@ function ItemRow({ item, busy, carrying, onCarry, onToggleDone }: {
     <li
       draggable
       onDragStart={(e) => { e.dataTransfer.setData('text/plain', item.id); e.dataTransfer.effectAllowed = 'move'; }}
-      className={`group flex items-start gap-2.5 rounded-xl border bg-card px-2.5 py-2 dark:bg-slate-900/60 ${
-        carrying ? 'border-brand-400 ring-2 ring-brand-500/20' : 'border-slate-200 dark:border-slate-800'
-      }`}
+      className="group flex items-start gap-2.5 rounded-xl border border-slate-200 bg-card px-2.5 py-2 dark:border-slate-800 dark:bg-slate-900/60"
     >
-      {/* Keyboard route to the same thing dragging does, so the planner is not
-          mouse-only. Space picks up, then a block takes it. */}
-      <button
-        type="button"
-        onClick={(e) => { e.stopPropagation(); onCarry(carrying ? null : item.id); }}
-        aria-label={carrying ? `Put ${item.title} back` : `Pick up ${item.title} to move it`}
-        className="mt-0.5 cursor-grab rounded p-0.5 text-slate-300 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100 hover:text-slate-500"
-      >
-        {carrying ? <X className="h-3.5 w-3.5" /> : <GripVertical className="h-3.5 w-3.5" />}
-      </button>
-
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); onToggleDone(item); }}
@@ -612,8 +909,22 @@ function ItemRow({ item, busy, carrying, onCarry, onToggleDone }: {
         {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : (done || waiting) && <Check className="h-3 w-3" />}
       </button>
 
+      {/*
+          The title opens the task. Clicking an item did nothing at all before,
+          which made a block look like a list of labels rather than a list of
+          work — the brief, the criteria and the mentor's feedback were all a
+          page away with no way to reach them from here.
+      */}
       <div className="min-w-0 flex-1">
-        <p className={`text-[13.5px] ${done ? 'text-muted-foreground line-through' : 'text-foreground'}`}>{item.title}</p>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onOpen(item.id); }}
+          className={`block w-full truncate text-left text-[13.5px] hover:underline ${
+            done ? 'text-muted-foreground line-through' : 'text-foreground'
+          }`}
+        >
+          {item.title}
+        </button>
         <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
           <span className={`rounded-full border px-1.5 py-px text-[10px] font-medium ${
             item.kind === 'review'
@@ -628,11 +939,127 @@ function ItemRow({ item, busy, carrying, onCarry, onToggleDone }: {
               <Route className="h-3 w-3" aria-hidden />roadmap
             </span>
           )}
-          {item.dueDate && !done && (
-            <span className="text-[10px] text-muted-foreground">due {new Date(item.dueDate).toLocaleDateString()}</span>
+          {/* The repeat reads as part of the item, like a due date — it is a
+              property of the thing, not an action you take on it. */}
+          {item.repeatLabel && (
+            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-brand-700 dark:text-brand-300" title={`Repeats: ${item.repeatLabel}`}>
+              <Repeat className="h-3 w-3" aria-hidden />{item.repeatLabel}
+            </span>
           )}
+          {/*
+              A deadline only earns space when it changes what you do about it:
+              today means do it today, past means it is late. A date months out
+              on every row is noise.
+          */}
+          {item.dueDate && !done && (() => {
+            const dayMs = 86400000;
+            const todayKey = new Date().toLocaleDateString('en-CA');
+            const dueKey = new Date(item.dueDate).toLocaleDateString('en-CA');
+            if (dueKey < todayKey) {
+              return <span className="text-[10px] font-medium text-rose-600 dark:text-rose-400">overdue</span>;
+            }
+            if (dueKey === todayKey) {
+              return <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">due today</span>;
+            }
+            const days = Math.round((new Date(`${dueKey}T00:00:00`).getTime() - new Date(`${todayKey}T00:00:00`).getTime()) / dayMs);
+            if (days === 1) return <span className="text-[10px] text-muted-foreground">due tomorrow</span>;
+            return <span className="text-[10px] text-muted-foreground">due {new Date(item.dueDate).toLocaleDateString()}</span>;
+          })()}
         </div>
       </div>
+
+      {/*
+          One menu, always on the row.
+
+          Where it goes and whether it comes back are the only two things anyone
+          does to an item besides finishing it, so they live together instead of
+          as three separate icon buttons.
+
+          They used to be `opacity-0` until the row was hovered, which is how
+          this could ship and still be reported as missing: there is no hover on
+          a touch screen, and nobody goes hunting for a grey handle inside a
+          drawer. A control you cannot see is a control that does not exist.
+      */}
+      <Dropdown
+        align="end"
+        width="w-60"
+        trigger={({ toggle }) => (unplanned ? (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); toggle(); }}
+            aria-label={`Put ${item.title} in a block`}
+            className="mt-px inline-flex shrink-0 items-center gap-1 rounded-lg border border-brand-200 bg-brand-50/70 px-2 py-1 text-[11px] font-medium text-brand-700 transition-colors hover:border-brand-300 hover:bg-brand-50 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300"
+          >
+            Put in a block
+            <ChevronDown className="h-3 w-3" aria-hidden />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); toggle(); }}
+            aria-label={`Move or repeat ${item.title}`}
+            title="Move to another block, or repeat"
+            className="mt-0.5 shrink-0 rounded-lg p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+          >
+            <MoreHorizontal className="h-4 w-4" aria-hidden />
+          </button>
+        ))}
+      >
+        {(close) => (
+          <div onClick={(e) => e.stopPropagation()}>
+            <p className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Move to</p>
+            {blocks.length === 0 && (
+              <p className="px-3 pb-2 text-xs text-muted-foreground">No blocks yet — add one first.</p>
+            )}
+            {blocks.map((b) => (
+              <button
+                key={b.id}
+                type="button"
+                disabled={b.id === currentSlotId}
+                onClick={() => { onMoveTo(b.id); close(); }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-slate-50 disabled:opacity-40 dark:hover:bg-slate-800"
+              >
+                <span className="font-mono text-[11px] tabular-nums text-muted-foreground">{b.time}</span>
+                <span className="min-w-0 flex-1 truncate">{b.label}</span>
+                {b.id === currentSlotId && <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" aria-hidden />}
+              </button>
+            ))}
+            {currentSlotId && (
+              <button
+                type="button"
+                onClick={() => { onMoveTo(null); close(); }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-muted-foreground hover:bg-slate-50 dark:hover:bg-slate-800"
+              >
+                Take off the day
+              </button>
+            )}
+
+            <p className="border-t border-slate-100 px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground dark:border-slate-800">Repeat</p>
+            {REPEAT_PRESETS.map((preset) => (
+              <button
+                key={preset.label}
+                type="button"
+                onClick={() => { onSetRepeat(preset.rule); close(); }}
+                className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-slate-50 dark:hover:bg-slate-800"
+              >
+                {preset.label}
+                {item.repeat?.freq === preset.rule?.freq
+                  && JSON.stringify(item.repeat?.days ?? null) === JSON.stringify(preset.rule?.days ?? null)
+                  && <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" aria-hidden />}
+              </button>
+            ))}
+            {item.repeat && (
+              <button
+                type="button"
+                onClick={() => { onSetRepeat(null); close(); }}
+                className="w-full px-3 py-1.5 pb-2 text-left text-sm text-muted-foreground hover:bg-slate-50 dark:hover:bg-slate-800"
+              >
+                Doesn&rsquo;t repeat
+              </button>
+            )}
+          </div>
+        )}
+      </Dropdown>
     </li>
   );
 }

@@ -64,6 +64,14 @@ export interface PlanItem {
   points: number | null;
   /** In this block because its roadmap is, rather than because it was put here. */
   fromRoadmapSlot?: boolean;
+  repeat?: RepeatRule | null;
+  /** "Every weekday" — written by the server so both sides read it the same. */
+  repeatLabel?: string | null;
+  /**
+   * The day this instance is for ('YYYY-MM-DD'), when it is one of a series.
+   * The board only sends occurrences whose day has arrived.
+   */
+  occurrenceDate?: string | null;
 }
 
 export interface PlanSlot {
@@ -90,6 +98,15 @@ export interface PlanBoard {
   slots: PlanSlot[];
   unplanned: PlanItem[];
   viewer: { isOwnerMentee: boolean; canAssign: boolean };
+}
+
+/** How an item repeats. Null means it does not. */
+export interface RepeatRule {
+  freq: 'daily' | 'weekly' | 'monthly';
+  interval: number;
+  /** 0 = Sunday. Weekly only. */
+  days?: number[];
+  until?: string;
 }
 
 /** A day-shape an admin has published for mentees to take. */
@@ -159,12 +176,21 @@ export const scheduleApi = {
     apiClient.get<{ data: PlanBoard }>(`/schedules/board/${menteeId}${clanId ? `?clanId=${clanId}` : ''}`),
   getStrip: (menteeId: string, clanId?: string | null) =>
     apiClient.get<{ data: PlanStrip }>(`/schedules/board/${menteeId}/strip${clanId ? `?clanId=${clanId}` : ''}`),
-  addPlanItem: (menteeId: string, slotId: string, body: { title: string; kind?: 'personal' | 'review'; clanId?: string | null }) =>
+  addPlanItem: (menteeId: string, slotId: string, body: {
+    title: string; kind?: 'personal' | 'review'; clanId?: string | null;
+    dueDate?: string | null; repeat?: Partial<RepeatRule> | null;
+  }) =>
     apiClient.post<{ data: { item: PlanItem } }>(`/schedules/board/${menteeId}/slots/${slotId}/items`, body),
   movePlanItem: (taskId: string, slotId: string | null, clanId?: string | null) =>
     apiClient.patch(`/schedules/board/items/${taskId}/move`, { slotId, clanId }),
-  setPlanItemDone: (taskId: string, done: boolean) =>
-    apiClient.patch(`/schedules/board/items/${taskId}/done`, { done }),
+  // These two carry the clan for the same reason `movePlanItem` does: a
+  // mentor's grant is clan-scoped, and the task itself may carry no clan.
+  setPlanItemDone: (taskId: string, done: boolean, clanId?: string | null) =>
+    apiClient.patch<{ data: { status: string; nextOccurrence: string | null } }>(
+      `/schedules/board/items/${taskId}/done`, { done, clanId }),
+  setPlanItemRepeat: (taskId: string, repeat: Partial<RepeatRule> | null, clanId?: string | null) =>
+    apiClient.patch<{ data: { repeat: RepeatRule | null } }>(
+      `/schedules/board/items/${taskId}/repeat`, { repeat, clanId }),
   addPlanSlot: (menteeId: string, body: { label: string; time: string; clanId?: string | null }) =>
     apiClient.post<{ data: { slot: PlanSlot } }>(`/schedules/board/${menteeId}/slots`, body),
   updatePlanSlot: (menteeId: string, slotId: string, patch: { label?: string; time?: string; locked?: boolean; clanId?: string | null }) =>

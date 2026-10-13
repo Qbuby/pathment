@@ -22,7 +22,12 @@ const getBoard = catchAsync(async (req, res) => {
 const addItem = catchAsync(async (req, res) => {
   const item = await board.addItem(
     targetId(req), req.params.slotId,
-    { title: req.body.title, kind: req.body.kind, dueDate: req.body.dueDate },
+    // `repeat` was accepted by the service and never forwarded here, so an
+    // item set up to repeat was quietly created as a one-off.
+    {
+      title: req.body.title, kind: req.body.kind,
+      dueDate: req.body.dueDate, repeat: req.body.repeat,
+    },
     req.user, clanOf(req),
   );
   res.status(201).json(successResponse('Added to your plan', { item }, 201));
@@ -36,7 +41,7 @@ const moveItem = catchAsync(async (req, res) => {
 });
 
 const completeItem = catchAsync(async (req, res) => {
-  const result = await board.completeItem(req.params.taskId, req.user, req.body.done !== false);
+  const result = await board.completeItem(req.params.taskId, req.user, req.body.done !== false, clanOf(req));
   res.status(200).json(successResponse('Updated', result));
 });
 
@@ -77,6 +82,11 @@ const applyTemplate = catchAsync(async (req, res) => {
   res.status(200).json(successResponse(message, result));
 });
 
+const setItemRepeat = catchAsync(async (req, res) => {
+  const result = await board.setItemRepeat(req.params.taskId, req.body.repeat ?? null, req.user, clanOf(req));
+  res.status(200).json(successResponse(result.repeat ? 'Repeat set' : 'Repeat turned off', result));
+});
+
 const strip = catchAsync(async (req, res) => {
   const data = await board.strip(targetId(req), clanOf(req), req.user);
   res.status(200).json(successResponse('Plan summary retrieved', data));
@@ -84,5 +94,5 @@ const strip = catchAsync(async (req, res) => {
 
 module.exports = {
   getBoard, addItem, moveItem, completeItem, addSlot, updateSlot, removeSlot, strip,
-  hideSlot, listTemplates, applyTemplate,
+  hideSlot, listTemplates, applyTemplate, setItemRepeat,
 };
