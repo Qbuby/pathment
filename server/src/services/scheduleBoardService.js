@@ -4,7 +4,7 @@ const authz = require('./authzService');
 const { PERMISSIONS } = require('../config/permissions');
 const { NotFoundError, ValidationError, ForbiddenError } = require('../utils/errors/errorTypes');
 const clanLifecycleService = require('./clanLifecycleService');
-const { todayInZone } = require('../utils/timezone');
+const { todayInZone, endOfDayInZone } = require('../utils/timezone');
 const { normalizeRepeat, nextOccurrence, describeRepeat } = require('../utils/repeatRule');
 const logger = require('../utils/logger');
 
@@ -131,11 +131,30 @@ class ScheduleBoardService {
    * must not watch this morning's work fall off the plan because a server in
    * another zone has already turned the page.
    */
-  async _todayKey(menteeId) {
+  async _zoneOf(menteeId) {
     const settings = await models.UserSettings.findOne({
       where: { userId: menteeId }, attributes: ['timezone'],
     });
-    return todayInZone(settings?.timezone || 'UTC');
+    return settings?.timezone || 'UTC';
+  }
+
+  async _todayKey(menteeId) {
+    return todayInZone(await this._zoneOf(menteeId));
+  }
+
+  /**
+   * A day key becomes a deadline at the END of that day, in the mentee's zone.
+   *
+   * The planner used to store the day key straight into `due_date`, which
+   * Postgres reads as midnight at the START of it — so every item a mentor set
+   * for today, and every occurrence a repeat rolled forward, was already
+   * overdue the moment it appeared. The rest of the product has always used
+   * `endOfDayInZone` for a day-only deadline; this now does too.
+   */
+  async _dueAtEndOfDay(menteeId, dayKey) {
+    if (!dayKey) return null;
+    const key = String(dayKey).slice(0, 10);
+    return endOfDayInZone(key, await this._zoneOf(menteeId)) || new Date(`${key}T23:59:59Z`);
   }
 
   async _startOfToday(menteeId) {
@@ -179,6 +198,21 @@ class ScheduleBoardService {
       where: {
         menteeId,
         ...(row?.clanId ? { clanId: row.clanId } : {}),
+        /**
+         * A repeat that lands on weekdays must not put Monday's copy on the
+         * Saturday board. The next occurrence is written the moment one is
+         * finished, so it exists days before it is due — real, but not yet
+         * today's work.
+         *
+         * Anything already due stays, however late: an occurrence nobody did
+         * is exactly what the mentee needs to still see.
+         */
+        [Op.and]: [{
+          [Op.or]: [
+            { occurrenceDate: null },
+            { occurrenceDate: { [Op.lte]: todayKey } },
+          ],
+        }],
         [Op.or]: [
           // In a block: everything still open, plus whatever was finished today.
           {
@@ -222,6 +256,8 @@ class ScheduleBoardService {
       points: t.selfAssigned ? 0 : (t.pointsBase ?? null),
       repeat: t.repeatRule || null,
       repeatLabel: describeRepeat(t.repeatRule),
+      /** The day this instance is for — null when it is not one of a series. */
+      occurrenceDate: t.occurrenceDate || null,
     });
 
     /**
@@ -322,6 +358,11 @@ class ScheduleBoardService {
     const { row, slots, index } = await this._locate(menteeId, slotId, clanId);
     if (row.clanId) await clanLifecycleService.assertClanWritable(row.clanId);
 
+    // A due date arrives as a day key ('YYYY-MM-DD'); it becomes an instant at
+    // the end of that day in the mentee's zone, like every other deadline.
+    const dayKey = dueDate ? String(dueDate).slice(0, 10) : null;
+    const due = await this._dueAtEndOfDay(menteeId, dayKey);
+
     const personal = kind !== 'review';
     // Throws on a frequency we cannot honour, so a bad rule is refused at the
     // door rather than stored and discovered later by the spawner.
@@ -372,14 +413,20 @@ class ScheduleBoardService {
         scheduleSlotId: slots[index].id,
         status: 'assigned',
         assignedAt: new Date(),
-        dueDate: dueDate || null,
+        dueDate: due,
         isCustomTask: true,
         selfAssigned: personal,
         titleOverride: text,
         repeatRule,
-        // A repeating item needs a day to count from; without one the first
-        // "next" would be measured from whenever it happened to be finished.
-        occurrenceDate: repeatRule ? (dueDate || null) : null,
+        /**
+         * The day this instance is FOR. A repeat needs one to count from, or
+         * the first "next" would be measured from whenever it happened to be
+         * finished rather than from the day it was set for.
+         *
+         * A repeat with no day given starts today — in the mentee's zone, so
+         * "every day" means their day.
+         */
+        occurrenceDate: dayKey || (repeatRule ? await this._todayKey(menteeId) : null),
       }, { transaction });
     });
 
@@ -600,9 +647,12 @@ class ScheduleBoardService {
       const rule = task.repeatRule;
       if (!rule) return null;
 
+      // Count from the day this instance was FOR. Falling back to its deadline
+      // would be wrong the moment a deadline is an end-of-day instant in a zone
+      // ahead of UTC, so the mentee's own today is the last resort.
       const from = task.occurrenceDate
-        || (task.dueDate ? String(task.dueDate).slice(0, 10) : null)
-        || await this._todayKey(task.menteeId);
+        ? String(task.occurrenceDate).slice(0, 10)
+        : await this._todayKey(task.menteeId);
       const next = nextOccurrence(rule, from);
       // The series has run out; let the rule die with this task.
       if (!next) { await task.update({ repeatRule: null }); return null; }
@@ -611,6 +661,11 @@ class ScheduleBoardService {
       // retried request. One open sibling on the same work is enough.
       const existing = await models.AssignedTask.findOne({
         where: {
+          // Never the one being rolled forward. It is still open at this point
+          // when the roll happens at submission — 'submitted' is an active
+          // status — so without this it would match itself, decide the work was
+          // already done and quietly end the series.
+          id: { [Op.ne]: task.id },
           menteeId: task.menteeId,
           roadmapTaskId: task.roadmapTaskId,
           status: { [Op.in]: ACTIVE_STATUSES },
@@ -629,7 +684,9 @@ class ScheduleBoardService {
         status: 'assigned',
         assignedAt: new Date(),
         occurrenceDate: next,
-        dueDate: next,
+        // End of ITS day in the mentee's zone — not midnight at the start of
+        // it, which made every rolled-forward occurrence born overdue.
+        dueDate: await this._dueAtEndOfDay(task.menteeId, next),
         isCustomTask: task.isCustomTask,
         selfAssigned: task.selfAssigned,
         titleOverride: task.titleOverride,

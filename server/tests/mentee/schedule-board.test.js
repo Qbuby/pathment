@@ -410,6 +410,12 @@ describe('the day planner', () => {
   describe('items that repeat', () => {
     const everyWeekday = { freq: 'weekly', days: [1, 2, 3, 4, 5] };
 
+    const setMenteeZone = async (timezone) => {
+      const existing = await models.UserSettings.findOne({ where: { userId: mentee.id } });
+      if (existing) await existing.update({ timezone });
+      else await models.UserSettings.create({ userId: mentee.id, timezone });
+    };
+
     const openItemsIn = async (slotId) => {
       const b = await board.board(mentee.id, { clanId: clan.id }, mentee);
       return b.slots.find((x) => x.id === slotId).items;
@@ -472,6 +478,106 @@ describe('the day planner', () => {
       );
       const result = await board.completeItem(item.id, mentee);
       expect(result.nextOccurrence).toBeNull();
+    });
+
+    /**
+     * A repeat that lands on weekdays must not put Monday's copy on the
+     * Saturday board. The successor is written the moment one is finished, so
+     * it exists days before it is due — real, but not yet today's work.
+     */
+    /** The mentee's day, which is UTC unless their settings say otherwise. */
+    const todayForMentee = () => new Date().toISOString().slice(0, 10);
+
+    it('keeps the next occurrence off the board until its day arrives', async () => {
+      const today = todayForMentee();
+      const item = await board.addItem(
+        mentee.id, OPEN,
+        { title: 'Post on LinkedIn', repeat: { freq: 'weekly', days: [3] }, dueDate: today },
+        mentee, clan.id,
+      );
+      const { nextOccurrence: next } = await board.completeItem(item.id, mentee);
+      expect(next > today).toBe(true);
+
+      // The successor exists...
+      const successor = await models.AssignedTask.findOne({
+        where: { menteeId: mentee.id, status: 'assigned', titleOverride: 'Post on LinkedIn' },
+      });
+      expect(successor.occurrenceDate).toBe(next);
+
+      // ...and today's block shows only the one that was finished today.
+      const items = await openItemsIn(OPEN);
+      expect(items.map((i) => i.id)).toEqual([item.id]);
+    });
+
+    it('shows an occurrence whose day has arrived, however late', async () => {
+      const item = await board.addItem(
+        mentee.id, OPEN, { title: 'Yesterday’s rep', repeat: { freq: 'daily' } }, mentee, clan.id,
+      );
+      await models.AssignedTask.update(
+        { occurrenceDate: '2020-01-01' }, { where: { id: item.id } },
+      );
+      const items = await openItemsIn(OPEN);
+      expect(items.map((i) => i.id)).toContain(item.id);
+    });
+
+    /**
+     * A day-only deadline is the END of that day, in the mentee's own zone.
+     * Storing the day key straight into `due_date` made every occurrence born
+     * overdue — midnight at the START of the day it was for.
+     */
+    it('makes a deadline the end of its day in the mentee’s zone', async () => {
+      await setMenteeZone('Asia/Karachi');
+      const item = await board.addItem(
+        mentee.id, OPEN, { title: 'Ship it', kind: 'review', dueDate: '2026-11-04' }, mentor, clan.id,
+      );
+      const row = await models.AssignedTask.findByPk(item.id);
+      // End of the 4th in Karachi (UTC+5) is 18:59 UTC on the 4th — not
+      // midnight at the start of it, which is what made every occurrence
+      // arrive already overdue.
+      expect(row.dueDate.toISOString()).toBe('2026-11-04T18:59:00.000Z');
+    });
+
+    it('gives a rolled-forward occurrence the same end-of-day deadline', async () => {
+      await setMenteeZone('Asia/Karachi');
+      const today = todayForMentee();
+      const item = await board.addItem(
+        mentee.id, OPEN, { title: 'Daily rep', repeat: { freq: 'daily' }, dueDate: today }, mentee, clan.id,
+      );
+      const { nextOccurrence: next } = await board.completeItem(item.id, mentee);
+
+      const successor = await models.AssignedTask.findOne({
+        where: { menteeId: mentee.id, status: 'assigned', titleOverride: 'Daily rep' },
+      });
+      expect(successor.occurrenceDate).toBe(next);
+      expect(successor.dueDate.toISOString()).toMatch(/T18:59:00\.000Z$/);
+    });
+
+    /**
+     * A daily habit the mentee has already done must not wait on how fast
+     * their mentor reviews it, so the roll-forward happens at SUBMISSION — the
+     * same reason the roadmap advances there.
+     */
+    it('rolls a repeating review item forward when it is submitted', async () => {
+      const today = todayForMentee();
+      const item = await board.addItem(
+        mentee.id, OPEN,
+        { title: 'Daily standup post', kind: 'review', repeat: { freq: 'daily' }, dueDate: today },
+        mentor, clan.id,
+      );
+      await submissionService.submitTaskWithFiles(item.id, mentee.id, { submissionText: 'posted' }, []);
+
+      const successor = await models.AssignedTask.findOne({
+        where: {
+          menteeId: mentee.id,
+          titleOverride: 'Daily standup post',
+          id: { [require('sequelize').Op.ne]: item.id },
+        },
+      });
+      expect(successor).toBeTruthy();
+      expect(successor.status).toBe('assigned');
+      expect(successor.selfAssigned).toBe(false);
+      // The rule moved on, so the approval hook that follows is a no-op.
+      expect((await models.AssignedTask.findByPk(item.id)).repeatRule).toBeNull();
     });
 
     it('turns a repeat on and off after the fact', async () => {

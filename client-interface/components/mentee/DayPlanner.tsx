@@ -14,6 +14,10 @@ import {
 } from '@/lib/services/schedule-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { Dropdown } from '@/components/shared/Dropdown';
+import { TaskDrawer } from '@/components/mentee/TaskDrawer';
+import { SubmitTaskDrawer, type SubmitTaskTarget } from '@/components/mentee/SubmitTaskDrawer';
+import { TaskDrawerById } from '@/components/mentor/TaskDrawerById';
+import { taskApi } from '@/lib/services/task-api';
 
 /**
  * A day as blocks you can put things in.
@@ -52,6 +56,17 @@ export function DayPlanner({
   const [addingBlock, setAddingBlock] = useState(false);
   const [templates, setTemplates] = useState<SelectableTemplate[] | null>(null);
   const [pickingTemplate, setPickingTemplate] = useState(false);
+  /**
+   * The item being read, in a drawer over the plan.
+   *
+   * A block used to be a list of titles you could tick and nothing else — the
+   * brief, the acceptance criteria and the mentor's feedback all lived a page
+   * away, and clicking an item did nothing at all. Both sides open the drawer
+   * they already have elsewhere, so a task reads and reviews identically
+   * wherever it is met.
+   */
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [submitTarget, setSubmitTarget] = useState<SubmitTaskTarget | null>(null);
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -176,7 +191,11 @@ export function DayPlanner({
   const setRepeat = (item: PlanItem, repeat: Partial<RepeatRule> | null) =>
     optimistic(item.id, (b) => b, () => scheduleApi.setPlanItemRepeat(item.id, repeat, clanId));
 
-  const addItem = async (slotId: string, title: string) => {
+  const addItem = async (
+    slotId: string,
+    title: string,
+    opts: { dueDate?: string | null; repeat?: Partial<RepeatRule> | null } = {},
+  ) => {
     const text = title.trim();
     if (!text) return;
     mark(slotId, true);
@@ -192,9 +211,24 @@ export function DayPlanner({
        * permission.
        */
       const kind = mine ? 'personal' : 'review';
-      await scheduleApi.addPlanItem(menteeId, slotId, { title: text, kind, clanId });
+      await scheduleApi.addPlanItem(menteeId, slotId, {
+        title: text, kind, clanId, dueDate: opts.dueDate ?? null, repeat: opts.repeat ?? null,
+      });
       await load(true);
       onChanged?.();
+      /**
+       * Say what was actually created, because the two differ in a way that
+       * matters: a mentor's item has to be submitted and reviewed, a mentee's
+       * finishes on a tick. Naming the repeat here is the only confirmation
+       * that it took.
+       */
+      const repeatWord = opts.repeat ? REPEAT_PRESETS.find(
+        (r) => r.rule.freq === opts.repeat?.freq
+          && JSON.stringify(r.rule.days ?? null) === JSON.stringify(opts.repeat?.days ?? null),
+      )?.label.toLowerCase() : null;
+      toast.success(mine
+        ? `Added${repeatWord ? `, ${repeatWord}` : ''}`
+        : `Set for review${repeatWord ? `, ${repeatWord}` : ''}`);
     } catch (e) {
       toast.error(extractApiErrorMessage(e, 'Could not add that'));
     } finally {
@@ -286,7 +320,7 @@ export function DayPlanner({
             onDropTarget={setDropTarget}
             onDropItem={(taskId) => moveItem(taskId, slot.id)}
             onToggleDone={toggleDone}
-            onAddItem={(title) => addItem(slot.id, title)}
+            onAddItem={(title, opts) => addItem(slot.id, title, opts)}
             onRetime={(patch) => optimistic(slot.id, (b) => b,
               () => scheduleApi.updatePlanSlot(menteeId, slot.id, { ...patch, clanId }))}
             onRemove={() => optimistic(slot.id, (b) => ({ ...b, slots: b.slots.filter((s) => s.id !== slot.id) }),
@@ -297,6 +331,7 @@ export function DayPlanner({
             blockChoices={blockChoices}
             onMoveTo={moveItem}
             onSetRepeat={setRepeat}
+            onOpen={setOpenTaskId}
             itemBusy={busy}
           />
         ))}
@@ -425,11 +460,61 @@ export function DayPlanner({
                 unplanned
                 onMoveTo={(slotId) => moveItem(item.id, slotId)}
                 onSetRepeat={(repeat) => setRepeat(item, repeat)}
+                onOpen={setOpenTaskId}
               />
             ))}
           </ul>
         </section>
       )}
+
+      {/*
+          Two drawers, because the two sides are doing different jobs on the
+          same object: the mentee reads the brief and submits, the mentor reads
+          the submission and decides. Both are the drawers those people already
+          use on their own screens — the planner opens them rather than growing
+          a third, worse copy.
+      */}
+      {mine ? (
+        <>
+          <TaskDrawer
+            taskId={openTaskId}
+            open={!!openTaskId}
+            onClose={() => setOpenTaskId(null)}
+            onStart={async (id) => {
+              try {
+                await taskApi.updateTaskStatus(id, 'in_progress');
+                toast.success('Started');
+                await load(true);
+              } catch (e) {
+                toast.error(extractApiErrorMessage(e, 'Could not start that'));
+              }
+            }}
+            onSubmit={(task) => {
+              // One drawer at a time: hand off rather than stack a second panel.
+              setOpenTaskId(null);
+              setSubmitTarget({
+                id: task.id,
+                title: task.roadmapTask?.title || task.title || 'Task',
+                status: task.status,
+                deliverable: task.roadmapTask?.deliverable,
+                acceptanceCriteria: task.roadmapTask?.acceptanceCriteria || [],
+              });
+            }}
+          />
+          <SubmitTaskDrawer
+            open={!!submitTarget}
+            task={submitTarget}
+            onClose={() => setSubmitTarget(null)}
+            onSubmitted={() => { void load(true); onChanged?.(); }}
+          />
+        </>
+      ) : openTaskId ? (
+        <TaskDrawerById
+          taskId={openTaskId}
+          onClose={() => setOpenTaskId(null)}
+          onChanged={() => { void load(true); onChanged?.(); }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -439,7 +524,7 @@ export function DayPlanner({
 function SlotCard({
   slot, busy, isDropTarget, onDropTarget, onDropItem,
   onToggleDone, onAddItem, onRetime, onRemove, onHide, itemBusy, mine, blockChoices, onMoveTo,
-  onSetRepeat,
+  onSetRepeat, onOpen,
 }: {
   slot: PlanSlot;
   busy: boolean;
@@ -447,7 +532,7 @@ function SlotCard({
   onDropTarget: (id: string | null) => void;
   onDropItem: (taskId: string) => void;
   onToggleDone: (item: PlanItem) => void;
-  onAddItem: (title: string) => void;
+  onAddItem: (title: string, opts?: { dueDate?: string | null; repeat?: Partial<RepeatRule> | null }) => void;
   onRetime: (patch: { time?: string; label?: string; locked?: boolean }) => void;
   onRemove: () => void;
   onHide: () => void;
@@ -457,10 +542,27 @@ function SlotCard({
   blockChoices: { id: string; label: string; time: string }[];
   onMoveTo: (taskId: string, slotId: string | null) => void;
   onSetRepeat: (item: PlanItem, repeat: Partial<RepeatRule> | null) => void;
+  onOpen: (taskId: string) => void;
 }) {
   const [draft, setDraft] = useState('');
   const [editing, setEditing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  /** What the composer has collected so far, beyond the title. */
+  const [due, setDue] = useState<string>('');
+  const [repeat, setRepeat] = useState<Partial<RepeatRule> | null>(null);
+  const [showDone, setShowDone] = useState(false);
+
+  /** What is still to do, and what has been finished today. */
+  const open = slot.items.filter((i) => i.status !== 'completed');
+  const finished = slot.items.filter((i) => i.status === 'completed');
+
+  const submitDraft = () => {
+    if (!draft.trim()) return;
+    onAddItem(draft, { dueDate: due || null, repeat });
+    setDraft('');
+    setDue('');
+    setRepeat(null);
+  };
 
   const ownerChip = slot.owner === 'mentee'
     ? {
@@ -576,7 +678,7 @@ function SlotCard({
       )}
 
       <ul className="mt-2.5 space-y-1.5 px-4">
-        {slot.items.map((item) => (
+        {open.map((item) => (
           <ItemRow
             key={item.id}
             item={item}
@@ -586,49 +688,161 @@ function SlotCard({
             currentSlotId={slot.id}
             onMoveTo={(toSlot) => onMoveTo(item.id, toSlot)}
             onSetRepeat={(repeat) => onSetRepeat(item, repeat)}
+            onOpen={onOpen}
           />
         ))}
       </ul>
 
-      {/* Always present, never behind a button: adding something is one action. */}
-      <div className="flex items-center gap-2 px-4 pb-3.5 pt-2">
-        <div className="relative min-w-0 flex-1">
-          <Plus className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" aria-hidden />
-          <input
-            ref={inputRef}
-            value={draft}
-            id={`plan-add-${slot.id}`}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && draft.trim()) { onAddItem(draft); setDraft(''); }
-              if (e.key === 'Escape') setDraft('');
-            }}
-            placeholder={slot.items.length
-              ? (mine ? 'Add another…' : 'Add another for them…')
-              : (mine ? 'What goes in this block?' : `Add work to ${slot.label}…`)}
-            aria-label={`Add an item to ${slot.label}`}
-            className="w-full rounded-xl border border-transparent bg-slate-50 py-2 pl-8 pr-3 text-sm text-foreground placeholder:text-slate-400 hover:border-slate-200 focus:border-brand-300 focus:bg-card focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:bg-slate-800/60 dark:hover:border-slate-700"
-          />
-        </div>
-        {/*
-            A button, not only the Enter key.
+      {/*
+          Finished work settles to the bottom, folded away.
 
-            Typing and pressing Enter is the fast path and stays the fast path,
-            but a bare text field with a placeholder reads as something that is
-            waiting for a save button somewhere else — which is exactly how this
-            screen was read. The button appears once there is something to add,
-            so the resting state is still one quiet field.
-        */}
-        {draft.trim() && (
+          It has to stay on the day — a block that empties as you work it makes
+          "2 of 3 done" unreachable and the ring never fills. But it has
+          stopped being something to do, so it stops sitting among the things
+          that are. It drops off by itself tomorrow.
+      */}
+      {finished.length > 0 && (
+        <div className="mt-2 px-4">
           <button
             type="button"
-            onClick={() => { onAddItem(draft); setDraft(''); }}
-            disabled={busy}
-            className="inline-flex shrink-0 items-center gap-1 rounded-xl bg-brand-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-700 disabled:opacity-60"
+            onClick={() => setShowDone((v) => !v)}
+            aria-expanded={showDone}
+            className="inline-flex items-center gap-1.5 rounded-lg py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground"
           >
-            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
-            Add
+            <ChevronDown className={`h-3 w-3 transition-transform ${showDone ? '' : '-rotate-90'}`} aria-hidden />
+            Done · {finished.length}
           </button>
+          {showDone && (
+            <ul className="mt-1.5 space-y-1.5 opacity-70">
+              {finished.map((item) => (
+                <ItemRow
+                  key={item.id}
+                  item={item}
+                  busy={itemBusy.has(item.id)}
+                  onToggleDone={onToggleDone}
+                  blocks={blockChoices}
+                  currentSlotId={slot.id}
+                  onMoveTo={(toSlot) => onMoveTo(item.id, toSlot)}
+                  onSetRepeat={(repeat) => onSetRepeat(item, repeat)}
+                  onOpen={onOpen}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/*
+          Always present, never behind a button: adding something is one action.
+
+          The deadline and the repeat appear only once there is a title, so the
+          resting state stays a single quiet field and the fast path — type,
+          Enter — never grows a form in front of it. A mentor setting real work
+          needs both without leaving the block; that was the missing half of
+          "assign a task here".
+      */}
+      <div className="px-4 pb-3.5 pt-2">
+        <div className="flex items-center gap-2">
+          <div className="relative min-w-0 flex-1">
+            <Plus className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" aria-hidden />
+            <input
+              ref={inputRef}
+              value={draft}
+              id={`plan-add-${slot.id}`}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') submitDraft();
+                if (e.key === 'Escape') { setDraft(''); setDue(''); setRepeat(null); }
+              }}
+              placeholder={slot.items.length
+                ? (mine ? 'Add another…' : 'Add another for them…')
+                : (mine ? 'What goes in this block?' : `Set work in ${slot.label}…`)}
+              aria-label={mine ? `Add an item to ${slot.label}` : `Set work in ${slot.label}`}
+              className="w-full rounded-xl border border-transparent bg-slate-50 py-2 pl-8 pr-3 text-sm text-foreground placeholder:text-slate-400 hover:border-slate-200 focus:border-brand-300 focus:bg-card focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:bg-slate-800/60 dark:hover:border-slate-700"
+            />
+          </div>
+          {draft.trim() && (
+            <button
+              type="button"
+              onClick={submitDraft}
+              disabled={busy}
+              className="inline-flex shrink-0 items-center gap-1 rounded-xl bg-brand-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-700 disabled:opacity-60"
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
+              {mine ? 'Add' : 'Assign'}
+            </button>
+          )}
+        </div>
+
+        {draft.trim() && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-1">
+            <label className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-[11px] text-muted-foreground focus-within:border-brand-300 dark:border-slate-700">
+              <CalendarClock className="h-3 w-3" aria-hidden />
+              <span className="sr-only">Due date</span>
+              <input
+                type="date"
+                value={due}
+                onChange={(e) => setDue(e.target.value)}
+                className="bg-transparent text-[11px] text-foreground focus:outline-none"
+              />
+            </label>
+
+            <Dropdown
+              align="start"
+              width="w-48"
+              trigger={({ toggle }) => (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); toggle(); }}
+                  className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] transition-colors ${
+                    repeat
+                      ? 'border-brand-300 bg-brand-50/70 text-brand-700 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300'
+                      : 'border-slate-200 text-muted-foreground hover:border-brand-300 dark:border-slate-700'
+                  }`}
+                >
+                  <Repeat className="h-3 w-3" aria-hidden />
+                  {repeat
+                    ? REPEAT_PRESETS.find((r) => r.rule.freq === repeat.freq
+                      && JSON.stringify(r.rule.days ?? null) === JSON.stringify(repeat.days ?? null))?.label
+                      ?? 'Repeats'
+                    : 'Once'}
+                </button>
+              )}
+            >
+              {(close) => (
+                <div onClick={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    onClick={() => { setRepeat(null); close(); }}
+                    className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-foreground hover:bg-slate-50 dark:hover:bg-slate-800"
+                  >
+                    Just once
+                    {!repeat && <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" aria-hidden />}
+                  </button>
+                  {REPEAT_PRESETS.map((preset) => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => { setRepeat(preset.rule); close(); }}
+                      className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-foreground hover:bg-slate-50 dark:hover:bg-slate-800"
+                    >
+                      {preset.label}
+                      {repeat?.freq === preset.rule.freq
+                        && JSON.stringify(repeat?.days ?? null) === JSON.stringify(preset.rule.days ?? null)
+                        && <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" aria-hidden />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Dropdown>
+
+            {/* Says what will happen, in the voice of whoever is typing. */}
+            <span className="text-[11px] text-muted-foreground">
+              {mine
+                ? (repeat ? 'comes back after you tick it' : 'finishes when you tick it')
+                : (repeat ? 'they submit it each time' : 'they submit it for review')}
+            </span>
+          </div>
         )}
       </div>
     </li>
@@ -653,7 +867,7 @@ const REPEAT_PRESETS: { label: string; rule: Partial<RepeatRule> }[] = [
 /* ── one item ────────────────────────────────────────────────────────────── */
 
 function ItemRow({
-  item, busy, onToggleDone, blocks, currentSlotId, onMoveTo, onSetRepeat,
+  item, busy, onToggleDone, blocks, currentSlotId, onMoveTo, onSetRepeat, onOpen,
   unplanned = false,
 }: {
   item: PlanItem;
@@ -664,6 +878,7 @@ function ItemRow({
   currentSlotId: string | null;
   onMoveTo: (slotId: string | null) => void;
   onSetRepeat: (repeat: Partial<RepeatRule> | null) => void;
+  onOpen: (taskId: string) => void;
   /**
    * This item is not in a block yet, so putting it in one is the entire point
    * of the row — it gets a button with words on it rather than an icon someone
@@ -694,8 +909,22 @@ function ItemRow({
         {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : (done || waiting) && <Check className="h-3 w-3" />}
       </button>
 
+      {/*
+          The title opens the task. Clicking an item did nothing at all before,
+          which made a block look like a list of labels rather than a list of
+          work — the brief, the criteria and the mentor's feedback were all a
+          page away with no way to reach them from here.
+      */}
       <div className="min-w-0 flex-1">
-        <p className={`text-[13.5px] ${done ? 'text-muted-foreground line-through' : 'text-foreground'}`}>{item.title}</p>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onOpen(item.id); }}
+          className={`block w-full truncate text-left text-[13.5px] hover:underline ${
+            done ? 'text-muted-foreground line-through' : 'text-foreground'
+          }`}
+        >
+          {item.title}
+        </button>
         <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
           <span className={`rounded-full border px-1.5 py-px text-[10px] font-medium ${
             item.kind === 'review'
@@ -717,9 +946,25 @@ function ItemRow({
               <Repeat className="h-3 w-3" aria-hidden />{item.repeatLabel}
             </span>
           )}
-          {item.dueDate && !done && (
-            <span className="text-[10px] text-muted-foreground">due {new Date(item.dueDate).toLocaleDateString()}</span>
-          )}
+          {/*
+              A deadline only earns space when it changes what you do about it:
+              today means do it today, past means it is late. A date months out
+              on every row is noise.
+          */}
+          {item.dueDate && !done && (() => {
+            const dayMs = 86400000;
+            const todayKey = new Date().toLocaleDateString('en-CA');
+            const dueKey = new Date(item.dueDate).toLocaleDateString('en-CA');
+            if (dueKey < todayKey) {
+              return <span className="text-[10px] font-medium text-rose-600 dark:text-rose-400">overdue</span>;
+            }
+            if (dueKey === todayKey) {
+              return <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">due today</span>;
+            }
+            const days = Math.round((new Date(`${dueKey}T00:00:00`).getTime() - new Date(`${todayKey}T00:00:00`).getTime()) / dayMs);
+            if (days === 1) return <span className="text-[10px] text-muted-foreground">due tomorrow</span>;
+            return <span className="text-[10px] text-muted-foreground">due {new Date(item.dueDate).toLocaleDateString()}</span>;
+          })()}
         </div>
       </div>
 

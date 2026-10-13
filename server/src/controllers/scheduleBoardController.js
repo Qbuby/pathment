@@ -22,7 +22,12 @@ const getBoard = catchAsync(async (req, res) => {
 const addItem = catchAsync(async (req, res) => {
   const item = await board.addItem(
     targetId(req), req.params.slotId,
-    { title: req.body.title, kind: req.body.kind, dueDate: req.body.dueDate },
+    // `repeat` was accepted by the service and never forwarded here, so an
+    // item set up to repeat was quietly created as a one-off.
+    {
+      title: req.body.title, kind: req.body.kind,
+      dueDate: req.body.dueDate, repeat: req.body.repeat,
+    },
     req.user, clanOf(req),
   );
   res.status(201).json(successResponse('Added to your plan', { item }, 201));

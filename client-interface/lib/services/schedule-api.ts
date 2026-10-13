@@ -67,6 +67,11 @@ export interface PlanItem {
   repeat?: RepeatRule | null;
   /** "Every weekday" — written by the server so both sides read it the same. */
   repeatLabel?: string | null;
+  /**
+   * The day this instance is for ('YYYY-MM-DD'), when it is one of a series.
+   * The board only sends occurrences whose day has arrived.
+   */
+  occurrenceDate?: string | null;
 }
 
 export interface PlanSlot {
