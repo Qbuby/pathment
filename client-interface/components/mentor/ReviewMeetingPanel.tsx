@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { Video, VideoOff, Loader2, Check, Circle, Trophy, RotateCw, Users, Radio } from 'lucide-react';
 import { mentorApi } from '@/lib/services/mentor-api';
@@ -26,7 +27,7 @@ const fmtTalk = (s: number) => (s < 60 ? `${s}s` : `${Math.round(s / 60)}m`);
  * the contribution modal moved to the provider for the same reason: they have to
  * outlive this page.
  */
-export function ReviewMeetingPanel({ sessionId, isDraft, ensureSession, onAttendanceSync, onEnded, readOnly = false }: {
+export function ReviewMeetingPanel({ sessionId, isDraft, ensureSession, onAttendanceSync, onEnded, readOnly = false, buttonSlot }: {
   sessionId: string;
   isDraft?: boolean;
   /** Creates today's session on demand, so "Start meeting" works from a blank page. */
@@ -38,6 +39,16 @@ export function ReviewMeetingPanel({ sessionId, isDraft, ensureSession, onAttend
    *  the page can reload and show the "Finished" state. */
   onEnded?: () => void;
   readOnly?: boolean;
+  /**
+   * Where the Start button goes while there is no call.
+   *
+   * Idle, this panel is one button pretending to be a section: a heading, an
+   * explanation and a lot of horizontal rule, sitting above the mentee the
+   * mentor came here for. Given a slot in the page header it renders the button
+   * there instead and takes no vertical space at all — while keeping every bit
+   * of meeting state, so nothing has to be lifted or duplicated.
+   */
+  buttonSlot?: HTMLElement | null;
 }) {
   // The session id can arrive late (created by Start), so track it locally.
   const [liveSessionId, setLiveSessionId] = useState(sessionId);
@@ -283,24 +294,31 @@ export function ReviewMeetingPanel({ sessionId, isDraft, ensureSession, onAttend
     : 'Mentees get a “Join review” banner when you start.';
 
   if (!live) {
+    const restarting = scored || !!meeting?.endedAt;
+    const startButton = (
+      <button
+        onClick={start}
+        disabled={busy || readOnly}
+        title={readOnly ? 'Completed programs are read-only' : idleHint}
+        className={restarting
+          ? 'inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:border-brand-300 hover:text-brand-700 disabled:opacity-50 sm:px-3 sm:py-2 sm:text-sm'
+          : 'inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-100 disabled:opacity-50 sm:px-3 sm:py-2 sm:text-sm dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300'}
+      >
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin sm:h-4 sm:w-4" /> : <Video className="h-3.5 w-3.5 sm:h-4 sm:w-4" />}
+        {restarting ? 'New call' : meeting?.startedAt ? 'Resume call' : 'Start meeting'}
+      </button>
+    );
+
+    // In the header when the page offers a slot; otherwise the old inline row,
+    // so this component still stands alone anywhere else.
+    if (buttonSlot) return createPortal(startButton, buttonSlot);
     return (
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-slate-200 px-4 py-2.5">
         <span className="inline-flex shrink-0 items-center gap-1.5 text-sm font-medium text-slate-900">
           <Video className="h-4 w-4 text-brand-600" aria-hidden /> Live review
         </span>
         <span className="min-w-0 flex-1 truncate text-xs text-slate-500" title={idleHint}>{idleHint}</span>
-        {(scored || !!meeting?.endedAt) ? (
-          <button onClick={start} disabled={busy || readOnly} title={readOnly ? 'Completed programs are read-only' : undefined}
-            className="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-brand-300 hover:text-brand-700 disabled:opacity-50">
-            {busy ? 'Starting…' : 'Start a new call'}
-          </button>
-        ) : (
-          <button onClick={start} disabled={busy || readOnly} title={readOnly ? 'Completed programs are read-only' : undefined}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
-            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Video className="h-3.5 w-3.5" />}
-            {meeting?.startedAt ? 'Resume meeting' : 'Start meeting'}
-          </button>
-        )}
+        {startButton}
       </div>
     );
   }

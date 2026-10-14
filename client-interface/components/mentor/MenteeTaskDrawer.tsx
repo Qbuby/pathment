@@ -21,6 +21,7 @@ import { Drawer } from "@/components/shared/Drawer";
 import { ResourceLink } from "@/components/shared/ResourceLink";
 import { OpenSourceOrgAvatar } from "@/components/shared/OpenSourceOrgAvatar";
 import { CourseProgressCard } from "@/components/shared/CourseProgressCard";
+import { TaskProgressTimeline } from "@/components/mentor/TaskProgressTimeline";
 
 import { TaskEditDrawer } from "@/components/mentor/TaskEditDrawer";
 import taskApi from "@/lib/services/task-api";
@@ -328,6 +329,11 @@ export function MenteeTaskDrawer({
             {isCourse && (
               <CourseProgressCard taskId={task.id} viewer="mentor" onTaskStatusChange={onChanged} />
             )}
+
+            {/* The mentee's own day-by-day log on this task. Moved here off the
+                clan-review screen, where it was a card duplicating the task
+                list beside it. */}
+            <TaskProgressTimeline taskId={task.id} />
 
             {rt.deliverable && (
               <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2">

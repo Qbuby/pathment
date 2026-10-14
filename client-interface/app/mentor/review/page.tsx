@@ -10,7 +10,7 @@ import { toast } from 'sonner';
 import {
   ChevronLeft, ChevronRight, SkipForward, Check, Loader2,
   TrendingUp, TrendingDown, Minus, Flag, Clock, ClipboardCheck, Keyboard, CheckCircle2, ArrowUpRight, Send, Plus, ListTodo, CalendarClock,
-  Trash2, X, History, RotateCcw, CalendarDays, AlertTriangle, StickyNote, Search, Lock, Unlock, PauseCircle, Sparkles, PenLine, Star, Users,
+  Trash2, X, History, RotateCcw, CalendarDays, AlertTriangle, StickyNote, Search, Lock, Unlock, PauseCircle, Sparkles, Star, Users,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useMentorCohort, useMentorApprovals, type CohortMentee, type CohortMomentum, type CohortRisk, type ApprovalItem } from '@/lib/hooks/mentor';
@@ -715,6 +715,48 @@ export default function CohortReview() {
     );
   };
 
+  /**
+   * Jump to a mentee. Lives in the attendance row now, beside the roster it
+   * searches, instead of owning a full-width row above everything.
+   */
+  const menteeSearch = (
+  <div className="relative max-w-xs">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <input
+            value={jumpQuery}
+            onChange={(e) => setJumpQuery(e.target.value)}
+            placeholder="Search a mentee…"
+            className="w-full pl-9 pr-8 py-2 border border-slate-200 rounded-xl text-sm bg-card focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+          {jumpQuery && (
+            <button onClick={() => setJumpQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
+          )}
+          {jumpMatches.length > 0 && (
+            <div className="absolute z-20 mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-slate-200 bg-card shadow-lg dark:shadow-[0_8px_30px_rgba(0,0,0,0.5)] py-1">
+              {jumpMatches.map(({ m, i }) => (
+                <button
+                  key={m.id}
+                  onClick={() => { selectMentee(i); setJumpQuery(''); }}
+                  className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center justify-between gap-2 ${i === idx ? 'text-brand-700 font-medium' : 'text-slate-700'}`}
+                >
+                  <span className="truncate">{m.name}</span>
+                  {attendance[m.id] && <span className="text-[11px] text-slate-400 capitalize shrink-0">{attendance[m.id]}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+  );
+
+  /**
+   * Where the live-review Start button lands.
+   *
+   * The meeting panel keeps all its own state and portals its idle button into
+   * this node, so the header gets the button without the page getting a
+   * section.
+   */
+  const [meetingSlot, setMeetingSlot] = useState<HTMLElement | null>(null);
+
   // Click a task row → full detail + edit/note/reassign/unassign, in-context.
   const [taskDetail, setTaskDetail] = useState<any>(null); // eslint-disable-line @typescript-eslint/no-explicit-any
   // Per-task inline controls in "Assigned work": change deadline / unassign.
@@ -1071,11 +1113,38 @@ export default function CohortReview() {
           <button onClick={openHistory} className="px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg border border-slate-200 text-slate-700 text-xs sm:text-sm hover:bg-slate-50 inline-flex items-center gap-1" title="Past reviews"><History className="w-3.5 h-3.5 sm:w-4 sm:h-4" /><span className="hidden sm:inline">History</span></button>
           <button onClick={() => setAssigning(true)} disabled={historical} title={historical ? 'Completed programs are read-only' : 'Assign a task (t)'} className="px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg border border-slate-200 text-slate-700 text-xs sm:text-sm hover:bg-slate-50 inline-flex items-center gap-1 disabled:opacity-50"><Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" />Assign task</button>
           <button onClick={() => setShowHelp(true)} className="p-1.5 sm:p-2 rounded-lg text-slate-400 hover:bg-slate-100 hidden sm:inline-flex" title="Shortcuts"><Keyboard className="w-4 h-4" /></button>
+          {/* The live-review button lands here, from the meeting panel. */}
+          <div ref={setMeetingSlot} className="contents" />
           <div className="hidden sm:flex items-center gap-1.5 ml-1">
             <button onClick={() => go(-1)} disabled={idx === 0} className="px-3 py-2 rounded-lg border border-slate-200 text-slate-700 text-sm hover:bg-slate-50 disabled:opacity-40 inline-flex items-center gap-1"><ChevronLeft className="w-4 h-4" />Prev</button>
             <button onClick={skip} className="px-3 py-2 rounded-lg border border-slate-200 text-slate-700 text-sm hover:bg-slate-50 inline-flex items-center gap-1"><SkipForward className="w-4 h-4" />Skip</button>
             <button onClick={() => go(1)} disabled={idx === cohort.length - 1} className="px-3 py-2 rounded-lg bg-brand-600 text-white text-sm hover:bg-brand-700 disabled:opacity-40 inline-flex items-center gap-1">Next<ChevronRight className="w-4 h-4" /></button>
           </div>
+          {/*
+              Finishing is the end of the job this screen exists for, and it was
+              the very last thing on the page — under the tallies, under the
+              notes, below the fold on every laptop. It goes where the other
+              session-level actions already are.
+
+              It turns solid only once everyone has been seen, so it reads as
+              "ready" rather than as the obvious next click from the start.
+          */}
+          <button
+            onClick={finishOrReopen}
+            disabled={historical}
+            title={historical ? HISTORICAL_TITLE : (allSeen ? 'Finish this review' : `${pendingCount} still to review`)}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium sm:px-3 sm:py-2 sm:text-sm disabled:opacity-50 ${
+              session?.status === 'finished'
+                ? 'border border-slate-200 text-slate-700 hover:bg-slate-50'
+                : allSeen
+                  ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                  : 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300'
+            }`}
+          >
+            {session?.status === 'finished'
+              ? (<><RotateCcw className="w-3.5 h-3.5 sm:w-4 sm:h-4" />Reopen</>)
+              : (<><CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />{allSeen ? 'Finish' : `Finish · ${pendingCount} left`}</>)}
+          </button>
         </div>
       </div>
 
@@ -1089,40 +1158,13 @@ export default function CohortReview() {
         </div>
       )}
 
-      {/* Jump to a mentee */}
-      <div className="relative max-w-xs">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-        <input
-          value={jumpQuery}
-          onChange={(e) => setJumpQuery(e.target.value)}
-          placeholder="Search a mentee…"
-          className="w-full pl-9 pr-8 py-2 border border-slate-200 rounded-xl text-sm bg-card focus:outline-none focus:ring-2 focus:ring-brand-500"
-        />
-        {jumpQuery && (
-          <button onClick={() => setJumpQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
-        )}
-        {jumpMatches.length > 0 && (
-          <div className="absolute z-20 mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-slate-200 bg-card shadow-lg dark:shadow-[0_8px_30px_rgba(0,0,0,0.5)] py-1">
-            {jumpMatches.map(({ m, i }) => (
-              <button
-                key={m.id}
-                onClick={() => { selectMentee(i); setJumpQuery(''); }}
-                className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center justify-between gap-2 ${i === idx ? 'text-brand-700 font-medium' : 'text-slate-700'}`}
-              >
-                <span className="truncate">{m.name}</span>
-                {attendance[m.id] && <span className="text-[11px] text-slate-400 capitalize shrink-0">{attendance[m.id]}</span>}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Live video (Jitsi): start the room, auto-attendance, contribution points. */}
+      {/* Live video (Jitsi): start the room, auto-attendance, contribution points.
+          Idle it is a button in the header; live it is the call, here. */}
       {session && (session.id || isDraft) && (
-        <ReviewMeetingPanel sessionId={session.id} isDraft={isDraft} ensureSession={ensureSession} onAttendanceSync={syncMeetingAttendance} onEnded={loadSession} readOnly={historical} />
+        <ReviewMeetingPanel sessionId={session.id} isDraft={isDraft} ensureSession={ensureSession} onAttendanceSync={syncMeetingAttendance} onEnded={loadSession} readOnly={historical} buttonSlot={meetingSlot} />
       )}
 
-      {/* Attendance Strip */}
+      {/* Attendance Strip — now also the home of the mentee search. */}
       <AttendanceSection
         cohort={cohort}
         attendance={attendance}
@@ -1131,6 +1173,7 @@ export default function CohortReview() {
         onSaveAttendance={patchMultipleEntries}
         isSaving={isSavingAttendance}
         readOnly={historical}
+        search={menteeSearch}
       />
 
       {deferred.size > 0 && (
@@ -1272,8 +1315,8 @@ export default function CohortReview() {
                 </button>
               </div>
             )}
-            <div className="mt-4"><DualProgress absolute={mentee!.absoluteProgress} relative={mentee!.relativeProgress} compact /></div>
-            {mentee!.riskReason && <p className="mt-3 text-xs text-slate-500 border-t border-slate-100 pt-3">{mentee!.riskReason}</p>}
+            <div className="mt-3"><DualProgress absolute={mentee!.absoluteProgress} relative={mentee!.relativeProgress} row /></div>
+            {mentee!.riskReason && <p className="mt-2 text-xs text-slate-500">{mentee!.riskReason}</p>}
           </div>
 
           {/* Today's blocks and how far through them they are — the schedule
@@ -1283,33 +1326,14 @@ export default function CohortReview() {
             menteeName={mentee.name}
             clanId={effectiveClanId}
             readOnly={historical}
+            compact
           />
 
-          {/* What they have actually been doing, day by day, on the work that is
-              open right now. The mentor is already here going person by person,
-              so this turns a status into something to ask about. */}
-          {Array.isArray(profile?.taskProgress) && profile.taskProgress.length > 0 && (
-            <div className="bg-card rounded-2xl border border-slate-200 p-4">
-              <h3 className="text-sm font-medium text-slate-900 mb-2.5 flex items-center gap-1.5">
-                <PenLine className="w-4 h-4 text-brand-600" /> Progress on open work
-              </h3>
-              <div className="space-y-2">
-                {profile.taskProgress.map((tp: { taskId: string; title: string; label: string; loggedDays: number; lastNote: string | null }) => (
-                  <div key={tp.taskId} className="rounded-xl border border-slate-200 px-3 py-2">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <p className="text-sm text-slate-800 truncate">{tp.title}</p>
-                      <span className={`shrink-0 text-xs tabular-nums ${tp.loggedDays === 0 ? 'text-amber-600 font-medium' : 'text-slate-500'}`}>
-                        {tp.label}
-                      </span>
-                    </div>
-                    {tp.lastNote && (
-                      <p className="mt-1 text-xs text-slate-500 line-clamp-2">&ldquo;{tp.lastNote}&rdquo;</p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Day-by-day progress used to be a card of its own here, repeating
+              the titles already listed below and pushing the review down the
+              page. It lives in the task drawer now — open the task and the log
+              is on it, which is where a mentor is already looking when they
+              want to ask about it. */}
 
           {/* Work in other clans and the continuation button both used to live
               here as full-width panels. They are on the mentee card now: this
@@ -1543,14 +1567,11 @@ export default function CohortReview() {
                 {deferred.size} deferred — jump to them from the dots above before finishing.
               </div>
             )}
-            <button onClick={finishOrReopen} disabled={historical} title={historical ? HISTORICAL_TITLE : undefined}
-              className={`mt-4 w-full px-3 py-2 rounded-xl text-sm font-medium inline-flex items-center justify-center gap-1.5 disabled:opacity-50 ${session?.status === 'finished' || !allSeen ? 'bg-slate-100 text-slate-700 hover:bg-slate-200' : 'bg-brand-600 text-white hover:bg-brand-700'}`}>
-              {session?.status === 'finished'
-                ? (<><RotateCcw className="w-4 h-4" />Reopen to edit</>)
-                : allSeen ? 'Finish review' : `Finish (${pendingCount} not reviewed)`}
-            </button>
+            {/* Finishing moved to the header, where the other session-level
+                actions are and where it is actually visible. This card keeps
+                the tallies that tell you whether you are ready to. */}
             {session?.status === 'finished' && session?.finishedAt && (
-              <p className="mt-2 text-[11px] text-slate-500 text-center">Finished {new Date(session.finishedAt).toLocaleString()}</p>
+              <p className="mt-3 text-[11px] text-slate-500 text-center">Finished {new Date(session.finishedAt).toLocaleString()}</p>
             )}
           </div>
         </div>
