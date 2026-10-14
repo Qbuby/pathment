@@ -33,46 +33,68 @@ function Bar({ label, value, color }: { label: string; value: number; color: str
   );
 }
 
+/**
+ * A labelled bar with its own number written inside it.
+ *
+ * Inside rather than above, because at half width a separate number row would
+ * cost as much height as the bar it describes. Under about a quarter full
+ * there is no room, so the number steps outside rather than being clipped.
+ */
+function ValueBar({ label, value, fill, hint, delta }: {
+  label: string;
+  value: number;
+  fill: string;
+  hint?: string;
+  /** Shown when the two readings actually differ; silent when they agree. */
+  delta?: number;
+}) {
+  const pct = Math.max(0, Math.min(100, Math.round(value)));
+  const inside = pct >= 26;
+  return (
+    <div title={hint}>
+      <div className="mb-1 flex items-baseline gap-1.5">
+        <span className="truncate text-[11px] text-slate-500">{label}</span>
+        {!!delta && delta > 0 && (
+          <span className="shrink-0 text-[10px] font-medium text-emerald-600">+{Math.round(delta)}</span>
+        )}
+      </div>
+      <div className="relative h-5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+        <div className={`h-full rounded-full ${fill} animate-pm-bar`} style={{ width: `${pct}%` }} />
+        <span
+          className={`absolute inset-y-0 flex items-center text-[11px] font-semibold tabular-nums ${
+            inside ? 'text-white' : 'text-slate-600 dark:text-slate-300'
+          }`}
+          style={inside ? { right: 'auto', left: `calc(${pct}% - 2.25rem)` } : { left: `calc(${pct}% + 0.4rem)` }}
+        >
+          {pct}%
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function DualProgress({ absolute, relative, compact = false, row = false }: DualProgressProps) {
   const gap = Math.round(relative - absolute);
 
   /**
-   * One line instead of two stacked bars.
+   * Both numbers on one line, side by side.
    *
-   * Two labelled bars that usually read the same number cost four rows of a
-   * card the mentor is trying to scan in a second. The adjusted figure is a
-   * footnote to the real one, not its equal, so it sits ON the track as a mark
-   * and is only spelled out when it actually differs.
+   * They are a pair and only mean anything read together: output on its own
+   * says nothing about whether it was a fair week. Stacking them cost four
+   * rows of a card meant to be scanned in a second, and showing only the raw
+   * one hid half the point. Half the width each, value inside the bar, one row.
    */
   if (row) {
-    const abs = Math.max(0, Math.min(100, absolute));
-    const rel = Math.max(0, Math.min(100, relative));
     return (
-      <div>
-        <div className="mb-1 flex items-baseline gap-2">
-          <span className="text-xs text-slate-500">Progress</span>
-          <span className="text-sm font-semibold tabular-nums text-slate-800">{abs}%</span>
-          {gap !== 0 && (
-            <span
-              className={`text-xs tabular-nums ${gap > 0 ? 'text-emerald-600' : 'text-slate-400'}`}
-              title="Adjusted for the constraints they have logged"
-            >
-              {gap > 0 ? `+${gap} adjusted` : `${rel}% adjusted`}
-            </span>
-          )}
-        </div>
-        <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-          <div className="animate-pm-bar h-full rounded-full bg-brand-500" style={{ width: `${abs}%` }} />
-          {/* The adjusted figure as a mark on the same track — visible when it
-              differs, invisible when it agrees, which is the honest default. */}
-          {gap > 0 && (
-            <span
-              aria-hidden
-              className="absolute top-0 h-full w-0.5 bg-emerald-500"
-              style={{ left: `calc(${rel}% - 1px)` }}
-            />
-          )}
-        </div>
+      <div className="grid grid-cols-2 gap-2.5">
+        <ValueBar label="Progress" value={absolute} fill="bg-brand-500" />
+        <ValueBar
+          label="Adjusted"
+          value={relative}
+          fill="bg-emerald-500"
+          hint="Adjusted for the constraints they have logged"
+          delta={gap}
+        />
       </div>
     );
   }

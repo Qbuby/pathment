@@ -7,6 +7,7 @@ import {
   useCallback,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
 interface DrawerProps {
@@ -158,7 +159,18 @@ export function Drawer({
 
   if (!mounted) return null;
 
-  return (
+  /**
+   * Rendered into <body>, not where it is written.
+   *
+   * The panel below carries `will-change: transform`, which makes it a
+   * containing block for `position: fixed` descendants — so a drawer opened
+   * from INSIDE another drawer was sized to its parent's panel rather than the
+   * viewport, and the two overlapped instead of stacking. Portalling every
+   * drawer to the page means nesting works wherever it happens.
+   *
+   * `dark` is set on <html>, so theming is unaffected by the move.
+   */
+  return createPortal(
     <div className={`fixed inset-0 ${zClass} flex justify-end`}>
       <div
         className={`absolute inset-0 bg-black/40 dark:bg-black/70 transition-opacity duration-[250ms] motion-reduce:transition-none ease-out ${shown ? "opacity-100" : "opacity-0"}`}
@@ -199,7 +211,8 @@ export function Drawer({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

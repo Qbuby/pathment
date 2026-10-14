@@ -1197,19 +1197,10 @@ export default function CohortReview() {
         </div>
       )}
 
-      {/* Up next: let the next mentee know it's nearly their turn so they're ready. */}
-      {cohort[idx + 1] && (
-        <div className="rounded-xl border border-slate-200 bg-slate-50 dark:bg-slate-800/40 px-4 py-2.5 flex items-center gap-3 text-sm">
-          <span className="inline-flex items-center gap-1.5 text-slate-500 shrink-0"><ChevronRight className="w-4 h-4" />Up next</span>
-          <span className="font-medium text-slate-900 truncate">{cohort[idx + 1].name}</span>
-          <button onClick={notifyNext} disabled={pinged.has(cohort[idx + 1].id)}
-            className="ml-auto shrink-0 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 text-xs font-medium hover:border-brand-300 inline-flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-default">
-            {pinged.has(cohort[idx + 1].id)
-              ? (<><Check className="w-3.5 h-3.5 text-emerald-600" />Notified</>)
-              : (<><Send className="w-3.5 h-3.5" />Let them know they&apos;re next</>)}
-          </button>
-        </div>
-      )}
+      {/* "Up next" was a full-width bar of its own between the roster and the
+          mentee — a whole row to carry one name. It is in the side rail now,
+          with the other things that are about the session rather than about
+          the person in front of you. */}
 
       <div className="grid lg:grid-cols-3 gap-6">
         {/* Main */}
@@ -1489,6 +1480,45 @@ export default function CohortReview() {
 
         {/* Side rail */}
         <div className="space-y-4">
+          {/*
+              Who follows, and the one action that belongs to them.
+
+              Their face rather than only their name: this screen is a row of
+              faces, so the handover reads faster as the next face than as
+              text. Silent on the last mentee, where there is no "next".
+          */}
+          {cohort[idx + 1] && (
+            <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-card p-3 dark:border-slate-800">
+              <Avatar
+                name={cohort[idx + 1].name}
+                src={cohort[idx + 1].profilePictureUrl}
+                initials={cohort[idx + 1].avatar}
+                size="sm"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Up next</p>
+                <button
+                  type="button"
+                  onClick={() => selectMentee(idx + 1)}
+                  className="block max-w-full truncate text-sm font-medium text-slate-900 hover:text-brand-700 dark:text-slate-100"
+                >
+                  {cohort[idx + 1].name}
+                </button>
+              </div>
+              <button
+                onClick={notifyNext}
+                disabled={pinged.has(cohort[idx + 1].id)}
+                title={pinged.has(cohort[idx + 1].id) ? 'Already told them' : 'Let them know they are next'}
+                aria-label={pinged.has(cohort[idx + 1].id) ? 'Already notified' : 'Let them know they are next'}
+                className="shrink-0 rounded-lg border border-slate-200 p-2 text-slate-500 transition-colors hover:border-brand-300 hover:text-brand-700 disabled:cursor-default disabled:opacity-60 dark:border-slate-700"
+              >
+                {pinged.has(cohort[idx + 1].id)
+                  ? <Check className="h-4 w-4 text-emerald-600" />
+                  : <Send className="h-4 w-4" />}
+              </button>
+            </div>
+          )}
+
           {/* Attendance */}
           <div className="bg-card rounded-2xl border border-slate-200 p-5">
             <div className="flex items-center justify-between mb-3">
