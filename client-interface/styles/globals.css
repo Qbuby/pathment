@@ -586,14 +586,20 @@ input::-webkit-credentials-auto-fill-button {
   height: 0 !important;
 }
 /* Legacy side panels share the same arrival motion as Drawer while they migrate
-   to its focus/exit lifecycle. Centered dialogs retain their own animation. */
+   to its focus/exit lifecycle. Centered dialogs retain their own animation.
+
+   A panel carrying `data-drawer-motion` runs its own slide, from
+   components/shared/drawerMotion.ts. This keyframe must keep off those: both
+   write `transform`, and an animation beats a transition while it runs, so the
+   two together produce a nudge followed by a jump — which is worse than
+   either alone. */
 @keyframes pathment-panel-enter {
   from { transform: translate3d(32px, 0, 0); opacity: 0; }
   to { transform: translate3d(0, 0, 0); opacity: 1; }
 }
 @media (prefers-reduced-motion: no-preference) {
-  [role="dialog"][class*="h-full"]:not([data-shared-drawer]),
-  [class~="fixed"][class~="inset-0"] > [class~="relative"][class~="h-full"]:not([data-shared-drawer]) {
+  [role="dialog"][class*="h-full"]:not([data-drawer-motion]),
+  [class~="fixed"][class~="inset-0"] > [class~="relative"][class~="h-full"]:not([data-drawer-motion]) {
     animation: pathment-panel-enter 240ms cubic-bezier(.22, 1, .36, 1);
   }
 }

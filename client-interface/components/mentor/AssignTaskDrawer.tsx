@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useDrawerMotion, drawerPanelClass, drawerBackdropClass } from '@/components/shared/drawerMotion';
 import { toast } from 'sonner';
 import { X, Loader2, Check, Plus, Trash2, Search, Route, FileText, Eye } from 'lucide-react';
 import { taskApi } from '@/lib/services/task-api';
@@ -82,6 +83,9 @@ export function AssignTaskDrawer({
   // document.body does not exist during the server render.
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
+  // Mounted by the parent, so the exit has to finish before the parent is
+  // told to remove it — otherwise there is nothing left to animate.
+  const { shown, beginExit } = useDrawerMotion(onClose);
 
   // roadmap mode
   const { local: localRoadmaps, loading: roadmapsLoading } = useMentorRoadmaps();
@@ -330,7 +334,7 @@ export function AssignTaskDrawer({
     return () => { active = false; };
   }, [source, roadmapId, mode, mentee?.id]);
 
-  const closeKeepingDraft = useCallback(() => { releaseSeats(); flushDraft(); onClose(); }, [releaseSeats, flushDraft, onClose]);
+  const closeKeepingDraft = useCallback(() => { releaseSeats(); flushDraft(); beginExit(); }, [releaseSeats, flushDraft, beginExit]);
 
   // Focus first field on open.
   useEffect(() => { titleRef.current?.focus(); }, []);
@@ -450,7 +454,7 @@ export function AssignTaskDrawer({
         toast.success(`Roadmap assigned to ${assigned} mentee${assigned > 1 ? 's' : ''}`);
         clearFormDraft(draftKey);
         onAssigned?.();
-        onClose();
+        beginExit();
         return;
       }
 
@@ -511,7 +515,7 @@ export function AssignTaskDrawer({
       }
       onAssigned?.();
       clearFormDraft(draftKey);
-      onClose();
+      beginExit();
     } catch (error: any) {
       toast.error(extractApiErrorMessage(error, 'Could not assign'));
     } finally {
@@ -558,13 +562,14 @@ export function AssignTaskDrawer({
   if (!mounted) return null;
   return createPortal(
       <div className="fixed inset-0 z-[60] flex justify-end" onKeyDown={onKeyDown}>
-        <div className="absolute inset-0 bg-black/40 dark:bg-black/70" onClick={closeKeepingDraft} aria-hidden="true" />
+        <div className={drawerBackdropClass(shown)} onClick={closeKeepingDraft} aria-hidden="true" />
         <div
           ref={drawerRef}
+          data-drawer-motion
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}
-          className="relative w-full max-w-lg h-full bg-card border-l border-slate-200 dark:border-slate-700 shadow-2xl dark:shadow-[-8px_0_30px_rgba(0,0,0,0.6)] flex flex-col"
+          className={`relative w-full max-w-lg h-full bg-card border-l border-slate-200 dark:border-slate-700 shadow-2xl dark:shadow-[-8px_0_30px_rgba(0,0,0,0.6)] flex flex-col ${drawerPanelClass(shown)}`}
         >
           <div className="px-6 py-5 border-b border-slate-200 flex items-center justify-between">
             <div>
