@@ -97,7 +97,8 @@ describe('before the link host exists', () => {
     expect(links.inviteLink('abc')).toBe('https://app.pathment.me/w/devweekends/register?invite=abc');
     expect(links.resetLink('abc')).toBe('https://app.pathment.me/w/devweekends/reset-password?token=abc');
     expect(links.verifyLink('abc')).toBe('https://app.pathment.me/w/devweekends/verify-email?token=abc');
-    expect(links.signInLink('abc')).toBe('https://app.pathment.me/w/devweekends/sign-in?link=abc');
+    // `/login`, because that is the route the web app has. See links.js.
+    expect(links.signInLink('abc')).toBe('https://app.pathment.me/w/devweekends/login?link=abc');
     expect(links.pageLink('/mentor/clan-team')).toBe('https://app.pathment.me/w/devweekends/mentor/clan-team');
   });
 
