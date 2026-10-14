@@ -766,7 +766,30 @@ input::-webkit-credentials-auto-fill-button {
   to { width: 0%; }
 }
 
+/* Confetti on the reward toast: a slow drift and fade, not a party popper.
+   The pieces are placed by hand in the component so they never land on the
+   close button; this only gives them their float. */
+@keyframes pm-confetti {
+  0% { transform: translate3d(0, 6px, 0) scale(0.6); opacity: 0; }
+  35% { opacity: 0.9; }
+  100% { transform: translate3d(0, -10px, 0) scale(1); opacity: 0; }
+}
+
+/* Each day of the streak arrives in turn, left to right, so the run reads as
+   something that was built rather than a row that was always there. */
+@keyframes pm-pip {
+  from { transform: scaleX(0); opacity: 0; }
+  to { transform: scaleX(1); opacity: 1; }
+}
+
 @media (prefers-reduced-motion: no-preference) {
+  .animate-pm-confetti {
+    animation: pm-confetti 2.8s ease-out infinite;
+  }
+  .animate-pm-pip {
+    animation: pm-pip 320ms cubic-bezier(.22, 1, .36, 1) both;
+    transform-origin: left center;
+  }
   .animate-pm-toast-timer {
     animation: pm-toast-timer 6500ms linear forwards;
   }

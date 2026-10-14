@@ -208,30 +208,30 @@ export function PointsEarnedNotifier() {
     : null;
 
   /**
-   * The headline is the streak, not the points.
+   * The streak is the headline, not the points.
    *
-   * A check-in is worth +1 XP every single day, so leading with it says
-   * nothing — the card shouted a number that never changes. "6 days" is the
-   * number that makes tomorrow matter, and it is the only reason a streak
-   * mechanic works at all.
+   * A check-in is +1 XP every single day, so leading with it shouted the one
+   * number that can never change. "12 days" is what makes tomorrow matter, and
+   * it is the whole reason a streak mechanic works.
    */
+  const days = streak ?? 0;
   const headline = dailyLogin
-    ? (streak && streak > 1 ? `${streak} day streak` : "Checked in today")
+    ? (days > 1 ? `${days} day streak` : "Checked in today")
     : formatReason(primaryItem);
   const sub = dailyLogin
-    ? (streak && streak > 1 ? "Keep it going tomorrow" : "Come back tomorrow to start a streak")
-    : "Your level progress moved forward";
+    ? (days > 1 ? "Come back tomorrow to keep it alive" : "Come back tomorrow to start a streak")
+    : "Your level progress just moved forward";
 
   /**
-   * The last seven days, lit as far back as the streak reaches.
+   * The run so far, one pip per day.
    *
-   * Derived from the streak rather than invented: six days means six lit and
-   * one dark, which is exactly what the number already claims. It replaces a
-   * line of motivational filler with the thing that actually creates the
-   * not-breaking-the-chain feeling, and it costs one row.
+   * Capped at fourteen: past that the row becomes a texture rather than a
+   * count, and the number above it already says the total. Derived from the
+   * streak, never invented.
    */
-  const week = dailyLogin && streak !== null
-    ? Array.from({ length: 7 }, (_, i) => i >= 7 - Math.min(streak, 7))
+  const PIPS = 14;
+  const pips = dailyLogin && streak !== null
+    ? Array.from({ length: Math.min(Math.max(days, 7), PIPS) }, (_, i) => i < days)
     : null;
 
   return (
@@ -248,86 +248,120 @@ export function PointsEarnedNotifier() {
         aria-live="polite"
         aria-atomic="true"
         aria-label={`${headline}. You earned ${totalPoints} XP.`}
-        className="pointer-events-auto relative w-full max-w-[340px] overflow-hidden rounded-2xl border border-slate-200 bg-card shadow-[0_12px_32px_-12px_rgba(15,23,42,0.28)] dark:border-slate-700 dark:shadow-[0_12px_32px_-8px_rgba(0,0,0,0.6)] motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 sm:motion-safe:slide-in-from-top-2 sm:motion-safe:duration-300"
+        /**
+         * Dark in both themes, on purpose.
+         *
+         * This is the one moment in the product that is a celebration rather
+         * than a piece of furniture, and a card that matches every other card
+         * cannot say so. A deep brand surface separates it from the page
+         * underneath without needing an outline to do it.
+         */
+        className="pointer-events-auto relative w-full max-w-[400px] overflow-hidden rounded-[1.25rem] bg-linear-to-br from-brand-800 via-brand-900 to-slate-950 text-white shadow-[0_20px_50px_-16px_rgba(6,78,59,0.65)] ring-1 ring-white/10 motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:slide-in-from-bottom-2 sm:motion-safe:slide-in-from-top-2 sm:motion-safe:duration-300"
       >
-        <div className="flex items-center gap-3 p-3.5 pr-10">
-          {/* Fire for a streak, cup for everything else. One mark, no
-              decoration — the old card had three stray dots and a floating
-              sparkle that read as rendering faults. */}
-          <div
-            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${
-              dailyLogin
-                ? "bg-linear-to-br from-amber-400 to-orange-500 text-white"
-                : "bg-linear-to-br from-brand-500 to-brand-700 text-white"
-            }`}
-          >
-            {dailyLogin
-              ? <Flame className="h-5 w-5" aria-hidden="true" />
-              : <Trophy className="h-5 w-5" aria-hidden="true" />}
+        {/* A few pieces of confetti behind the mark. Placed by hand rather than
+            at random so they never collide with the close button, and gone
+            entirely when motion is turned down. */}
+        <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-0 w-32 overflow-hidden">
+          {[
+            { c: "bg-amber-300", s: "h-1.5 w-1.5 rounded-full", t: "top-5 left-6", d: "0ms" },
+            { c: "bg-emerald-300", s: "h-1 w-3 rounded-full rotate-12", t: "top-9 left-20", d: "260ms" },
+            { c: "bg-amber-400", s: "h-1 w-2.5 rounded-full -rotate-12", t: "bottom-7 left-7", d: "520ms" },
+            { c: "bg-white/70", s: "h-1 w-1 rounded-full", t: "bottom-5 left-24", d: "140ms" },
+            { c: "bg-emerald-200", s: "h-1.5 w-1.5 rounded-full", t: "top-4 left-28", d: "400ms" },
+          ].map((bit, i) => (
+            <span
+              key={i}
+              style={{ animationDelay: bit.d }}
+              className={`absolute ${bit.t} ${bit.s} ${bit.c} opacity-80 motion-safe:animate-pm-confetti`}
+            />
+          ))}
+        </div>
+
+        <div className="relative flex items-center gap-4 p-4 pr-10">
+          {/*
+              One mark carrying both facts: what happened, and what it was
+              worth. The XP rides on the flame instead of competing with the
+              streak for the headline.
+          */}
+          <div className="relative shrink-0">
+            <div
+              className={`flex h-14 w-14 items-center justify-center rounded-2xl shadow-lg ${
+                dailyLogin
+                  ? "bg-linear-to-br from-amber-300 to-orange-600 shadow-orange-900/40"
+                  : "bg-linear-to-br from-emerald-300 to-teal-600 shadow-emerald-900/40"
+              }`}
+            >
+              {dailyLogin
+                ? <Flame className="h-7 w-7 text-white drop-shadow" aria-hidden="true" />
+                : <Trophy className="h-7 w-7 text-white drop-shadow" aria-hidden="true" />}
+            </div>
+            <span className="absolute -bottom-1.5 -right-1.5 rounded-full bg-white px-1.5 py-0.5 text-[11px] font-extrabold tabular-nums text-slate-900 shadow-md">
+              +{totalPoints}
+            </span>
           </div>
 
           <div className="min-w-0 flex-1">
-            <div className="flex items-baseline gap-2">
-              <p className="truncate text-[15px] font-semibold text-slate-900 dark:text-white">{headline}</p>
-              {/* The points, demoted to what they are: a footnote. */}
-              <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                +{totalPoints} XP
-              </span>
-            </div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-300/90">
+              {dailyLogin ? "Daily streak" : "Progress unlocked"}
+            </p>
+            <p className="mt-0.5 truncate text-xl font-extrabold tracking-tight">{headline}</p>
 
-            {week ? (
-              <div className="mt-1.5 flex items-center gap-2">
-                <div className="flex gap-1" aria-hidden="true">
-                  {week.map((lit, i) => (
-                    <span
-                      key={i}
-                      className={`h-1.5 w-4 rounded-full ${
-                        lit ? "bg-amber-500" : "bg-slate-200 dark:bg-slate-700"
-                      }`}
-                    />
-                  ))}
-                </div>
-                <span className="truncate text-[11px] text-muted-foreground">{sub}</span>
+            {pips ? (
+              <div className="mt-2 flex items-center gap-1" aria-hidden="true">
+                {pips.map((lit, i) => (
+                  <span
+                    key={i}
+                    style={{ animationDelay: `${i * 45}ms` }}
+                    className={`h-1.5 rounded-full motion-safe:animate-pm-pip ${
+                      lit ? "w-4 bg-amber-400" : "w-2.5 bg-white/20"
+                    }`}
+                  />
+                ))}
+                {days > PIPS && (
+                  <span className="ml-1 text-[11px] font-semibold text-amber-300/90">+{days - PIPS}</span>
+                )}
               </div>
-            ) : (
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">{sub}</p>
-            )}
-          </div>
+            ) : null}
 
-          {rewardsHref && (
-            <Link
-              href={workspacePath(rewardsHref)}
-              onClick={handleDismiss}
-              aria-label="See your progress"
-              className="shrink-0 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-brand-700 dark:hover:bg-slate-800"
-            >
-              <ArrowRight className="h-4 w-4" aria-hidden="true" />
-            </Link>
-          )}
+            <p className="mt-1.5 truncate text-xs text-white/60">{sub}</p>
+          </div>
 
           <button
             type="button"
             onClick={handleDismiss}
-            className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"
+            className="absolute right-2.5 top-2.5 flex h-7 w-7 items-center justify-center rounded-lg text-white/50 transition-colors hover:bg-white/10 hover:text-white"
             aria-label="Dismiss"
           >
-            <X className="h-3.5 w-3.5" />
+            <X className="h-4 w-4" />
           </button>
         </div>
+
+        {rewardsHref && (
+          <div className="relative px-4 pb-4">
+            <Link
+              href={workspacePath(rewardsHref)}
+              onClick={handleDismiss}
+              className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3.5 py-1.5 text-xs font-bold text-white ring-1 ring-white/15 transition-colors hover:bg-white/20"
+            >
+              Keep going
+              <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+            </Link>
+          </div>
+        )}
 
         {/*
             The countdown, drawn.
 
-            It leaves on its own after a few seconds and hovering holds it —
-            both were true before and neither was visible, so the card read as
-            something you had to deal with rather than something passing by.
+            It always left after 6.5s and hovering always held it; neither was
+            visible, so the card read as something to deal with rather than
+            something passing through.
         */}
         <span
           aria-hidden="true"
-          className={`absolute bottom-0 left-0 h-0.5 origin-left ${dailyLogin ? "bg-amber-400" : "bg-brand-500"} ${
+          className={`absolute bottom-0 left-0 h-0.5 origin-left bg-amber-400/80 ${
             paused ? "" : "animate-pm-toast-timer"
           }`}
-          style={paused ? { width: "100%", opacity: 0.35 } : undefined}
+          style={paused ? { width: "100%", opacity: 0.3 } : undefined}
         />
       </aside>
     </div>
