@@ -52,36 +52,60 @@ export function LiveMeetingOverlay({ meetingId, onClose }: { meetingId: string; 
         ) : !info ? (
           <div className="absolute inset-0 flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-white/70" /></div>
         ) : !info.isHost && !cameraPref ? (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-background/80 backdrop-blur-md p-4">
-            <div className="bg-card rounded-3xl shadow-2xl max-w-sm w-full p-8 text-center border border-border animate-in fade-in zoom-in-95 duration-200 relative">
+          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-background/80 backdrop-blur-md p-4 animate-in fade-in duration-150">
+            <div className="bg-card text-card-foreground rounded-2xl shadow-2xl max-w-lg w-full p-6 sm:p-7 border border-border relative animate-in zoom-in-95 duration-150">
+              {/* Close button */}
               <button
                 onClick={onClose}
-                className="absolute top-4 right-4 p-2 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                className="absolute top-5 right-5 p-1 rounded-md text-muted-foreground hover:text-foreground transition-colors"
                 title="Cancel and return"
+                aria-label="Close"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
-              <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mx-auto mb-5 border border-primary/20 shadow-sm mt-2">
-                <Video className="w-8 h-8 text-primary" />
+
+              {/* Eyebrow & Title */}
+              <div className="text-left pr-8">
+                <span className="text-[11px] font-bold tracking-wider text-primary uppercase">
+                  JOIN REVIEW
+                </span>
+                <h2 className="text-xl font-bold text-foreground mt-1 tracking-tight">
+                  How would you like to join?
+                </h2>
+                <p className="text-xs sm:text-sm text-muted-foreground mt-1.5 leading-relaxed">
+                  Live review in <strong className="font-semibold text-foreground">{(info?.title || '').replace(/^(Live\s+)?Review\s*[·-]\s*/i, '').trim() || info?.title || 'the clan review'}</strong>. You can turn your camera on or off anytime during the call.
+                </p>
               </div>
-              <h2 className="text-xl font-bold text-card-foreground mb-2">Ready to join?</h2>
-              <p className="text-sm text-muted-foreground mb-8 px-2">Choose how you'd like to enter the live clan review.</p>
-              <div className="flex flex-col gap-3">
+
+              {/* Two Choice Cards */}
+              <div className="grid grid-cols-2 gap-3.5 my-6">
                 <button
+                  type="button"
                   onClick={() => setCameraPref('on')}
-                  className="flex items-center justify-center gap-2 w-full py-3.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-medium transition-all shadow-md"
+                  className="flex flex-col items-center justify-center py-7 px-4 rounded-xl border border-border/80 bg-background hover:bg-primary/5 hover:border-primary/50 transition-all group focus:outline-none focus-visible:ring-2 focus-visible:ring-primary shadow-xs cursor-pointer"
                 >
-                  <Video className="w-4 h-4" />
-                  Join with Camera On
+                  <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mb-3 group-hover:scale-105 transition-transform">
+                    <Video className="w-5 h-5" />
+                  </div>
+                  <span className="text-sm font-semibold text-foreground">Camera on</span>
                 </button>
+
                 <button
+                  type="button"
                   onClick={() => setCameraPref('off')}
-                  className="flex items-center justify-center gap-2 w-full py-3.5 rounded-xl bg-secondary hover:bg-secondary/80 text-secondary-foreground font-medium transition-colors border border-border"
+                  className="flex flex-col items-center justify-center py-7 px-4 rounded-xl border border-border/80 bg-background hover:bg-muted/40 hover:border-foreground/30 transition-all group focus:outline-none focus-visible:ring-2 focus-visible:ring-ring shadow-xs cursor-pointer"
                 >
-                  <VideoOff className="w-4 h-4" />
-                  Join with Camera Off
+                  <div className="w-12 h-12 rounded-full bg-muted text-muted-foreground flex items-center justify-center mb-3 group-hover:scale-105 transition-transform">
+                    <VideoOff className="w-5 h-5" />
+                  </div>
+                  <span className="text-sm font-semibold text-foreground">Camera off</span>
                 </button>
               </div>
+
+              {/* Footer Reassurance */}
+              <p className="text-[11.5px] text-muted-foreground text-center leading-relaxed px-2">
+                If your browser blocks camera access, you can still join and enable it later from the toolbar.
+              </p>
             </div>
           </div>
         ) : (
