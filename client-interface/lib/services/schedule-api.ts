@@ -102,7 +102,7 @@ export interface PlanBoard {
 
 /** How an item repeats. Null means it does not. */
 export interface RepeatRule {
-  freq: 'daily' | 'weekly' | 'monthly';
+  freq: 'daily' | 'weekly' | 'monthly' | 'yearly';
   interval: number;
   /** 0 = Sunday. Weekly only. */
   days?: number[];

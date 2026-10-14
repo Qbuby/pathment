@@ -135,7 +135,7 @@ export function PlanStripCard({
         title={menteeName ? `${menteeName}’s day` : 'Their day'}
         subtitle="Add work to a block, make a new one, or lock one so it stays put"
       >
-        {open && <DayPlanner menteeId={menteeId} clanId={clanId} onChanged={() => void refetch()} />}
+        {open && <DayPlanner menteeId={menteeId} menteeName={menteeName} clanId={clanId} onChanged={() => void refetch()} />}
       </Drawer>
     </>
   );

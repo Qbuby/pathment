@@ -54,12 +54,24 @@ export function AssignTaskDrawer({
   cohort = [],
   onClose,
   onAssigned,
+  scheduleSlotId,
+  slotLabel,
 }: {
   mode: 'single' | 'bulk';
   mentee?: AssignDrawerMentee;
   cohort?: AssignDrawerMentee[];
   onClose: () => void;
   onAssigned?: () => void;
+  /**
+   * Assign straight into a block on the mentee's day.
+   *
+   * Opened from the planner, the mentor has already said WHEN — so the task is
+   * stamped with the block on creation rather than being assigned and then
+   * dragged, which is two steps and a chance to forget the second.
+   */
+  scheduleSlotId?: string;
+  /** That block's name, so the drawer can say where this is going. */
+  slotLabel?: string;
 }) {
   const { clans, activeClanId } = useClan();
   const historical = isHistoricalCohortClan(
@@ -471,6 +483,7 @@ export function AssignTaskDrawer({
             : { courseId, assignmentId: enrolled[mentee!.id]?.assignmentId } }
           : {}),
         ...(schedule.mode !== 'now' && type !== 'course' ? { schedule: { ...schedule, mode: schedule.mode } } : {}),
+        ...(scheduleSlotId ? { scheduleSlotId } : {}),
       };
       if (mode === 'bulk') {
         const res: any = await taskApi.bulkCreateCustomTasks({ ...base, menteeIds: [...selected] });
@@ -488,7 +501,9 @@ export function AssignTaskDrawer({
         releaseSeats(Object.keys(enrolled).filter((id) => !assignedIds.has(id)));
       } else {
         await taskApi.createCustomTask({ ...base, menteeId: mentee!.id, trackId: trackId || undefined });
-        toast.success(`Task assigned to ${mentee?.name || 'the mentee'}`);
+        toast.success(slotLabel
+          ? `Assigned into ${slotLabel}`
+          : `Task assigned to ${mentee?.name || 'the mentee'}`);
       }
       onAssigned?.();
       clearFormDraft(draftKey);

@@ -592,7 +592,7 @@ describe('the day planner', () => {
     it('refuses a frequency it cannot honour', async () => {
       const item = await board.addItem(mentee.id, OPEN, { title: 'Hourly?' }, mentee, clan.id);
       await expect(board.setItemRepeat(item.id, { freq: 'hourly' }, mentee))
-        .rejects.toThrow(/daily, weekly or monthly/i);
+        .rejects.toThrow(/daily, weekly, monthly or yearly/i);
     });
 
     it('does not let a stranger set a repeat on somebody else’s item', async () => {

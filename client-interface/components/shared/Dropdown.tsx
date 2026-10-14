@@ -12,6 +12,12 @@ interface DropdownProps {
   width?: string;
   /** Extra classes on the panel — e.g. `max-h-72 overflow-y-auto` for long lists. */
   menuClassName?: string;
+  /**
+   * Fired when the menu shuts, however it shut — a pick, Escape, or a click
+   * outside. A menu with more than one view needs it to go back to the first
+   * one, so reopening does not land you where you last were.
+   */
+  onClosed?: () => void;
 }
 
 /**
@@ -21,9 +27,19 @@ interface DropdownProps {
  * For long lists pass `menuClassName="max-h-72 overflow-y-auto"` so it scrolls
  * instead of running off-screen. For a searchable single-select, use SelectMenu.
  */
-export function Dropdown({ trigger, children, align = 'start', width = 'w-56', menuClassName = '' }: DropdownProps) {
+export function Dropdown({ trigger, children, align = 'start', width = 'w-56', menuClassName = '', onClosed }: DropdownProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+
+  const onClosedRef = useRef(onClosed);
+  useEffect(() => { onClosedRef.current = onClosed; });
+  const wasOpen = useRef(false);
+  // Read through a ref so a caller passing an inline function cannot make this
+  // fire on every render.
+  useEffect(() => {
+    if (wasOpen.current && !open) onClosedRef.current?.();
+    wasOpen.current = open;
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;

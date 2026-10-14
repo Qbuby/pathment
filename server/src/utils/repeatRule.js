@@ -19,11 +19,12 @@
  *   { freq: 'daily',   interval: 1 }
  *   { freq: 'weekly',  interval: 1, days: [1,3] }   // Mon + Wed, 0 = Sunday
  *   { freq: 'monthly', interval: 1 }                // same day-of-month
+ *   { freq: 'yearly',  interval: 1 }                // same day + month
  *
  * `until` ('YYYY-MM-DD' or null) ends the series after that date.
  */
 
-const FREQS = ['daily', 'weekly', 'monthly'];
+const FREQS = ['daily', 'weekly', 'monthly', 'yearly'];
 const DAY_MS = 86400000;
 
 /** 'YYYY-MM-DD' → UTC ms at midnight. Day keys only; no zone arithmetic. */
@@ -44,7 +45,7 @@ function normalizeRepeat(input) {
   if (!input || input.freq === 'never' || input.freq === null) return null;
   const freq = String(input.freq || '').toLowerCase();
   if (!FREQS.includes(freq)) {
-    throw new Error('Repeat must be daily, weekly or monthly');
+    throw new Error('Repeat must be daily, weekly, monthly or yearly');
   }
 
   const interval = Number.isInteger(Number(input.interval)) && Number(input.interval) >= 1
@@ -97,11 +98,12 @@ function nextOccurrence(rule, fromKey) {
       next = candidate + (wrapped ? (rule.interval - 1) * 7 * DAY_MS : 0);
       break;
     }
-  } else if (rule.freq === 'monthly') {
+  } else if (rule.freq === 'monthly' || rule.freq === 'yearly') {
     const d = new Date(from);
-    const target = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + rule.interval, d.getUTCDate()));
-    // 31 Jan + 1 month overflows into March; pin it to the last day of the
-    // month the user actually meant.
+    const months = rule.interval * (rule.freq === 'yearly' ? 12 : 1);
+    const target = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + months, d.getUTCDate()));
+    // 31 Jan + 1 month overflows into March, and 29 Feb + 1 year into 1 March;
+    // pin either to the last day of the month the user actually meant.
     if (target.getUTCDate() !== d.getUTCDate()) target.setUTCDate(0);
     next = target.getTime();
   }
@@ -119,6 +121,7 @@ function describeRepeat(rule) {
   const every = rule.interval > 1 ? `Every ${rule.interval} ` : 'Every ';
   if (rule.freq === 'daily') return rule.interval > 1 ? `${every}days` : 'Every day';
   if (rule.freq === 'monthly') return rule.interval > 1 ? `${every}months` : 'Every month';
+  if (rule.freq === 'yearly') return rule.interval > 1 ? `${every}years` : 'Every year';
   if (!rule.days || !rule.days.length) return rule.interval > 1 ? `${every}weeks` : 'Every week';
   const isWeekdays = rule.days.length === 5 && rule.days.every((d) => d >= 1 && d <= 5);
   if (isWeekdays && rule.interval === 1) return 'Every weekday';

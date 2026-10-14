@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   CalendarClock, Check, ChevronDown, EyeOff, LayoutTemplate, Loader2, Lock, MoreHorizontal,
-  Plus, Repeat, Route, Trash2, Unlock,
+  Plus, Repeat, Route, Settings2, Trash2, Unlock,
 } from 'lucide-react';
 
 import {
@@ -17,6 +17,7 @@ import { Dropdown } from '@/components/shared/Dropdown';
 import { TaskDrawer } from '@/components/mentee/TaskDrawer';
 import { SubmitTaskDrawer, type SubmitTaskTarget } from '@/components/mentee/SubmitTaskDrawer';
 import { TaskDrawerById } from '@/components/mentor/TaskDrawerById';
+import { AssignTaskDrawer } from '@/components/mentor/AssignTaskDrawer';
 import { taskApi } from '@/lib/services/task-api';
 
 /**
@@ -40,11 +41,14 @@ import { taskApi } from '@/lib/services/task-api';
  */
 export function DayPlanner({
   menteeId = 'me',
+  menteeName,
   clanId = null,
   onChanged,
 }: {
   /** 'me' for a mentee's own day; a real id when a mentor is planning with them. */
   menteeId?: string;
+  /** Only needed on the mentor's side, for the assign drawer. */
+  menteeName?: string;
   clanId?: string | null;
   onChanged?: () => void;
 }) {
@@ -67,6 +71,16 @@ export function DayPlanner({
    */
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const [submitTarget, setSubmitTarget] = useState<SubmitTaskTarget | null>(null);
+  /**
+   * The block a mentor is assigning a full task into.
+   *
+   * Typing a title in a block makes a one-line custom task, which is right for
+   * "read chapter 3" and useless for real work — no brief, no criteria, no
+   * points, no type. The proper assign drawer is the same one used everywhere
+   * else; opening it from a block just means the task is stamped with that
+   * block as it is created, instead of being assigned and then dragged.
+   */
+  const [assignInto, setAssignInto] = useState<{ id: string; label: string } | null>(null);
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -332,6 +346,7 @@ export function DayPlanner({
             onMoveTo={moveItem}
             onSetRepeat={setRepeat}
             onOpen={setOpenTaskId}
+            onAssignInto={() => setAssignInto({ id: slot.id, label: slot.label })}
             itemBusy={busy}
           />
         ))}
@@ -515,6 +530,17 @@ export function DayPlanner({
           onChanged={() => { void load(true); onChanged?.(); }}
         />
       ) : null}
+
+      {assignInto && (
+        <AssignTaskDrawer
+          mode="single"
+          mentee={{ id: menteeId, name: menteeName || 'this mentee' }}
+          scheduleSlotId={assignInto.id}
+          slotLabel={assignInto.label}
+          onClose={() => setAssignInto(null)}
+          onAssigned={() => { setAssignInto(null); void load(true); onChanged?.(); }}
+        />
+      )}
     </div>
   );
 }
@@ -524,7 +550,7 @@ export function DayPlanner({
 function SlotCard({
   slot, busy, isDropTarget, onDropTarget, onDropItem,
   onToggleDone, onAddItem, onRetime, onRemove, onHide, itemBusy, mine, blockChoices, onMoveTo,
-  onSetRepeat, onOpen,
+  onSetRepeat, onOpen, onAssignInto,
 }: {
   slot: PlanSlot;
   busy: boolean;
@@ -543,6 +569,7 @@ function SlotCard({
   onMoveTo: (taskId: string, slotId: string | null) => void;
   onSetRepeat: (item: PlanItem, repeat: Partial<RepeatRule> | null) => void;
   onOpen: (taskId: string) => void;
+  onAssignInto: () => void;
 }) {
   const [draft, setDraft] = useState('');
   const [editing, setEditing] = useState(false);
@@ -625,6 +652,18 @@ function SlotCard({
 
         <div className="flex shrink-0 items-center gap-1">
           {busy && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden />}
+          {/* The same Assign task button as everywhere else — it just already
+              knows which block the work is going into. */}
+          {!mine && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onAssignInto(); }}
+              title={`Assign a task into ${slot.label}`}
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-medium text-slate-600 hover:border-brand-300 hover:text-brand-700 dark:border-slate-700 dark:text-slate-300"
+            >
+              <Plus className="h-3 w-3" aria-hidden />Assign task
+            </button>
+          )}
           {slot.rights.canLock && (
             <button
               type="button"
@@ -776,66 +815,8 @@ function SlotCard({
 
         {draft.trim() && (
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-1">
-            <label className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-[11px] text-muted-foreground focus-within:border-brand-300 dark:border-slate-700">
-              <CalendarClock className="h-3 w-3" aria-hidden />
-              <span className="sr-only">Due date</span>
-              <input
-                type="date"
-                value={due}
-                onChange={(e) => setDue(e.target.value)}
-                className="bg-transparent text-[11px] text-foreground focus:outline-none"
-              />
-            </label>
-
-            <Dropdown
-              align="start"
-              width="w-48"
-              trigger={({ toggle }) => (
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); toggle(); }}
-                  className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] transition-colors ${
-                    repeat
-                      ? 'border-brand-300 bg-brand-50/70 text-brand-700 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300'
-                      : 'border-slate-200 text-muted-foreground hover:border-brand-300 dark:border-slate-700'
-                  }`}
-                >
-                  <Repeat className="h-3 w-3" aria-hidden />
-                  {repeat
-                    ? REPEAT_PRESETS.find((r) => r.rule.freq === repeat.freq
-                      && JSON.stringify(r.rule.days ?? null) === JSON.stringify(repeat.days ?? null))?.label
-                      ?? 'Repeats'
-                    : 'Once'}
-                </button>
-              )}
-            >
-              {(close) => (
-                <div onClick={(e) => e.stopPropagation()}>
-                  <button
-                    type="button"
-                    onClick={() => { setRepeat(null); close(); }}
-                    className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-foreground hover:bg-slate-50 dark:hover:bg-slate-800"
-                  >
-                    Just once
-                    {!repeat && <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" aria-hidden />}
-                  </button>
-                  {REPEAT_PRESETS.map((preset) => (
-                    <button
-                      key={preset.label}
-                      type="button"
-                      onClick={() => { setRepeat(preset.rule); close(); }}
-                      className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-foreground hover:bg-slate-50 dark:hover:bg-slate-800"
-                    >
-                      {preset.label}
-                      {repeat?.freq === preset.rule.freq
-                        && JSON.stringify(repeat?.days ?? null) === JSON.stringify(preset.rule.days ?? null)
-                        && <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" aria-hidden />}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </Dropdown>
-
+            <DueMenu value={due} onChange={setDue} />
+            <RepeatMenu value={repeat} onChange={setRepeat} />
             {/* Says what will happen, in the voice of whoever is typing. */}
             <span className="text-[11px] text-muted-foreground">
               {mine
@@ -858,11 +839,262 @@ function SlotCard({
  * that is already stored.
  */
 const REPEAT_PRESETS: { label: string; rule: Partial<RepeatRule> }[] = [
-  { label: 'Every day', rule: { freq: 'daily' } },
-  { label: 'Every weekday', rule: { freq: 'weekly', days: [1, 2, 3, 4, 5] } },
-  { label: 'Every week', rule: { freq: 'weekly' } },
-  { label: 'Every month', rule: { freq: 'monthly' } },
+  { label: 'Daily', rule: { freq: 'daily' } },
+  { label: 'Weekdays', rule: { freq: 'weekly', days: [1, 2, 3, 4, 5] } },
+  { label: 'Weekly', rule: { freq: 'weekly' } },
+  { label: 'Monthly', rule: { freq: 'monthly' } },
+  { label: 'Yearly', rule: { freq: 'yearly' } },
 ];
+
+/** Does this rule match a preset exactly? Used to tick the right row. */
+const presetOf = (rule?: Partial<RepeatRule> | null) => {
+  if (!rule) return null;
+  return REPEAT_PRESETS.find((p) => p.rule.freq === rule.freq
+    && JSON.stringify(p.rule.days ?? null) === JSON.stringify(rule.days ?? null)
+    && (rule.interval ?? 1) === 1) ?? null;
+};
+
+/** 'YYYY-MM-DD' in the viewer's own zone — never an ISO instant, which is a day off west of UTC. */
+const dayKey = (d: Date) => d.toLocaleDateString('en-CA');
+const addDays = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return d; };
+/** The coming Monday, which is what "next week" means on a planner. */
+const nextMonday = () => {
+  const d = new Date();
+  d.setDate(d.getDate() + ((8 - d.getDay()) % 7 || 7));
+  return d;
+};
+const shortDay = (d: Date) => d.toLocaleDateString(undefined, { weekday: 'short' });
+
+/**
+ * When something is due, named the way a person says it.
+ *
+ * A bare date input asks you to know today's date and then type it. These
+ * three cover almost every deadline anyone sets on a planner, and "Pick a date"
+ * is still there for the rest.
+ */
+function DueMenu({ value, onChange }: { value: string; onChange: (key: string) => void }) {
+  const today = dayKey(new Date());
+  const tomorrow = dayKey(addDays(1));
+  const monday = dayKey(nextMonday());
+  const label = !value ? 'Due'
+    : value === today ? 'Today'
+      : value === tomorrow ? 'Tomorrow'
+        : new Date(`${value}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+
+  const choices = [
+    { key: today, label: 'Today', hint: shortDay(new Date()) },
+    { key: tomorrow, label: 'Tomorrow', hint: shortDay(addDays(1)) },
+    { key: monday, label: 'Next week', hint: shortDay(nextMonday()) },
+  ];
+
+  return (
+    <Dropdown
+      align="start"
+      width="w-56"
+      trigger={({ toggle }) => (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); toggle(); }}
+          className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] transition-colors ${
+            value
+              ? 'border-brand-300 bg-brand-50/70 text-brand-700 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300'
+              : 'border-slate-200 text-muted-foreground hover:border-brand-300 dark:border-slate-700'
+          }`}
+        >
+          <CalendarClock className="h-3 w-3" aria-hidden />{label}
+        </button>
+      )}
+    >
+      {(close) => (
+        <div onClick={(e) => e.stopPropagation()}>
+          <p className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Due</p>
+          {choices.map((c) => (
+            <button
+              key={c.label}
+              type="button"
+              onClick={() => { onChange(c.key); close(); }}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-slate-50 dark:hover:bg-slate-800"
+            >
+              <CalendarClock className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
+              <span className="min-w-0 flex-1">{c.label}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">{c.hint}</span>
+              {value === c.key && <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" aria-hidden />}
+            </button>
+          ))}
+          <label className="mt-1 flex w-full cursor-pointer items-center gap-2 border-t border-slate-100 px-3 py-1.5 text-sm text-foreground hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800">
+            <CalendarClock className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
+            Pick a date
+            <input
+              type="date"
+              value={value}
+              onChange={(e) => { onChange(e.target.value); if (e.target.value) close(); }}
+              className="ml-auto w-28 bg-transparent text-xs text-muted-foreground focus:outline-none"
+            />
+          </label>
+          {value && (
+            <button
+              type="button"
+              onClick={() => { onChange(''); close(); }}
+              className="w-full px-3 py-1.5 pb-2 text-left text-sm text-muted-foreground hover:bg-slate-50 dark:hover:bg-slate-800"
+            >
+              No deadline
+            </button>
+          )}
+        </div>
+      )}
+    </Dropdown>
+  );
+}
+
+/**
+ * How often it comes back. The five everyone names, plus Custom for the rest.
+ *
+ * Custom is "every N days / weeks / months", and for weeks, which days — which
+ * is the whole of the stored rule, so nothing here can express something the
+ * server would refuse.
+ */
+function RepeatMenu({ value, onChange, compact = false }: {
+  value: Partial<RepeatRule> | null;
+  onChange: (rule: Partial<RepeatRule> | null) => void;
+  compact?: boolean;
+}) {
+  const [custom, setCustom] = useState(false);
+  const [freq, setFreq] = useState<'daily' | 'weekly' | 'monthly' | 'yearly'>(value?.freq ?? 'weekly');
+  const [interval, setIntervalValue] = useState(String(value?.interval ?? 1));
+  const [days, setDays] = useState<number[]>(value?.days ?? []);
+
+  const preset = presetOf(value);
+  const label = !value ? 'Once' : (preset?.label ?? 'Custom');
+
+  return (
+    <Dropdown
+      align="start"
+      width="w-60"
+      onClosed={() => {
+        // Back to the list, seeded from whatever the rule is NOW — so reopening
+        // never shows the half-finished custom rule from last time.
+        setCustom(false);
+        setFreq(value?.freq ?? 'weekly');
+        setIntervalValue(String(value?.interval ?? 1));
+        setDays(value?.days ?? []);
+      }}
+      trigger={({ toggle }) => (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); toggle(); }}
+          title={value ? 'Change how this repeats' : 'Make this repeat'}
+          className={compact
+            ? `mt-0.5 shrink-0 rounded p-0.5 transition-colors ${value ? 'text-brand-500' : 'text-slate-400 hover:text-brand-600'}`
+            : `inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] transition-colors ${
+              value
+                ? 'border-brand-300 bg-brand-50/70 text-brand-700 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300'
+                : 'border-slate-200 text-muted-foreground hover:border-brand-300 dark:border-slate-700'
+            }`}
+        >
+          <Repeat className="h-3 w-3" aria-hidden />{!compact && label}
+        </button>
+      )}
+    >
+      {(close) => (
+        <div onClick={(e) => e.stopPropagation()}>
+          {custom ? (
+            <div className="p-3">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Repeats every</p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  max={52}
+                  value={interval}
+                  onChange={(e) => setIntervalValue(e.target.value)}
+                  className="w-16 rounded-lg border border-slate-200 px-2 py-1 text-sm focus:border-brand-300 focus:outline-none dark:border-slate-700 dark:bg-slate-900"
+                />
+                <select
+                  value={freq}
+                  onChange={(e) => setFreq(e.target.value as typeof freq)}
+                  className="flex-1 rounded-lg border border-slate-200 px-2 py-1 text-sm focus:border-brand-300 focus:outline-none dark:border-slate-700 dark:bg-slate-900"
+                >
+                  <option value="daily">days</option>
+                  <option value="weekly">weeks</option>
+                  <option value="monthly">months</option>
+                  <option value="yearly">years</option>
+                </select>
+              </div>
+              {freq === 'weekly' && (
+                <div className="mt-2.5 flex flex-wrap gap-1">
+                  {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => setDays((p) => (p.includes(i) ? p.filter((x) => x !== i) : [...p, i].sort()))}
+                      className={`h-7 w-7 rounded-full text-xs font-medium transition-colors ${
+                        days.includes(i)
+                          ? 'bg-brand-600 text-white'
+                          : 'border border-slate-200 text-slate-600 hover:border-brand-300 dark:border-slate-700 dark:text-slate-300'
+                      }`}
+                    >
+                      {d}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const n = Math.min(52, Math.max(1, Number(interval) || 1));
+                    onChange({ freq, interval: n, ...(freq === 'weekly' && days.length ? { days } : {}) });
+                    close();
+                  }}
+                  className="rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-brand-700"
+                >
+                  Save
+                </button>
+                <button type="button" onClick={() => setCustom(false)} className="text-xs text-muted-foreground hover:text-foreground">
+                  Back
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Repeat</p>
+              {REPEAT_PRESETS.map((p) => (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => { onChange(p.rule); close(); }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-slate-50 dark:hover:bg-slate-800"
+                >
+                  <Repeat className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
+                  <span className="min-w-0 flex-1">{p.label}</span>
+                  {preset?.label === p.label && <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" aria-hidden />}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setCustom(true)}
+                className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-1.5 text-left text-sm text-foreground hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800"
+              >
+                <Settings2 className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
+                <span className="min-w-0 flex-1">Custom</span>
+                {value && !preset && <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" aria-hidden />}
+              </button>
+              {value && (
+                <button
+                  type="button"
+                  onClick={() => { onChange(null); close(); }}
+                  className="w-full px-3 py-1.5 pb-2 text-left text-sm text-muted-foreground hover:bg-slate-50 dark:hover:bg-slate-800"
+                >
+                  Doesn&rsquo;t repeat
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </Dropdown>
+  );
+}
 
 /* ── one item ────────────────────────────────────────────────────────────── */
 
@@ -1034,32 +1266,14 @@ function ItemRow({
               </button>
             )}
 
-            <p className="border-t border-slate-100 px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground dark:border-slate-800">Repeat</p>
-            {REPEAT_PRESETS.map((preset) => (
-              <button
-                key={preset.label}
-                type="button"
-                onClick={() => { onSetRepeat(preset.rule); close(); }}
-                className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-slate-50 dark:hover:bg-slate-800"
-              >
-                {preset.label}
-                {item.repeat?.freq === preset.rule?.freq
-                  && JSON.stringify(item.repeat?.days ?? null) === JSON.stringify(preset.rule?.days ?? null)
-                  && <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" aria-hidden />}
-              </button>
-            ))}
-            {item.repeat && (
-              <button
-                type="button"
-                onClick={() => { onSetRepeat(null); close(); }}
-                className="w-full px-3 py-1.5 pb-2 text-left text-sm text-muted-foreground hover:bg-slate-50 dark:hover:bg-slate-800"
-              >
-                Doesn&rsquo;t repeat
-              </button>
-            )}
           </div>
         )}
       </Dropdown>
+
+      {/* Repeat is its own control, because it is the one property of a row you
+          can see from across the list — the icon is lit when it repeats. It
+          opens the same menu the composer uses, Custom included. */}
+      <RepeatMenu value={item.repeat ?? null} onChange={onSetRepeat} compact />
     </li>
   );
 }

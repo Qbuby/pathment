@@ -21,7 +21,7 @@ describe('reading a repeat rule', () => {
   });
 
   it('refuses a frequency it cannot honour', () => {
-    expect(() => normalizeRepeat({ freq: 'hourly' })).toThrow(/daily, weekly or monthly/i);
+    expect(() => normalizeRepeat({ freq: 'hourly' })).toThrow(/daily, weekly, monthly or yearly/i);
   });
 
   it('defaults the interval and keeps weekdays sorted and unique', () => {
@@ -86,6 +86,16 @@ describe('finding the next occurrence', () => {
     expect(nextOccurrence({ freq: 'monthly', interval: 1 }, '2026-10-13')).toBe('2026-11-13');
   });
 
+  it('moves a yearly repeat to the same day next year', () => {
+    expect(nextOccurrence({ freq: 'yearly', interval: 1 }, '2026-10-14')).toBe('2027-10-14');
+    expect(nextOccurrence({ freq: 'yearly', interval: 2 }, '2026-10-14')).toBe('2028-10-14');
+  });
+
+  /** 29 Feb + 1 year is not 1 March, for the same reason 31 Jan + 1 month isn't. */
+  it('pins a yearly repeat off a leap day to the 28th', () => {
+    expect(nextOccurrence({ freq: 'yearly', interval: 1 }, '2028-02-29')).toBe('2029-02-28');
+  });
+
   it('stops the series once it is past its end date', () => {
     const rule = { freq: 'daily', interval: 1, until: '2026-10-14' };
     expect(nextOccurrence(rule, '2026-10-13')).toBe('2026-10-14');
@@ -103,6 +113,8 @@ describe('describing a repeat', () => {
     expect(describeRepeat({ freq: 'weekly', interval: 1, days: [1, 2, 3, 4, 5] })).toBe('Every weekday');
     expect(describeRepeat({ freq: 'weekly', interval: 1, days: [1, 4] })).toBe('Every Mon, Thu');
     expect(describeRepeat({ freq: 'monthly', interval: 1 })).toBe('Every month');
+    expect(describeRepeat({ freq: 'yearly', interval: 1 })).toBe('Every year');
+    expect(describeRepeat({ freq: 'yearly', interval: 3 })).toBe('Every 3 years');
     expect(describeRepeat({ freq: 'daily', interval: 2 })).toBe('Every 2 days');
     expect(describeRepeat(null)).toBeNull();
   });
