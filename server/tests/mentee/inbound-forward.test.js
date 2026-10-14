@@ -13,13 +13,16 @@ const emailService = require('../../src/services/emailService');
 describe('forwarding inbound mail', () => {
   const ORIGINAL = { ...process.env };
   let enqueued;
-  // emailService exports a class INSTANCE, so its methods live on the
-  // prototype and are not own properties of the object jest is handed.
-  const emailProto = Object.getPrototypeOf(emailService);
 
+  /**
+   * `tests/setup.js` replaces emailService with a plain object carrying only
+   * the send* helpers, so `enqueue` — the one entry point all mail actually
+   * goes through — is missing there and cannot be spied on. Supplied here
+   * rather than widened globally, which would change every other suite.
+   */
   beforeEach(() => {
     enqueued = [];
-    jest.spyOn(emailProto, 'enqueue').mockImplementation(async (payload) => {
+    emailService.enqueue = jest.fn(async (payload) => {
       enqueued.push(payload);
       return { id: 'queued' };
     });
@@ -38,6 +41,7 @@ describe('forwarding inbound mail', () => {
   });
 
   afterEach(() => {
+    delete emailService.enqueue;
     jest.restoreAllMocks();
     process.env = { ...ORIGINAL };
   });
@@ -111,7 +115,7 @@ describe('forwarding inbound mail', () => {
   });
 
   it('never throws when the queue refuses', async () => {
-    emailProto.enqueue.mockRejectedValueOnce(new Error('queue down'));
+    emailService.enqueue.mockRejectedValueOnce(new Error('queue down'));
     expect(await inbound.forward(message())).toEqual({ forwarded: false, reason: 'enqueue_failed' });
   });
 });
