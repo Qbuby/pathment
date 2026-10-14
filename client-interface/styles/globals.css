@@ -637,3 +637,156 @@ input::-webkit-credentials-auto-fill-button {
     display: inline-block;
   }
 }
+
+/* ── Snake border ──────────────────────────────────────────────────────────
+   A light runs around the edge of an element to say "this is the live one".
+
+   Built as a masked conic-gradient rather than an SVG stroke so it inherits
+   the element's own border-radius and costs one compositor-driven property.
+   The head is bright and the tail fades, which is what makes it read as a
+   thing travelling rather than a ring that happens to be spinning.
+
+   Registering the angle is what lets it interpolate at all: a plain custom
+   property is a string to the animator and would jump rather than travel.
+   Where @property is unsupported the gradient simply sits still, which still
+   looks deliberate. */
+@property --pm-snake-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.pm-snake {
+  position: relative;
+  isolation: isolate;
+}
+.pm-snake::before {
+  content: "";
+  position: absolute;
+  inset: -1.5px;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--pm-snake-angle),
+    transparent 0turn,
+    transparent 0.55turn,
+    var(--pm-snake-tail) 0.78turn,
+    var(--pm-snake-head) 0.95turn,
+    transparent 1turn
+  );
+  /* Keep the ring, drop the middle: the element's own background shows through. */
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* A second, blurred copy of the same light: the glow it throws onto the card.
+
+   The gradient is written out again rather than inherited, because `inherit`
+   on a pseudo-element takes the ELEMENT's background, which here is the
+   button's own fill, and would blur that into a smudge instead.
+
+   Off in light mode, where a bloom on a pale surface reads as a smear rather
+   than as something lit. */
+.pm-snake::after {
+  content: "";
+  position: absolute;
+  inset: -1.5px;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--pm-snake-angle),
+    transparent 0turn,
+    transparent 0.55turn,
+    var(--pm-snake-tail) 0.78turn,
+    var(--pm-snake-head) 0.95turn,
+    transparent 1turn
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: 0;
+  pointer-events: none;
+  z-index: -2;
+}
+
+:root {
+  --pm-snake-head: var(--brand-500);
+  --pm-snake-tail: color-mix(in oklab, var(--brand-400) 45%, transparent);
+}
+/* Brighter head and a longer tail against a dark surface, where a mid-tone
+   brand colour disappears into the card. */
+.dark {
+  --pm-snake-head: var(--brand-300);
+  --pm-snake-tail: color-mix(in oklab, var(--brand-400) 60%, transparent);
+}
+
+@keyframes pm-snake-run {
+  to { --pm-snake-angle: 360deg; }
+}
+
+/* Pulse for a thing that has just become available — the review you can now
+   finish. Deliberately slow and shallow: an insistent button is a nag. */
+@keyframes pm-ready-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--brand-500) 38%, transparent); }
+  50% { box-shadow: 0 0 0 5px color-mix(in oklab, var(--brand-500) 0%, transparent); }
+}
+
+/* Bars grow to their value on arrival, so a number you are reading has a
+   direction as well as a size. */
+@keyframes pm-bar-fill {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .pm-snake::before {
+    animation: pm-snake-run 3.2s linear infinite;
+  }
+  .dark .pm-snake::after {
+    opacity: 0.55;
+    filter: blur(7px);
+    animation: pm-snake-run 3.2s linear infinite;
+  }
+  /* Leans in when you reach for it. */
+  .pm-snake:hover::before,
+  .dark .pm-snake:hover::after {
+    animation-duration: 1.4s;
+  }
+  .animate-pm-ready {
+    animation: pm-ready-pulse 2.6s ease-in-out infinite;
+  }
+  .animate-pm-bar {
+    animation: pm-bar-fill 620ms cubic-bezier(.22, 1, .36, 1) both;
+    transform-origin: left center;
+  }
+}
+
+/* On a round chip in a row of round chips the line needs a little more
+   presence than it does on the edge of a button. */
+.pm-snake-ring::before,
+.pm-snake-ring::after {
+  inset: -2.5px;
+  padding: 2.5px;
+}
+
+/* Without motion the snake would be a frozen arc on one side, which looks like
+   a rendering fault. A plain brand ring says the same thing, still. */
+@media (prefers-reduced-motion: reduce) {
+  .pm-snake::before {
+    background: var(--pm-snake-head);
+    opacity: 0.55;
+  }
+}

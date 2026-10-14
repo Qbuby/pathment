@@ -1137,7 +1137,9 @@ export default function CohortReview() {
               session?.status === 'finished'
                 ? 'border border-slate-200 text-slate-700 hover:bg-slate-50'
                 : allSeen
-                  ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                  // Everyone has been seen: the one thing left to do, and it
+                  // breathes once it becomes true rather than from the start.
+                  ? 'animate-pm-ready bg-emerald-600 text-white hover:bg-emerald-700'
                   : 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300'
             }`}
           >

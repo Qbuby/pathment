@@ -70,10 +70,12 @@ export function MenteeAttendanceCard({ mentee, attendance, isActive, onClick }: 
       className="group/card flex flex-col items-center gap-2 shrink-0 w-[84px] snap-start outline-none"
     >
       <div className="relative">
-        {/* Status ring — a coloured halo around the avatar. */}
+        {/* Status ring — a coloured halo around the avatar. The person being
+            reviewed right now carries the running light, so "where am I" is
+            answerable from the rail without reading a single name. */}
         <div
           className={`rounded-full p-[3px] transition-transform duration-200 group-hover/card:-translate-y-0.5 ${ring} ${
-            isActive ? 'ring-2 ring-brand-500 ring-offset-2 ring-offset-card' : ''
+            isActive ? 'pm-snake pm-snake-ring scale-105' : ''
           }`}
         >
           <div className="rounded-full bg-card p-[2px]">

@@ -300,9 +300,16 @@ export function ReviewMeetingPanel({ sessionId, isDraft, ensureSession, onAttend
         onClick={start}
         disabled={busy || readOnly}
         title={readOnly ? 'Completed programs are read-only' : idleHint}
+        /**
+         * The snake runs only on the button that starts something.
+         *
+         * "New call" after a finished meeting is a quiet, second-thought
+         * action and gets no light; the one that opens the room everyone is
+         * waiting to join is the live thing on this screen, and looks it.
+         */
         className={restarting
           ? 'inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:border-brand-300 hover:text-brand-700 disabled:opacity-50 sm:px-3 sm:py-2 sm:text-sm'
-          : 'inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-100 disabled:opacity-50 sm:px-3 sm:py-2 sm:text-sm dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300'}
+          : 'pm-snake inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-xs font-semibold text-brand-700 transition-transform hover:-translate-y-px hover:bg-brand-100 disabled:opacity-50 sm:px-3 sm:py-2 sm:text-sm dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300'}
       >
         {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin sm:h-4 sm:w-4" /> : <Video className="h-3.5 w-3.5 sm:h-4 sm:w-4" />}
         {restarting ? 'New call' : meeting?.startedAt ? 'Resume call' : 'Start meeting'}

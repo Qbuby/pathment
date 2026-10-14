@@ -149,7 +149,16 @@ class EmailService {
 
   async _deliverViaResend(row, toList) {
     const payload = { from: this.from, to: toList, subject: row.subject, text: row.bodyText, html: row.bodyHtml };
-    if (this.replyTo) payload.replyTo = this.replyTo;
+    /**
+     * Per-message Reply-To wins over the account default.
+     *
+     * Forwarded inbound mail needs it: a message from a stranger that arrives
+     * in your inbox must answer back to THEM when you hit reply, not to
+     * support@ — which is us, and would be a loop.
+     */
+    const replyToOverride = row.metadata && row.metadata.replyTo;
+    if (replyToOverride) payload.replyTo = replyToOverride;
+    else if (this.replyTo) payload.replyTo = this.replyTo;
     // One-click unsubscribe (RFC 8058). Gmail/Yahoo require this on bulk mail and
     // reward it with inbox placement. Only set for non-transactional mail, which
     // passes a `listUnsubscribe` URL in metadata.

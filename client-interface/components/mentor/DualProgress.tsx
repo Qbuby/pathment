@@ -62,7 +62,7 @@ export function DualProgress({ absolute, relative, compact = false, row = false 
           )}
         </div>
         <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-          <div className="h-full rounded-full bg-brand-500" style={{ width: `${abs}%` }} />
+          <div className="animate-pm-bar h-full rounded-full bg-brand-500" style={{ width: `${abs}%` }} />
           {/* The adjusted figure as a mark on the same track — visible when it
               differs, invisible when it agrees, which is the honest default. */}
           {gap > 0 && (
