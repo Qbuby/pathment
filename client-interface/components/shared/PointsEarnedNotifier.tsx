@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { X, Sparkles, ArrowRight, Flame, Trophy } from "lucide-react";
+import { X, ArrowRight, Flame, Trophy } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/context/AuthContext";
@@ -90,6 +90,16 @@ export function PointsEarnedNotifier() {
   const [items, setItems] = useState<PointsHistoryEntry[]>([]);
   const [itemsOwnerId, setItemsOwnerId] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
+  /**
+   * How many days in a row, for a check-in toast.
+   *
+   * The toast used to lead with "+1 XP", which is not a number anybody can
+   * care about — it is the same every day and it buys nothing on its own. The
+   * streak is the number that makes someone come back tomorrow, and it was the
+   * one thing the card did not show. Null until it arrives, so the toast can
+   * open immediately and fill in.
+   */
+  const [streak, setStreak] = useState<number | null>(null);
   const [dismissedOwnerId, setDismissedOwnerId] = useState<string | null>(null);
 
   const blocked = !hasWorkspace || isOnboardingPath(pathname, rawPath);
@@ -144,6 +154,13 @@ export function PointsEarnedNotifier() {
         if (toastItems.length) {
           setItems(toastItems);
           setItemsOwnerId(userId);
+          if (toastItems[0].sourceType === 'daily_login') {
+            // Secondary and optional: a missing streak costs the headline, not
+            // the toast.
+            gamificationApi.getUserStats(userId)
+              .then((stats) => { if (!cancelled) setStreak(Number(stats?.currentStreak) || 0); })
+              .catch(() => { /* headline falls back to the check-in itself */ });
+          }
         }
       } catch {
         // A toast is optional; points history remains available on the page.
@@ -189,10 +206,33 @@ export function PointsEarnedNotifier() {
   const rewardsHref = pathname.startsWith("/mentee")
     ? "/mentee/gamification"
     : null;
-  const title = dailyLogin ? "You showed up today" : formatReason(primaryItem);
-  const supportingCopy = dailyLogin
-    ? "Small steps build strong streaks. Come back tomorrow to keep yours moving."
-    : "Nice work — your level progress just moved forward.";
+
+  /**
+   * The headline is the streak, not the points.
+   *
+   * A check-in is worth +1 XP every single day, so leading with it says
+   * nothing — the card shouted a number that never changes. "6 days" is the
+   * number that makes tomorrow matter, and it is the only reason a streak
+   * mechanic works at all.
+   */
+  const headline = dailyLogin
+    ? (streak && streak > 1 ? `${streak} day streak` : "Checked in today")
+    : formatReason(primaryItem);
+  const sub = dailyLogin
+    ? (streak && streak > 1 ? "Keep it going tomorrow" : "Come back tomorrow to start a streak")
+    : "Your level progress moved forward";
+
+  /**
+   * The last seven days, lit as far back as the streak reaches.
+   *
+   * Derived from the streak rather than invented: six days means six lit and
+   * one dark, which is exactly what the number already claims. It replaces a
+   * line of motivational filler with the thing that actually creates the
+   * not-breaking-the-chain feeling, and it costs one row.
+   */
+  const week = dailyLogin && streak !== null
+    ? Array.from({ length: 7 }, (_, i) => i >= 7 - Math.min(streak, 7))
+    : null;
 
   return (
     <div className="pointer-events-none fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+0.75rem)] z-[80] flex justify-center sm:inset-auto sm:right-6 sm:top-6 sm:block">
@@ -207,71 +247,88 @@ export function PointsEarnedNotifier() {
         role="status"
         aria-live="polite"
         aria-atomic="true"
-        aria-label={`You earned ${totalPoints} XP. ${title}`}
-        className="pointer-events-auto relative w-full max-w-[390px] overflow-hidden rounded-[1.4rem] border border-white/70 bg-white/95 text-slate-950 shadow-[0_20px_55px_-18px_rgba(15,118,110,0.45),0_8px_24px_-12px_rgba(15,23,42,0.25)] backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/95 dark:text-white motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-3 sm:motion-safe:slide-in-from-top-3 sm:motion-safe:duration-300"
+        aria-label={`${headline}. You earned ${totalPoints} XP.`}
+        className="pointer-events-auto relative w-full max-w-[340px] overflow-hidden rounded-2xl border border-slate-200 bg-card shadow-[0_12px_32px_-12px_rgba(15,23,42,0.28)] dark:border-slate-700 dark:shadow-[0_12px_32px_-8px_rgba(0,0,0,0.6)] motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 sm:motion-safe:slide-in-from-top-2 sm:motion-safe:duration-300"
       >
-        <div
-          aria-hidden="true"
-          className={[
-            "absolute inset-x-0 top-0 h-24 opacity-90",
-            dailyLogin
-              ? "bg-linear-to-br from-amber-100 via-orange-50 to-transparent dark:from-amber-500/20 dark:via-orange-500/10"
-              : "bg-linear-to-br from-emerald-100 via-teal-50 to-transparent dark:from-emerald-500/20 dark:via-teal-500/10",
-          ].join(" ")}
-        />
-        <span aria-hidden="true" className="absolute right-14 top-5 h-2 w-2 rounded-full bg-amber-300/80" />
-        <span aria-hidden="true" className="absolute right-8 top-14 h-1.5 w-1.5 rounded-full bg-teal-400/70" />
-        <Sparkles aria-hidden="true" className="absolute right-20 top-10 h-4 w-4 rotate-12 text-amber-400/80" />
-
-        <div className="relative flex items-start gap-3.5 p-4.5 pr-12 sm:p-5 sm:pr-12">
+        <div className="flex items-center gap-3 p-3.5 pr-10">
+          {/* Fire for a streak, cup for everything else. One mark, no
+              decoration — the old card had three stray dots and a floating
+              sparkle that read as rendering faults. */}
           <div
-            className={[
-              "relative flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border shadow-sm",
+            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${
               dailyLogin
-                ? "border-amber-200 bg-linear-to-br from-amber-300 to-orange-500 text-white shadow-orange-200/70 dark:border-amber-400/30 dark:shadow-none"
-                : "border-emerald-200 bg-linear-to-br from-emerald-500 to-teal-700 text-white shadow-emerald-200/70 dark:border-emerald-400/30 dark:shadow-none",
-            ].join(" ")}
+                ? "bg-linear-to-br from-amber-400 to-orange-500 text-white"
+                : "bg-linear-to-br from-brand-500 to-brand-700 text-white"
+            }`}
           >
-            <span aria-hidden="true" className="absolute inset-1 rounded-xl border border-white/30" />
-            {dailyLogin ? (
-              <Flame className="relative h-7 w-7 fill-white/20" aria-hidden="true" />
-            ) : (
-              <Trophy className="relative h-7 w-7" aria-hidden="true" />
-            )}
+            {dailyLogin
+              ? <Flame className="h-5 w-5" aria-hidden="true" />
+              : <Trophy className="h-5 w-5" aria-hidden="true" />}
           </div>
 
           <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300">
-              {dailyLogin ? "Daily streak" : "Progress unlocked"}
-            </p>
-            <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-              <p className="text-2xl font-black tracking-tight text-slate-950 dark:text-white">
+            <div className="flex items-baseline gap-2">
+              <p className="truncate text-[15px] font-semibold text-slate-900 dark:text-white">{headline}</p>
+              {/* The points, demoted to what they are: a footnote. */}
+              <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                 +{totalPoints} XP
-              </p>
-              <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">{title}</p>
+              </span>
             </div>
-            <p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">{supportingCopy}</p>
-            {rewardsHref && (
-              <Link
-                href={workspacePath(rewardsHref)}
-                onClick={handleDismiss}
-                className="mt-3 inline-flex min-h-8 items-center gap-1.5 rounded-full bg-slate-950 px-3 text-xs font-bold text-white transition-colors hover:bg-emerald-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:bg-white dark:text-slate-950 dark:hover:bg-emerald-200"
-              >
-                See your progress
-                <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-              </Link>
+
+            {week ? (
+              <div className="mt-1.5 flex items-center gap-2">
+                <div className="flex gap-1" aria-hidden="true">
+                  {week.map((lit, i) => (
+                    <span
+                      key={i}
+                      className={`h-1.5 w-4 rounded-full ${
+                        lit ? "bg-amber-500" : "bg-slate-200 dark:bg-slate-700"
+                      }`}
+                    />
+                  ))}
+                </div>
+                <span className="truncate text-[11px] text-muted-foreground">{sub}</span>
+              </div>
+            ) : (
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">{sub}</p>
             )}
           </div>
+
+          {rewardsHref && (
+            <Link
+              href={workspacePath(rewardsHref)}
+              onClick={handleDismiss}
+              aria-label="See your progress"
+              className="shrink-0 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-brand-700 dark:hover:bg-slate-800"
+            >
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+          )}
 
           <button
             type="button"
             onClick={handleDismiss}
-            className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-black/5 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-emerald-600 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-white"
-            aria-label="Dismiss reward notification"
+            className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"
+            aria-label="Dismiss"
           >
-            <X className="h-4 w-4" />
+            <X className="h-3.5 w-3.5" />
           </button>
         </div>
+
+        {/*
+            The countdown, drawn.
+
+            It leaves on its own after a few seconds and hovering holds it —
+            both were true before and neither was visible, so the card read as
+            something you had to deal with rather than something passing by.
+        */}
+        <span
+          aria-hidden="true"
+          className={`absolute bottom-0 left-0 h-0.5 origin-left ${dailyLogin ? "bg-amber-400" : "bg-brand-500"} ${
+            paused ? "" : "animate-pm-toast-timer"
+          }`}
+          style={paused ? { width: "100%", opacity: 0.35 } : undefined}
+        />
       </aside>
     </div>
   );

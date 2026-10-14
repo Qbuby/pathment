@@ -757,7 +757,19 @@ input::-webkit-credentials-auto-fill-button {
   to { transform: scaleX(1); }
 }
 
+/* A toast's own countdown, drawn along its bottom edge. The timer and the
+   hover-to-pause both already existed and neither was visible, so the card
+   read as something to deal with rather than something passing through. Kept
+   in step with the 6500ms dismiss in PointsEarnedNotifier. */
+@keyframes pm-toast-timer {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+
 @media (prefers-reduced-motion: no-preference) {
+  .animate-pm-toast-timer {
+    animation: pm-toast-timer 6500ms linear forwards;
+  }
   .pm-snake::before {
     animation: pm-snake-run 3.2s linear infinite;
   }
@@ -794,5 +806,11 @@ input::-webkit-credentials-auto-fill-button {
   .pm-snake::before {
     background: var(--pm-snake-head);
     opacity: 0.55;
+  }
+  /* The countdown cannot count down, but the accent line is part of the card
+     rather than only a timer, so it stays — full width and quiet. */
+  .animate-pm-toast-timer {
+    width: 100%;
+    opacity: 0.35;
   }
 }
