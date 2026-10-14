@@ -70,7 +70,11 @@ class NotificationOrchestrator {
         model: models.UserSettings,
         as: 'settings',
         required: false,
-        attributes: ['emailNotifications', 'quietHours']
+        // pushNotifications was missing, and the push gate below reads it. A
+        // column that is not selected is undefined, which the preference helper
+        // treats as "no preference recorded" and allows, so every per-event push
+        // switch a person turned off in the app went on buzzing their phone.
+        attributes: ['emailNotifications', 'pushNotifications', 'quietHours']
       }]
     });
 
@@ -234,6 +238,62 @@ class NotificationOrchestrator {
     }
 
     return { delivered, skipped };
+  }
+
+  /**
+   * The phone, without the bell.
+   *
+   * For an event that already writes its own Notification row and emits its own
+   * socket event, and needs nothing from this class except the question "may we
+   * buzz this person right now". A direct message is the one that matters: it
+   * has always written its row inside the send transaction, so routing it
+   * through `dispatch` would either duplicate the row or mean rewriting the
+   * send path, and the thing that was actually missing was the push.
+   *
+   * Same gate as `dispatch`: the per event push preference, the master push
+   * switch, and quiet hours, which are respected for push and deliberately not
+   * for email, because a buzz at 3am wakes somebody and an email does not.
+   *
+   * Never awaited by a caller and never throws. A phone that could not be
+   * reached must not fail the thing that triggered it.
+   */
+  async pushOnly({ eventKey, recipients, payload }) {
+    const matrix = NOTIFICATION_MATRIX[eventKey];
+    const ids = [...new Set((recipients || []).map((r) => r.userId).filter(Boolean))];
+    if (!matrix || ids.length === 0) return { sent: 0 };
+
+    const users = await models.User.findAll({
+      where: { id: ids, status: 'active' },
+      attributes: ['id'],
+      include: [{
+        model: models.UserSettings,
+        as: 'settings',
+        required: false,
+        attributes: ['pushNotifications', 'quietHours']
+      }]
+    });
+
+    const allowed = users
+      .filter((user) => shouldCreateNotification(user.settings || null, matrix.preferenceKey, {
+        checkEmail: false,
+        checkPush: true,
+        respectQuietHours: true
+      }).should_create)
+      .map((user) => user.id);
+
+    if (allowed.length === 0) return { sent: 0 };
+
+    return pushService.send(allowed, {
+      title: payload.title,
+      body: payload.message,
+      data: {
+        actionUrl: payload.actionUrl || null,
+        type: matrix.type,
+        relatedEntityType: payload.relatedEntityType || null,
+        relatedEntityId: payload.relatedEntityId || null,
+        ...(payload.data || {})
+      }
+    });
   }
 
   async shouldSkipByDedupe(userId, type, dedupe, payload = null) {

@@ -609,8 +609,56 @@ class MessagingService {
     return messages.reverse();
   }
 
+  /**
+   * The buzz on the recipient's phone.
+   *
+   * Messages have always written their own Notification row inside the send
+   * transaction, which lit the bell and the socket, and nothing ever sent a
+   * push. So the one notification people actually tap, somebody answering them,
+   * was the only one a phone never rang for.
+   *
+   * After the commit, never awaited and never thrown from: a message is sent
+   * whether or not a phone was reachable. The title is who it is from and the
+   * body is what they said, which is what a person needs to decide whether to
+   * open it from the lock screen.
+   */
+  pushNewMessage(result) {
+    try {
+      const sender = result?.message?.sender;
+      const name = [sender?.firstName, sender?.lastName].filter(Boolean).join(' ').trim();
+      const text = String(result?.message?.messageText || '').trim();
+      if (!result?.recipientIds?.length) return;
+
+      const notificationOrchestrator = require('./notificationOrchestrator');
+      const { NOTIFICATION_EVENTS } = require('../config/notificationMatrix');
+
+      notificationOrchestrator
+        .pushOnly({
+          eventKey: NOTIFICATION_EVENTS.CHAT_MESSAGE_NEW,
+          recipients: result.recipientIds.map((userId) => ({ userId })),
+          payload: {
+            title: name || 'Pathment',
+            // Trimmed to roughly what a lock screen shows anyway. A whole essay
+            // in a push payload is bytes nobody reads.
+            message: text.length > 160 ? `${text.slice(0, 160)}…` : text,
+            // The same path the bell row carries, so a tap from the phone and a
+            // tap from the list land on the same conversation.
+            actionUrl: result.notifications?.[0]?.actionUrl || null,
+            relatedEntityType: 'message',
+            relatedEntityId: result.message?.id || null,
+            // Lets the app recognise the thread, so a push for the conversation
+            // somebody is already reading does not interrupt them with it.
+            data: { conversationId: result.conversationId || null }
+          }
+        })
+        .catch((error) => logger.error('[Push] new message failed', { error: error.message }));
+    } catch (error) {
+      logger.error('[Push] new message failed', { error: error.message });
+    }
+  }
+
   async sendMessage(senderId, payload) {
-    return sequelize.transaction(async (transaction) => {
+    const result = await sequelize.transaction(async (transaction) => {
       const { conversationId, messageText, subject, parentMessageId, relatedTaskId, relatedEnrollmentId } = payload;
 
       // Lock only the conversation row (no joins - FOR UPDATE cannot be applied to nullable side of outer join in PG)
@@ -787,6 +835,13 @@ class MessagingService {
         notifications: createdNotifications
       };
     });
+
+    // After the commit, so a phone is never told about a message that rolled
+    // back, and outside it, so a slow push cannot hold a database transaction
+    // open.
+    this.pushNewMessage(result);
+
+    return result;
   }
 
   async markConversationRead(userId, conversationId) {
