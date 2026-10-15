@@ -156,7 +156,7 @@ export const qk = {
     spaces: ['community', 'spaces'] as const,
     feed: (params: Record<string, unknown>) => ['community', 'feed', params] as const,
     people: (type: string, id: string) => ['community', 'people', type, id] as const,
-    members: (type: string, id: string) => ['community', 'members', type, id] as const,
+    members: (type: string, id: string, page = '') => ['community', 'members', type, id, page] as const,
     leaderboard: (type: string, id: string, period: string) =>
       ['community', 'leaderboard', type, id, period] as const,
   },

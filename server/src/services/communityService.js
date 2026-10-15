@@ -1,5 +1,5 @@
 const { Op } = require('sequelize');
-const { models } = require('../db');
+const { models, sequelize } = require('../db');
 const { ValidationError, AuthorizationError, NotFoundError, ClanFrozenError } = require('../utils/errors/errorTypes');
 const spaceService = require('./communitySpaceService');
 const gamificationService = require('./gamificationService');
@@ -147,24 +147,72 @@ class CommunityService {
     return spaceService.listSpaces(user);
   }
 
-  async getMembers(user, scopeType, scopeId) {
+  /**
+   * The people in a space — a page of them.
+   *
+   * This used to load every member of the scope in one go and hand the lot to
+   * the browser. In a programme space that is the whole fellowship: a
+   * thousand-odd user rows, each with a photo, rendered as one endless column
+   * nobody could get to the bottom of. The membership itself is derived, so
+   * the id list still has to be computed; what changed is that only the page
+   * being looked at is loaded, named and sent.
+   *
+   * `q` filters by name in the database rather than in the browser, which is
+   * the only way a search can find somebody who is not on the current page.
+   */
+  async getMembers(user, scopeType, scopeId, { limit = 50, offset = 0, q = null } = {}) {
     await this._requireAccess(user, scopeType, scopeId);
+    const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100);
+    const safeOffset = Math.max(parseInt(offset, 10) || 0, 0);
+
     const ids = await spaceService.getMemberIds(scopeType, scopeId);
-    if (!ids.length) return [];
-    const [users, memberships] = await Promise.all([
-      models.User.findAll({ where: { id: { [Op.in]: ids } }, attributes: ['id', 'firstName', 'lastName', 'role', 'profilePictureUrl'] }),
+    const empty = { members: [], pagination: { limit: safeLimit, offset: safeOffset, totalItems: 0, hasMore: false } };
+    if (!ids.length) return empty;
+
+    const where = { id: { [Op.in]: ids } };
+    const term = typeof q === 'string' ? q.trim() : '';
+    if (term) {
+      const like = `%${term}%`;
+      where[Op.or] = [
+        { firstName: { [Op.iLike]: like } },
+        { lastName: { [Op.iLike]: like } },
+        // So "ada lovelace" matches, not just one half of it.
+        sequelize.where(
+          sequelize.fn('concat', sequelize.col('first_name'), ' ', sequelize.col('last_name')),
+          { [Op.iLike]: like },
+        ),
+      ];
+    }
+
+    const [{ rows: users, count: totalItems }, memberships] = await Promise.all([
+      models.User.findAndCountAll({
+        where,
+        attributes: ['id', 'firstName', 'lastName', 'role', 'profilePictureUrl'],
+        order: [['first_name', 'ASC'], ['last_name', 'ASC']],
+        limit: safeLimit,
+        offset: safeOffset,
+      }),
       scopeType === 'clan'
         ? models.ClanMembership.findAll({ where: { clanId: scopeId, status: 'active' }, attributes: ['userId', 'role'] })
         : Promise.resolve([])
     ]);
+
     const clanRole = new Map(memberships.map((m) => [m.userId, m.role]));
-    return users.map((u) => ({
-      id: u.id,
-      name: fullName(u),
-      avatar: initials(u),
-      avatarUrl: photo(u),
-      role: clanRole.get(u.id) || u.role
-    }));
+    return {
+      members: users.map((u) => ({
+        id: u.id,
+        name: fullName(u),
+        avatar: initials(u),
+        avatarUrl: photo(u),
+        role: clanRole.get(u.id) || u.role
+      })),
+      pagination: {
+        limit: safeLimit,
+        offset: safeOffset,
+        totalItems,
+        hasMore: safeOffset + users.length < totalItems,
+      },
+    };
   }
 
   async getPeople(user, scopeType, scopeId) {

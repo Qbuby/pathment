@@ -11,6 +11,25 @@ const isAdmin = (user) => {
 const MENTOR_CLAN_ROLES = ['lead_mentor', 'co_mentor', 'core_team'];
 
 /**
+ * Is this space closed to new posts?
+ *
+ * It used to be: yes, as soon as the clan froze or the cohort completed. That
+ * tied the conversation to the work lifecycle, and the two are not the same
+ * thing. Freezing a clan protects the RECORD OF WORK — tasks, submissions,
+ * attendance — so a finished programme cannot be edited after the fact. A
+ * cohort finishing is not a reason for the people in it to stop talking to
+ * each other; it is usually when they have the most to say.
+ *
+ * So nothing closes a space today. This stays as one named place to change if
+ * an explicit, admin-controlled archive is ever wanted — which is a different
+ * feature from "the programme ended", and would be a deliberate act rather
+ * than a side effect of one.
+ */
+function isSpaceArchived() {
+  return false;
+}
+
+/**
  * Community spaces are not a table - they are *derived* from the relationships
  * a user already has (ClanMembership, Enrollment). A space is one of:
  *   - clan     → a single clan's working space (members = active ClanMembership)
@@ -82,10 +101,9 @@ class CommunitySpaceService {
         subtitle: m.clan.program?.name || 'Clan',
         role: m.role,
         isModerator: moderator,
-        // Completed cohort spaces remain browseable, but all community writes
-        // must agree with the rest of the frozen clan workspace. Standing clans
-        // linked to that program remain writable.
-        readOnly: m.clan.kind !== 'standing' && Boolean(m.clan.frozenAt),
+        readOnly: isSpaceArchived(),
+        /** The work is closed even though the conversation is not — the UI says so. */
+        workClosed: m.clan.kind !== 'standing' && Boolean(m.clan.frozenAt),
       });
       if (m.clan.programId && m.clan.kind !== 'standing') {
         programNames.set(m.clan.programId, m.clan.program?.name || 'Program');
@@ -104,7 +122,8 @@ class CommunitySpaceService {
           subtitle: e.program?.name ? `${e.program.name} · batch` : 'Cohort',
           role: 'member',
           isModerator: isAdmin(user),
-          readOnly: e.cohort.status === 'completed',
+          readOnly: isSpaceArchived(),
+          workClosed: e.cohort.status === 'completed',
         });
       }
       if (e.program) {
@@ -148,7 +167,8 @@ class CommunitySpaceService {
           subtitle: `${programNames.get(c.programId) || 'Program'} · batch`,
           role: 'mentor',
           isModerator: true,
-          readOnly: c.status === 'completed',
+          readOnly: isSpaceArchived(),
+          workClosed: c.status === 'completed',
         });
       }
     }
@@ -185,7 +205,8 @@ class CommunitySpaceService {
         name: space.name,
         isModerator: true,
         role: 'admin',
-        readOnly:
+        readOnly: isSpaceArchived(),
+        workClosed:
           (scopeType === 'clan' && space.kind !== 'standing' && Boolean(space.frozenAt)) ||
           (scopeType === 'cohort' && space.status === 'completed'),
       };

@@ -49,8 +49,14 @@ export const REPORT_DETAILS_MAX = 1000;
 export const communityApi = {
   // spaces & people
   spaces: () => apiClient.get('/community/spaces'),
-  members: (scopeType: ScopeType, scopeId?: string | null) =>
-    apiClient.get('/community/members', { params: params({ scopeType, scopeId }) }),
+  members: (
+    scopeType: ScopeType,
+    scopeId?: string | null,
+    opts: { limit?: number; offset?: number; q?: string | null } = {},
+  ) =>
+    apiClient.get('/community/members', {
+      params: params({ scopeType, scopeId, limit: opts.limit, offset: opts.offset, q: opts.q }),
+    }),
   people: (scopeType: ScopeType, scopeId?: string | null) =>
     apiClient.get('/community/people', { params: params({ scopeType, scopeId }) }),
   leaderboard: (scopeType: ScopeType, scopeId?: string | null, period: 'week' | 'all' = 'all') =>

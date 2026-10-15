@@ -8,7 +8,7 @@ import {
   Trash2, Flag, Link2, Hash, ChevronDown, ChevronRight, Shield, CornerDownRight,
   AtSign, Paperclip, X, Check,
 } from 'lucide-react';
-import { useCommunityHub, type CommunityPost, type CommunityComment, type CommunityPerson } from '@/lib/hooks/community/useCommunityHub';
+import { useCommunityHub, type CommunityPost, type CommunityComment, type CommunityPerson, type CommunitySpace } from '@/lib/hooks/community/useCommunityHub';
 import { communityApi, type PostType, type ReactionType } from '@/lib/services/community-api';
 import FileUploader from '@/components/shared/FileUploader';
 import { MenuPanel } from '@/components/shared/MenuPanel';
@@ -394,27 +394,62 @@ function Composer({ hub }: { hub: ReturnType<typeof useCommunityHub> }) {
 /* ── Space switcher ─────────────────────────────────────────────────────── */
 const SPACE_ICON: Record<string, typeof Users> = { clan: Users, cohort: MessagesSquare, program: BookOpen, global: Sunrise };
 
+/**
+ * The spaces list.
+ *
+ * It used to be one flat column in whatever order the server built it, so a
+ * fellowship that ended two years ago sat between the clan somebody works in
+ * every day and the lounge, looking exactly the same. Finished programmes are
+ * still worth having — that is the point of issue 6 — but they are history,
+ * so they go below a divider that says so, and they come collapsed.
+ */
 function SpaceSwitcher({ hub }: { hub: ReturnType<typeof useCommunityHub> }) {
+  const [showFinished, setShowFinished] = useState(false);
+  const live = hub.spaces.filter((s) => !s.workClosed);
+  const finished = hub.spaces.filter((s) => s.workClosed);
+
+  const row = (s: CommunitySpace) => {
+    const Icon = SPACE_ICON[s.type] || Users;
+    const active = s.key === hub.activeKey;
+    return (
+      <button key={s.key} onClick={() => hub.setActiveKey(s.key)}
+        className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition-colors ${active ? 'bg-brand-50 text-brand-700' : 'hover:bg-slate-50 text-slate-700'}`}>
+        <Icon className={`w-4 h-4 shrink-0 ${active ? 'text-brand-600' : 'text-slate-400'}`} />
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium truncate">{s.name}</span>
+          <span className="block text-[11px] text-slate-400 truncate">{s.subtitle}</span>
+        </span>
+        {s.isModerator && <Shield className="w-3.5 h-3.5 text-slate-300 shrink-0" />}
+      </button>
+    );
+  };
+
   return (
     <div className="bg-card rounded-2xl border border-slate-200 p-3">
       <p className="px-2 pt-1 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Spaces</p>
-      <div className="space-y-1">
-        {hub.spaces.map((s) => {
-          const Icon = SPACE_ICON[s.type] || Users;
-          const active = s.key === hub.activeKey;
-          return (
-            <button key={s.key} onClick={() => hub.setActiveKey(s.key)}
-              className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition-colors ${active ? 'bg-brand-50 text-brand-700' : 'hover:bg-slate-50 text-slate-700'}`}>
-              <Icon className={`w-4 h-4 shrink-0 ${active ? 'text-brand-600' : 'text-slate-400'}`} />
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium truncate">{s.name}</span>
-                <span className="block text-[11px] text-slate-400 truncate">{s.subtitle}</span>
-              </span>
-              {s.isModerator && <Shield className="w-3.5 h-3.5 text-slate-300 shrink-0" />}
-            </button>
-          );
-        })}
-      </div>
+      <div className="space-y-1">{live.map(row)}</div>
+
+      {finished.length > 0 && (
+        <div className="mt-2 border-t border-border pt-2">
+          <button
+            onClick={() => setShowFinished((v) => !v)}
+            aria-expanded={showFinished}
+            className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-left text-slate-500 hover:bg-slate-50"
+          >
+            {showFinished ? <ChevronDown className="w-4 h-4 shrink-0" /> : <ChevronRight className="w-4 h-4 shrink-0" />}
+            <span className="text-xs font-semibold uppercase tracking-wide">Finished</span>
+            <span className="ml-auto text-[11px] tabular-nums text-slate-400">{finished.length}</span>
+          </button>
+          {showFinished && (
+            <div className="mt-1 space-y-1">
+              {finished.map(row)}
+              <p className="px-2.5 pt-1 pb-0.5 text-[11px] leading-relaxed text-slate-400">
+                The programme is closed, the conversation is not — you can still post here.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -464,7 +499,7 @@ export default function CommunityHub({ mentor = false }: { mentor?: boolean }) {
             )}
           </div>
 
-          {hub.active?.readOnly ? <p className="rounded-2xl border border-border bg-card p-4 text-sm text-muted-foreground">This completed community is read-only. You can continue the conversation in the program community.</p> : <details className="rounded-2xl border border-border bg-card p-4"><summary className="cursor-pointer flex items-center gap-3 text-sm font-medium text-muted-foreground"><MessagesSquare className="h-5 w-5 text-brand-600" />Share a win, ask a question, or help your clan<span className="ml-auto text-brand-700">Write a post →</span></summary><div className="mt-4"><Composer hub={hub} /></div></details>}
+          {hub.active?.readOnly ? <p className="rounded-2xl border border-border bg-card p-4 text-sm text-muted-foreground">This space has been archived by an administrator.</p> : <details className="rounded-2xl border border-border bg-card p-4"><summary className="cursor-pointer flex items-center gap-3 text-sm font-medium text-muted-foreground"><MessagesSquare className="h-5 w-5 text-brand-600" />Share a win, ask a question, or help your clan<span className="ml-auto text-brand-700">Write a post →</span></summary><div className="mt-4"><Composer hub={hub} /></div></details>}
 
           {hub.loadingFeed ? (
             <div className="flex items-center justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-brand-600" /></div>
@@ -552,22 +587,46 @@ export default function CommunityHub({ mentor = false }: { mentor?: boolean }) {
           </div>
 
           <div className="bg-card rounded-2xl border border-slate-200 p-5">
-            <button onClick={() => setShowMembers((s) => !s)} className="w-full flex items-center justify-between">
-              <h3 className="font-semibold text-slate-900">Members ({hub.members.length})</h3>
+            <button onClick={() => setShowMembers((s) => !s)} aria-expanded={showMembers} className="w-full flex items-center justify-between">
+              <h3 className="font-semibold text-slate-900">Members ({hub.memberTotal})</h3>
               {showMembers ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
             </button>
             {showMembers && (
-              <div className="mt-3 space-y-2">
-                {hub.members.map((m) => (
-                  <div key={m.id} className="flex items-center gap-2.5">
-                    <Avatar text={m.avatar} url={m.avatarUrl} />
-                    <div className="min-w-0">
-                      <p className="text-sm text-slate-800 truncate">{m.name}</p>
-                      <p className="text-[11px] text-slate-400 capitalize">{m.role.replace('_', ' ')}</p>
+              <div className="mt-3 space-y-3">
+                {/* Searched on the server: a programme space holds more people
+                    than are ever downloaded, so filtering here would only ever
+                    search the page already on screen. */}
+                <input
+                  aria-label="Search members"
+                  value={hub.memberQuery}
+                  onChange={(e) => hub.searchMembers(e.target.value)}
+                  placeholder="Search members…"
+                  className="w-full rounded-xl border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+                <div className="space-y-2">
+                  {hub.members.map((m) => (
+                    <div key={m.id} className="flex items-center gap-2.5">
+                      <Avatar text={m.avatar} url={m.avatarUrl} />
+                      <div className="min-w-0">
+                        <p className="text-sm text-slate-800 truncate">{m.name}</p>
+                        <p className="text-[11px] text-slate-400 capitalize">{m.role.replace('_', ' ')}</p>
+                      </div>
                     </div>
-                  </div>
-                ))}
-                {hub.members.length === 0 && <p className="text-sm text-slate-400">No members listed.</p>}
+                  ))}
+                </div>
+                {hub.members.length === 0 && (
+                  <p className="text-sm text-slate-400">
+                    {hub.memberQuery ? 'Nobody matches that name.' : 'No members listed.'}
+                  </p>
+                )}
+                {hub.hasMoreMembers && (
+                  <button
+                    onClick={hub.showMoreMembers}
+                    className="w-full rounded-xl border border-border px-3 py-2 text-sm font-medium text-brand-700 hover:bg-muted"
+                  >
+                    Show more ({hub.memberTotal - hub.members.length} more)
+                  </button>
+                )}
               </div>
             )}
           </div>

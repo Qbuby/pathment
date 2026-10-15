@@ -23,9 +23,13 @@ const listSpaces = catchAsync(async (req, res) => {
 });
 
 const members = catchAsync(async (req, res) => {
-  const { scopeType, scopeId } = req.query;
-  const data = await communityService.getMembers(req.user, scopeType, scopeId || null);
-  res.status(200).json(successResponse('Members retrieved', { members: data }));
+  const { scopeType, scopeId, limit, offset, q } = req.query;
+  // `members` stays an array at the same path, so a caller that ignores
+  // `pagination` keeps working — it just gets the first page.
+  const { members: data, pagination } = await communityService.getMembers(
+    req.user, scopeType, scopeId || null, { limit, offset, q },
+  );
+  res.status(200).json(successResponse('Members retrieved', { members: data, pagination }));
 });
 
 const people = catchAsync(async (req, res) => {

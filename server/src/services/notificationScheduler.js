@@ -46,7 +46,6 @@ class NotificationScheduler {
     await this.notifyDeadlineApproaching();
     await this.notifyDeadlinePassed();
     await this.sendWeeklyProgressReports();
-    await this.postWeeklyStandups();
     await this.sendReengagementReminders();
     await this.runReviewSchedules();
     await this.runAdminMeetings();
@@ -399,62 +398,6 @@ class NotificationScheduler {
     }
   }
 
-  /**
-   * Weekly clan standup prompt - auto-posts a 'standup' post into every active
-   * clan's community space so each squad has a recurring check-in thread. The
-   * post is authored by the clan's lead mentor (falling back to its creator).
-   * Idempotent: skips a clan that already has a standup posted in the last 6 days.
-   */
-  async postWeeklyStandups() {
-    const day = Number(process.env.COMMUNITY_STANDUP_DAY || 1); // 1 Monday
-    const hour = Number(process.env.COMMUNITY_STANDUP_HOUR_UTC || 9);
-    const now = new Date();
-    if (now.getUTCDay() !== day || now.getUTCHours() !== hour) return;
-    await this._postStandupsToActiveClans();
-  }
-
-  /**
-   * The standup work, factored out so it can be invoked/tested without the time
-   * gate. Pass `clanIds` to restrict to specific clans (used by tests); omit to
-   * cover every active clan.
-   */
-  async _postStandupsToActiveClans(clanIds = null) {
-    const sixDaysAgo = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000);
-    const where = { status: 'active' };
-    if (Array.isArray(clanIds) && clanIds.length) where.id = { [Op.in]: clanIds };
-    const clans = await models.Clan.findAll({
-      where,
-      attributes: ['id', 'name', 'leadMentorId', 'createdBy']
-    });
-
-    let posted = 0;
-    for (const clan of clans) {
-      const authorId = clan.leadMentorId || clan.createdBy;
-      if (!authorId) continue;
-
-      const recent = await models.CommunityPost.findOne({
-        where: {
-          scopeType: 'clan',
-          scopeId: clan.id,
-          type: 'standup',
-          deletedAt: null,
-          createdAt: { [Op.gte]: sixDaysAgo }
-        }
-      });
-      if (recent) continue;
-
-      await models.CommunityPost.create({
-        authorId,
-        type: 'standup',
-        scopeType: 'clan',
-        scopeId: clan.id,
-        title: 'Weekly standup',
-        body: 'Drop your update 👇\n• What did you ship last week?\n• What are you working on this week?\n• Anything blocking you?'
-      });
-      posted += 1;
-    }
-    return posted;
-  }
 }
 
 module.exports = new NotificationScheduler();
