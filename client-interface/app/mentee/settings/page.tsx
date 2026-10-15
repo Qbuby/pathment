@@ -184,6 +184,8 @@ export default function MenteeSettings() {
                     value={{
                       city: profileData.city,
                       country: profileData.country,
+                      countryCode: profileData.countryCode,
+                      region: profileData.region,
                       languages: profileData.languages,
                       timezone: profileData.timezone,
                     }}

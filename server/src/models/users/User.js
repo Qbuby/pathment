@@ -96,6 +96,14 @@ module.exports = (sequelize, DataTypes) => {
     country: {
       type: DataTypes.STRING(120)
     },
+    /** ISO-3166 alpha-2. The stable key — names are for people to read. */
+    countryCode: {
+      type: DataTypes.STRING(2)
+    },
+    /** State / province / region, where the country has them. */
+    region: {
+      type: DataTypes.STRING(120)
+    },
     languages: {
       type: DataTypes.ARRAY(DataTypes.TEXT),
       allowNull: false,

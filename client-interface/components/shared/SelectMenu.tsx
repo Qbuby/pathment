@@ -41,6 +41,16 @@ interface SelectMenuProps {
    */
   searchable?: boolean;
   disabled?: boolean;
+  /**
+   * Told what the person typed, so the caller can go and fetch matches.
+   *
+   * Needed when the real list is bigger than the options on hand — the city
+   * picker holds 150,000 of them, so typing has to reach the server rather
+   * than filter the fifty already downloaded. The built-in filter still runs
+   * over whatever `options` currently holds, which keeps the menu responsive
+   * between keystroke and response.
+   */
+  onSearch?: (query: string) => void;
 }
 
 /**
@@ -51,7 +61,7 @@ interface SelectMenuProps {
  * its height with a scroll, is dark-mode aware, keyboard accessible
  * (↑/↓/Enter/Esc), and - for long lists - type-to-filter searchable.
  */
-export function SelectMenu({ value, onChange, options, placeholder = 'Select…', className = '', ariaLabel, searchable, disabled = false }: SelectMenuProps) {
+export function SelectMenu({ value, onChange, options, placeholder = 'Select…', className = '', ariaLabel, searchable, disabled = false, onSearch }: SelectMenuProps) {
   const [open, setOpen] = useState(false);
   const [flipUp, setFlipUp] = useState(false);
   const [activeIdx, setActiveIdx] = useState(-1);
@@ -64,10 +74,14 @@ export function SelectMenu({ value, onChange, options, placeholder = 'Select…'
   const selected = options.find((o) => o.value === value);
 
   const filtered = useMemo(() => {
+    // A caller fetching its own matches has already applied the term; filtering
+    // the response by it again drops rows the server matched on a field this
+    // component cannot see.
+    if (onSearch) return options;
     const q = query.trim().toLowerCase();
     if (!q) return options;
     return options.filter((o) => `${o.label} ${o.description || ''} ${o.group || ''}`.toLowerCase().includes(q));
-  }, [options, query]);
+  }, [options, query, onSearch]);
 
   const openMenu = () => {
     if (!triggerRef.current || disabled) return;
@@ -165,7 +179,7 @@ export function SelectMenu({ value, onChange, options, placeholder = 'Select…'
                 <input
                   ref={searchRef}
                   value={query}
-                  onChange={(e) => { setQuery(e.target.value); setActiveIdx(0); }}
+                  onChange={(e) => { setQuery(e.target.value); setActiveIdx(0); onSearch?.(e.target.value); }}
                   placeholder="Search…"
                   className="w-full pl-8 pr-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-card text-sm text-slate-700 dark:text-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />

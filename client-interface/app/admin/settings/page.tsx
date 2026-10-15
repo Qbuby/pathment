@@ -119,7 +119,7 @@ function AdminSettingsInner() {
 
               <div className="pt-6 border-t border-slate-100">
                 <LocationDetailsFields
-                  value={{ city: profileData.city, country: profileData.country, languages: profileData.languages, timezone: profileData.timezone }}
+                  value={{ city: profileData.city, country: profileData.country, countryCode: profileData.countryCode, region: profileData.region, languages: profileData.languages, timezone: profileData.timezone }}
                   onChange={(patch) => setProfileData({ ...profileData, ...patch })}
                 />
               </div>

@@ -154,6 +154,9 @@ router.use('/assessments', assessmentRoutes);
 // Public, unauthenticated intake - program catalog + apply + applicant status
 router.use('/public', publicRoutes);
 
+// Reference geography - countries, regions, cities, and a country's timezones
+router.use('/geo', require('./geo'));
+
 // IAM - scoped role grants + effective-permission lookup
 router.use('/access', accessRoutes);
 

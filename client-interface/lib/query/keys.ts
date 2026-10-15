@@ -167,4 +167,11 @@ export const qk = {
   },
 
   announcements: ['announcements'] as const,
+
+  /** Reference geography — the same for every viewer, so it caches hard. */
+  geo: {
+    countries: ['geo', 'countries'] as const,
+    states: (country: string) => ['geo', 'states', country] as const,
+    cities: (country: string, state: string, q: string) => ['geo', 'cities', country, state, q] as const,
+  },
 } as const;
