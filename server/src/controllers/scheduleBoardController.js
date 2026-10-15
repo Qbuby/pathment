@@ -1,6 +1,7 @@
 const { catchAsync } = require('../middlewares/errorHandler');
 const { successResponse } = require('../utils/responses');
 const board = require('../services/scheduleBoardService');
+const { requestedClanId } = require('../middlewares/portalScope');
 
 /**
  * The day planner.
@@ -12,7 +13,14 @@ const board = require('../services/scheduleBoardService');
  * here instead of a mentee branch and a mentor branch that can drift apart.
  */
 const targetId = (req) => (req.params.menteeId === 'me' ? req.user.id : req.params.menteeId);
-const clanOf = (req) => req.query.clanId || req.body?.clanId || null;
+/**
+ * Which clan the planner is being read or written in.
+ *
+ * An explicit query/body value still wins; falling through to the sidebar's
+ * `X-Active-Clan` is what lets a mentee who has moved into a standing clan get
+ * that clan's day rather than the union of every clan they have ever been in.
+ */
+const clanOf = (req) => requestedClanId(req);
 
 const getBoard = catchAsync(async (req, res) => {
   const data = await board.board(targetId(req), { clanId: clanOf(req) }, req.user);

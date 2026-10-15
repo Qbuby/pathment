@@ -6,6 +6,7 @@ const { NotFoundError, ValidationError, ForbiddenError } = require('../utils/err
 const clanLifecycleService = require('./clanLifecycleService');
 const { todayInZone, endOfDayInZone } = require('../utils/timezone');
 const { normalizeRepeat, nextOccurrence, describeRepeat } = require('../utils/repeatRule');
+const { listMenteeClans, clanScopedWhere } = require('./menteeClanScope');
 const logger = require('../utils/logger');
 
 /**
@@ -161,12 +162,44 @@ class ScheduleBoardService {
     return new Date(`${await this._todayKey(menteeId)}T00:00:00Z`);
   }
 
-  async _scheduleRow(menteeId, clanId) {
-    const where = { menteeId };
-    if (clanId) where.clanId = clanId;
-    const row = await models.MenteeSchedule.findOne({ where, order: [['assignedAt', 'DESC']] });
-    // A mentee with no template yet still has a day — they just start empty.
-    return row || models.MenteeSchedule.findOne({ where: { menteeId }, order: [['assignedAt', 'DESC']] });
+  /**
+   * This mentee's schedule row FOR THIS CLAN.
+   *
+   * It used to fall back to "any row this mentee has" when the clan had none,
+   * which is how a mentee moved into a standing clan opened their new day and
+   * found the previous clan's blocks in it — and, because the task query below
+   * keyed off this row's clan, the previous clan's tasks too.
+   *
+   * A clan with no schedule row has an empty day. That is the truth, and an
+   * empty day is a far better answer than somebody else's.
+   *
+   * `clanScopedWhere` keeps the one legacy case working: rows written before
+   * schedules were per-clan carry no clan at all, and are adopted only when
+   * they cannot belong anywhere else — a single membership, into a cohort clan.
+   */
+  async _scheduleRow(menteeId, clanId, membershipCount = 0) {
+    const where = clanScopedWhere({ menteeId }, clanId, membershipCount);
+    return models.MenteeSchedule.findOne({ where, order: [['assignedAt', 'DESC']] });
+  }
+
+  /**
+   * Which clan this board is about.
+   *
+   * Explicit wins; a mentee who is only in one clan needs no header. When it
+   * genuinely cannot be told (several clans, nothing stated) the answer is the
+   * row's clan, and failing that no narrowing — the behaviour before per-clan
+   * boards existed, kept so an older client does not start getting errors.
+   */
+  async _resolveBoardClan(menteeId, requestedClanId, memberships) {
+    if (requestedClanId) {
+      const held = memberships.some((m) => m.clanId === requestedClanId);
+      if (held) return requestedClanId;
+      // A mentor planning for a mentee is scoped by `_assertCanPlan`, not by
+      // the mentee's own memberships, so an unmatched clan is still honoured.
+      return requestedClanId;
+    }
+    if (memberships.length === 1) return memberships[0].clanId;
+    return null;
   }
 
   /**
@@ -178,7 +211,13 @@ class ScheduleBoardService {
     const canAssign = await this._canAssign(actor, clanId);
     const isOwnerMentee = String(actor.id) === String(menteeId);
 
-    const row = await this._scheduleRow(menteeId, clanId);
+    // Resolve the clan once and use it for BOTH reads below. The task query
+    // used to scope by the schedule ROW's clan, so a clan with no row (or a
+    // legacy row with a null clan) applied no clan filter at all and the day
+    // filled with every task the mentee had ever been given, in any clan.
+    const memberships = await listMenteeClans(menteeId);
+    const scopeClanId = await this._resolveBoardClan(menteeId, clanId, memberships);
+    const row = await this._scheduleRow(menteeId, scopeClanId, memberships.length);
     // Sorted on READ, not just on write. Slots created before the planner were
     // stored in whatever order they were authored, and a day that lists 18:00
     // above 09:00 is simply wrong however it got that way.
@@ -195,35 +234,43 @@ class ScheduleBoardService {
     const slotIds = slots.map((s) => s.id);
     const startOfToday = await this._startOfToday(menteeId);
     const tasks = await models.AssignedTask.findAll({
+      /**
+       * Every OR group lives inside the one AND so that the clan filter, which
+       * contributes its own OR for legacy unscoped rows, cannot collide with
+       * them. (Two `[Op.or]` keys on one object silently keep the last.)
+       */
       where: {
-        menteeId,
-        ...(row?.clanId ? { clanId: row.clanId } : {}),
-        /**
-         * A repeat that lands on weekdays must not put Monday's copy on the
-         * Saturday board. The next occurrence is written the moment one is
-         * finished, so it exists days before it is due — real, but not yet
-         * today's work.
-         *
-         * Anything already due stays, however late: an occurrence nobody did
-         * is exactly what the mentee needs to still see.
-         */
-        [Op.and]: [{
-          [Op.or]: [
-            { occurrenceDate: null },
-            { occurrenceDate: { [Op.lte]: todayKey } },
-          ],
-        }],
-        [Op.or]: [
-          // In a block: everything still open, plus whatever was finished today.
+        ...clanScopedWhere({ menteeId }, scopeClanId, memberships.length),
+        [Op.and]: [
+          /**
+           * A repeat that lands on weekdays must not put Monday's copy on the
+           * Saturday board. The next occurrence is written the moment one is
+           * finished, so it exists days before it is due — real, but not yet
+           * today's work.
+           *
+           * Anything already due stays, however late: an occurrence nobody did
+           * is exactly what the mentee needs to still see.
+           */
           {
-            scheduleSlotId: { [Op.in]: slotIds.length ? slotIds : ['__none__'] },
             [Op.or]: [
-              { status: { [Op.in]: ACTIVE_STATUSES } },
-              { status: 'completed', completedAt: { [Op.gte]: startOfToday } },
+              { occurrenceDate: null },
+              { occurrenceDate: { [Op.lte]: todayKey } },
             ],
           },
-          // Waiting to be planned: open work only.
-          { scheduleSlotId: null, status: { [Op.in]: ACTIVE_STATUSES } },
+          {
+            [Op.or]: [
+              // In a block: everything still open, plus whatever finished today.
+              {
+                scheduleSlotId: { [Op.in]: slotIds.length ? slotIds : ['__none__'] },
+                [Op.or]: [
+                  { status: { [Op.in]: ACTIVE_STATUSES } },
+                  { status: 'completed', completedAt: { [Op.gte]: startOfToday } },
+                ],
+              },
+              // Waiting to be planned: open work only.
+              { scheduleSlotId: null, status: { [Op.in]: ACTIVE_STATUSES } },
+            ],
+          },
         ],
       },
       attributes: [
@@ -316,7 +363,7 @@ class ScheduleBoardService {
 
     return {
       menteeId,
-      clanId: row?.clanId ?? clanId ?? null,
+      clanId: row?.clanId ?? scopeClanId ?? null,
       hasSchedule: !!row,
       templateId: row?.templateId ?? null,
       timezone: row?.timezone ?? null,
