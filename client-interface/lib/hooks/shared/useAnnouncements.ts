@@ -12,7 +12,7 @@ export interface Announcement {
   audienceLabel: string;
   pinned: boolean;
   at: string;
-  author: { name: string; role: string } | null;
+  author: { name: string; role: string; avatarUrl?: string | null } | null;
   /** True when the current viewer authored it (can pin/delete). */
   mine: boolean;
   reactions: { acknowledged: number; helpful: number };
