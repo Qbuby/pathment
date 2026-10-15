@@ -47,7 +47,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 6i | Spaces listing: separate completed vs active programs, designed properly. | ✅ | `75883cfe` | |
 | 6ii | Mentors appear to auto-post (repetitive "Weekly standup") — remove that. | ✅ | `75883cfe` | |
 | 6iii | Paginate members (shows ~1088) and posts (pagination/filters/search or infinite scroll). | ✅ | `75883cfe` | |
-| 7 | Proper country/province/city pickers wherever location is captured, with timezone suggested from the country. | ⬜ | | |
+| 7 | Proper country/province/city pickers wherever location is captured, with timezone suggested from the country. | ✅ | `d0a13e8e` | **Needs migration 131 on prod.** API + browser verified. |
 | 8 | Mentee "My progress" page is weak — improve or remove. | ⬜ | | |
 | 9 | Library (admin → mentor → mentee) redesign. | ⬜ | | |
 | 10 | Mentee dashboard: re-prioritise top vs bottom; the daily/planner block does not belong there. | ⬜ | | |
@@ -285,3 +285,52 @@ matched.
 
 **Verification gap.** The grouped spaces list and the paged member panel were type-checked
 and built but not screenshotted; the API behaviour behind both is verified above.
+
+### Issue 7 — country / region / city, and the timezone that follows
+
+**Root cause.** `city` and `country` were free-text `<input>`s, so the same place had as
+many spellings as people typing it and could never be grouped or counted. The timezone was
+a separate `SelectMenu` of every IANA zone with nothing tying it to the country.
+
+**Fix.** Country → region → city pickers backed by a real dataset, and the country's
+timezone offered as soon as it is known. The suggestion is only made when it *cannot* be
+wrong: one zone → filled in; several → the country says so and the choice stays open,
+because a wrong timezone is worse than an empty one when deadlines are read in it.
+
+The dataset (`country-state-city`) lives **on the server** behind `GET /api/geo`, not in
+the bundle — the full set is ~150,000 cities, fine to query and terrible to ship in a
+page. City search runs in the database for the same reason a browser-side filter cannot
+work: it can only search the page already downloaded.
+
+`SelectMenu` gained an `onSearch` hook for callers whose real list is bigger than the
+options on hand; when set, the built-in filter steps aside rather than filtering the
+server's answer a second time.
+
+**Migration 131** adds `users.country_code` (ISO-3166 alpha-2) and `users.region`. Existing
+free-text values are **not** rewritten — string-matching them would silently relocate
+anyone whose spelling did not line up — so the picker resolves a saved country *name* back
+to its code on first edit and rows fill in as people touch them.
+**This migration has not been run on production.**
+
+**Files.** `server/src/services/geoService.js`, `server/src/routes/geo.js`,
+`scripts/migrations/131_location_region_and_country_code.js`, `models/users/User.js`,
+`controllers/profileController.js`, `routes/index.js`, `package.json`;
+`components/shared/LocationPicker.tsx`, `components/shared/SelectMenu.tsx`,
+`components/settings/LocationDetailsFields.tsx`, `lib/services/geo-api.ts`,
+`lib/query/keys.ts`, the three settings hooks and the three settings pages.
+
+**Tests run.** 9 new unit tests (`tests/unit/geo-service.test.js`) → 9 pass / 0 fail.
+`tsc` clean, build compiles, server syntax 698 files ok.
+
+**API-verified:** 250 countries with timezones; PK suggests `Asia/Karachi`, not ambiguous;
+US reports 29 zones and *is* ambiguous; PK returns 8 regions; `lah` inside Punjab finds
+Lahore; a capped result reports `hasMore`; `PUT /profile` round-trips city + region with
+the country code upper-cased.
+
+**Browser-verified** on Settings → Profile: all four are pickers, city is no longer free
+text, choosing Pakistan fills the timezone, choosing Punjab narrows the cities, typing
+reaches the server (50 options → 1) and Lahore selects. Screenshot captured.
+
+**Scope note.** Applied to the three Settings → Profile forms, which is where the issue
+points ("mostly in profiles"). The public intake form has its own field system
+(`lib/config/intakeFields.ts`) and was **not** converted — flagged as remaining work.
