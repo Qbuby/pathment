@@ -43,10 +43,10 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 3 | A mentor who also has admin access sees **every clan's** announcements even on the mentor/mentee tab — scope bug. | ✅ | `93b68a66` | Verified against the running API with a mentor+admin account. |
 | 4 | Loader/spinner differs between screens — use one loader everywhere. | ✅ | `18f98c6b` | 5 competing spinners unified; guard test added. |
 | 5 | Mentee moved to a standing clan still sees previous clans' tasks there; mentor-deleted tasks persist; "My learning" disagrees with "This Week". | ✅ | `e5d3a6cd` | Both faults fixed; 5 tests proven to fail on the old code. |
-| 6 | Community must stay open after program completion (currently read-only). | ⬜ | | |
-| 6i | Spaces listing: separate completed vs active programs, designed properly. | ⬜ | | |
-| 6ii | Mentors appear to auto-post (repetitive "Weekly standup") — remove that. | ⬜ | | |
-| 6iii | Paginate members (shows ~1088) and posts (pagination/filters/search or infinite scroll). | ⬜ | | |
+| 6 | Community must stay open after program completion (currently read-only). | ✅ | `75883cfe` | |
+| 6i | Spaces listing: separate completed vs active programs, designed properly. | ✅ | `75883cfe` | |
+| 6ii | Mentors appear to auto-post (repetitive "Weekly standup") — remove that. | ✅ | `75883cfe` | |
+| 6iii | Paginate members (shows ~1088) and posts (pagination/filters/search or infinite scroll). | ✅ | `75883cfe` | |
 | 7 | Proper country/province/city pickers wherever location is captured, with timezone suggested from the country. | ⬜ | | |
 | 8 | Mentee "My progress" page is weak — improve or remove. | ⬜ | | |
 | 9 | Library (admin → mentor → mentee) redesign. | ⬜ | | |
@@ -245,3 +245,43 @@ genuinely cover the defect rather than the fix.
 `mentee.maya@demo.pathment.com`, whose 24 tasks belong to her cohort clan. The cohort board
 still shows her work; the standing board shows none of it; the clan header alone is enough
 to scope it; My learning and the day now report the same count for the same clan.
+
+### Issue 6 — community after a programme ends
+
+**Root cause.** `communitySpaceService` derived `readOnly` straight from the work
+lifecycle: `clan.frozenAt` for a clan space, `cohort.status === 'completed'` for a cohort
+space. `communityService` then threw `ClanFrozenError` on all ten write paths.
+
+**Fix.** Separate the two ideas. Freezing a clan protects the *record of work* and is
+untouched; it is not a reason to close the conversation. `workClosed` now reports "the
+programme is over" (used for grouping and labelling) and `readOnly` is reserved for a
+deliberate, admin-controlled archive that nothing sets today — one named function,
+`isSpaceArchived()`, is the single place to change if that feature is ever wanted.
+
+- **(i)** Finished programmes move below a collapsed "Finished" divider in the spaces
+  list, with a line explaining that the programme is closed but the conversation is not.
+- **(ii)** The repeated "Weekly standup" was not a mentor posting. `notificationScheduler.postWeeklyStandups`
+  auto-created one every Monday in **every active clan**, authored *as* the lead mentor,
+  with no opt-in and no way to stop it. Removed (56 lines). The `standup` post type stays
+  so a mentor can still write one deliberately.
+- **(iii)** `getMembers` loaded every member of the scope in one response. Now paged (24
+  at a time, "Show more" with the remaining count) and searched in the database — a
+  browser-side filter can only search the page already downloaded. The feed already had
+  cursor pagination plus `type`, `tag` and `q` filters, so that half needed no change.
+
+**Files.** `server/src/services/communitySpaceService.js`, `communityService.js`,
+`notificationScheduler.js`, `controllers/communityController.js`;
+`components/community/CommunityHub.tsx`, `lib/hooks/community/useCommunityHub.ts`,
+`lib/services/community-api.ts`, `lib/query/keys.ts`.
+
+**Tests run.** `tests/clans` + `tests/notifications` + `tests/unit` → 80 pass / 0 fail.
+`tsc` clean, build compiles, server syntax 695 files ok.
+
+**API-verified** with the cohort clan frozen *and* the cohort marked completed — the exact
+state that used to lock it: the space is still listed, `readOnly` false, `workClosed` true,
+and a mentee posting into it gets **201** where the old code raised `ClanFrozenError`.
+Members returned 2 of 30 with a correct total and `hasMore`, and a server-side name search
+matched.
+
+**Verification gap.** The grouped spaces list and the paged member panel were type-checked
+and built but not screenshotted; the API behaviour behind both is verified above.
