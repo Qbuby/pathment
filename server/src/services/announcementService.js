@@ -4,6 +4,8 @@ const { NotFoundError, ValidationError, ForbiddenError } = require('../utils/err
 const authzService = require('./authzService');
 
 const AUDIENCE_TYPES = ['all', 'mentors', 'mentees', 'program', 'clan'];
+/** Clan roles that mean "I mentor this clan" — mirrors the client's picker. */
+const MENTOR_CLAN_ROLES = ['lead_mentor', 'co_mentor', 'core_team'];
 
 /**
  * Announcements with audience targeting + per-viewer visibility.
@@ -36,21 +38,36 @@ class AnnouncementService {
     return authzService.getCapabilities(user);
   }
 
+  /**
+   * The roles that count while the caller is wearing a particular hat.
+   *
+   * Somebody can be an admin, a mentor of two clans and a mentee of a third.
+   * In the mentor portal only the mentor memberships are part of the question;
+   * in the mentee portal only the mentee ones. Without this, switching the tab
+   * changed nothing about what came back.
+   */
+  _membershipRolesFor(portalRole) {
+    if (portalRole === 'mentee') return ['mentee'];
+    if (portalRole === 'mentor') return MENTOR_CLAN_ROLES;
+    return null; // no portal stated: every membership counts, as before
+  }
+
   /** Clans + programs the viewer belongs to (for visibility filtering). */
-  async _scope(user) {
+  async _scope(user, portalRole = null) {
     const caps = await this._caps(user);
+    const roles = this._membershipRolesFor(portalRole);
     const memberships = await models.ClanMembership.findAll({
-      where: { userId: user.id, status: 'active' },
+      where: { userId: user.id, status: 'active', ...(roles ? { role: { [Op.in]: roles } } : {}) },
       include: [{ model: models.Clan, as: 'clan', attributes: ['programId'] }]
     });
     const clanIds = memberships.map((m) => m.clanId);
     const programIds = new Set(memberships.map((m) => m.clan?.programId).filter(Boolean));
 
-    if (caps.includes('mentee')) {
+    if (caps.includes('mentee') && portalRole !== 'mentor') {
       const enrollments = await models.Enrollment.findAll({ where: { menteeId: user.id }, attributes: ['programId'] });
       enrollments.forEach((e) => programIds.add(e.programId));
     }
-    if (caps.includes('mentor')) {
+    if (caps.includes('mentor') && portalRole !== 'mentee') {
       const matches = await models.MentorMenteeMatch.findAll({
         where: { mentorId: user.id, status: 'active' },
         include: [{ model: models.Enrollment, as: 'enrollment', attributes: ['programId'] }]
@@ -68,22 +85,37 @@ class AnnouncementService {
    * full reactions array — to then discard most of it. Expressed as SQL, the
    * database returns only what this person may see, and LIMIT actually limits.
    *
-   * Returns undefined for admins, who see everything for oversight.
+   * Returns undefined in the ADMIN portal, where everything is visible for
+   * oversight.
+   *
+   * It used to return undefined for anyone who merely *held* admin, whatever
+   * screen they were on. A mentor who also administers the workspace therefore
+   * opened their own announcements page and got every clan in the organisation
+   * — switching to the mentor or mentee tab changed nothing, because the tab
+   * was never part of the query. `actsAsAdmin` is the portal-aware form of the
+   * same question and already exists for exactly this: it answers false while
+   * the caller is in the mentor or mentee portal, so the hat they are wearing
+   * decides the scope while their abilities stay intact.
    */
-  async _visibilityWhere(user) {
-    const caps = await this._caps(user);
-    if (caps.includes('admin')) return undefined;
+  async _visibilityWhere(user, { portalRole = null, clanId = null } = {}) {
+    if (await authzService.actsAsAdmin(user)) return undefined;
 
-    const { clanIds, programIds } = await this._scope(user);
+    const caps = await this._caps(user);
+    const { clanIds, programIds } = await this._scope(user, portalRole);
+
+    // A clan selected in the sidebar narrows the clan-targeted announcements to
+    // that clan. It can only ever subtract: a clan they are not in cannot widen
+    // this, because the intersection with their own memberships is empty.
+    const visibleClanIds = clanId ? clanIds.filter((id) => id === clanId) : clanIds;
 
     const or = [
       { authorId: user.id },      // you always see your own
       { audience: 'all' }
     ];
-    if (caps.includes('mentor')) or.push({ audience: 'mentors' });
-    if (caps.includes('mentee')) or.push({ audience: 'mentees' });
+    if (caps.includes('mentor') && portalRole !== 'mentee') or.push({ audience: 'mentors' });
+    if (caps.includes('mentee') && portalRole !== 'mentor') or.push({ audience: 'mentees' });
     if (programIds.length) or.push({ audience: 'program', audienceId: { [Op.in]: programIds } });
-    if (clanIds.length) or.push({ audience: 'clan', audienceId: { [Op.in]: clanIds } });
+    if (visibleClanIds.length) or.push({ audience: 'clan', audienceId: { [Op.in]: visibleClanIds } });
 
     return { [Op.or]: or };
   }
@@ -93,17 +125,19 @@ class AnnouncementService {
    * @param {Object} [options]
    * @param {number} [options.limit=30]  capped at 100
    * @param {number} [options.offset=0]
+   * @param {'admin'|'mentor'|'mentee'|null} [options.portalRole]  which hat the caller is wearing
+   * @param {string|null} [options.clanId]  the sidebar clan selection, when one is made
    */
-  async list(user, { limit = 30, offset = 0 } = {}) {
+  async list(user, { limit = 30, offset = 0, portalRole = null, clanId = null } = {}) {
     const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 30, 1), 100);
     const safeOffset = Math.max(parseInt(offset, 10) || 0, 0);
 
-    const where = await this._visibilityWhere(user);
+    const where = await this._visibilityWhere(user, { portalRole, clanId });
 
     const { rows: visible, count: totalItems } = await models.Announcement.findAndCountAll({
       where,
       include: [
-        { model: models.User, as: 'author', attributes: ['firstName', 'lastName', 'role'] },
+        { model: models.User, as: 'author', attributes: ['firstName', 'lastName', 'role', 'profilePictureUrl'] },
         { model: models.AnnouncementReaction, as: 'reactions', attributes: ['userId', 'type'] }
       ],
       order: [['pinned', 'DESC'], ['created_at', 'DESC']],
@@ -150,7 +184,11 @@ class AnnouncementService {
         audienceLabel: label(a),
         pinned: a.pinned,
         at: a.createdAt,
-        author: a.author ? { name: `${a.author.firstName} ${a.author.lastName}`.trim(), role: a.author.role } : null,
+        author: a.author ? {
+          name: `${a.author.firstName} ${a.author.lastName}`.trim(),
+          role: a.author.role,
+          avatarUrl: a.author.profilePictureUrl || null,
+        } : null,
         mine: a.authorId === user.id,
         reactions: { acknowledged: count('acknowledged'), helpful: count('helpful') },
         myReactions: mine
