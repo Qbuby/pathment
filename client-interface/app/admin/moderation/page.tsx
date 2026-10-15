@@ -160,7 +160,7 @@ export default function AdminModerationPage() {
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-brand-500" /></div>
+        <div className="flex items-center justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-brand-600" /></div>
       ) : items.length === 0 ? (
         <div className="bg-card rounded-2xl border border-slate-200">
           <EmptyState icon={<ShieldCheck className="h-6 w-6 text-muted-foreground" />} title={EMPTY_COPY[status].title} description={EMPTY_COPY[status].description} />

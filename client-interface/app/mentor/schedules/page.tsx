@@ -110,7 +110,7 @@ function TemplatesTab() {
                     </div>
 
                     <button onClick={async () => { setBusy(t.id); try { await scheduleApi.importTemplate(t.id); toast.success('Imported - now an editable copy under My schedules'); refetch(); } catch { toast.error('Failed'); } finally { setBusy(null); } }} disabled={busy === t.id}
-                      className="mt-4 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold hover:border-brand-300 dark:hover:border-brand-500/40 transition-colors inline-flex items-center justify-center gap-1.5">{busy === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}Import &amp; edit</button>
+                      className="mt-4 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold hover:border-brand-300 dark:hover:border-brand-500/40 transition-colors inline-flex items-center justify-center gap-1.5">{busy === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-600" /> : <Download className="w-3.5 h-3.5" />}Import &amp; edit</button>
                   </div>
                 ))}
               </div>
@@ -162,7 +162,7 @@ function ScheduleDrawer({ template, onClose, onSaved }: { template: ScheduleTemp
         <>
           <button onClick={onClose} className="px-4 py-2 border border-slate-200 text-slate-700 rounded-xl text-sm hover:bg-slate-50">Cancel</button>
           <button onClick={save} disabled={saving} className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm inline-flex items-center gap-2 disabled:opacity-50">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}{template ? 'Save changes' : 'Create schedule'}
+            {saving ? <Loader2 className="w-4 h-4 animate-spin text-brand-600" /> : <Check className="w-4 h-4" />}{template ? 'Save changes' : 'Create schedule'}
           </button>
         </>
       }
@@ -228,7 +228,7 @@ function AssignModal({ template, cohort, onClose }: { template: ScheduleTemplate
       footer={
         <>
           <button onClick={onClose} className="px-4 py-2 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">Cancel</button>
-          <button onClick={assign} disabled={saving} className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm font-semibold inline-flex items-center gap-2 disabled:opacity-50 transition-all">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}Assign{sel.size ? ` (${sel.size})` : ''}</button>
+          <button onClick={assign} disabled={saving} className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm font-semibold inline-flex items-center gap-2 disabled:opacity-50 transition-all">{saving ? <Loader2 className="w-4 h-4 animate-spin text-brand-600" /> : null}Assign{sel.size ? ` (${sel.size})` : ''}</button>
         </>
       }
     >
@@ -349,7 +349,7 @@ function RoadmapSlotEditor({ slot, menteeId, roadmaps, onPatch, refreshTick }: {
 
       {/* Progress-aware: where to start the FIRST roadmap, given what they've done. */}
       {!headId ? null : statusLoading ? (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" />Checking this mentee&apos;s progress…</div>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin text-brand-600" />Checking this mentee&apos;s progress…</div>
       ) : started ? (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-500">
           <p className="font-semibold">Already started for this mentee</p>
@@ -725,7 +725,7 @@ function FillTab() {
                       title={historical ? HISTORICAL_TITLE : 'Generate recurring tasks for next occurrence immediately across target mentees'}
                       className="px-3.5 py-2 bg-brand-50 dark:bg-brand-500/15 border border-brand-200/80 dark:border-brand-500/30 text-brand-700 dark:text-brand-300 hover:bg-brand-100 dark:hover:bg-brand-500/25 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors disabled:opacity-50"
                     >
-                      {busy === slotId + ':activate' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 text-brand-600 dark:text-brand-400" />}
+                      {busy === slotId + ':activate' ? <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-600" /> : <Zap className="w-3.5 h-3.5 text-brand-600 dark:text-brand-400" />}
                       Activate now {scope === 'selected' ? `(${selectedMenteeIds.size})` : scope === 'all' ? `(${cohort.length})` : ''}
                     </button>
                   )}
@@ -736,7 +736,7 @@ function FillTab() {
                     title={historical ? HISTORICAL_TITLE : undefined}
                     className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-xs font-semibold shadow-xs inline-flex items-center gap-1.5 transition-all disabled:opacity-50"
                   >
-                    {busy === slotId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                    {busy === slotId ? <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-600" /> : <Check className="w-3.5 h-3.5" />}
                     {scope === 'single' ? 'Save slot' : `Save & Apply ${scope === 'selected' ? `(${selectedMenteeIds.size})` : `(${cohort.length})`}`}
                   </button>
                 </div>
@@ -886,7 +886,7 @@ function RecurringHoursEditor({ onSaved }: { onSaved: () => void }) {
 
       <div className="flex justify-end">
         <button onClick={save} disabled={saving || loading} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold shadow-xs disabled:opacity-50 transition-all">
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}Save weekly hours
+          {saving ? <Loader2 className="w-4 h-4 animate-spin text-brand-600" /> : <Check className="w-4 h-4" />}Save weekly hours
         </button>
       </div>
     </section>
@@ -1025,7 +1025,7 @@ function AvailabilityTab() {
             </select>
           </div>
           <button onClick={publish} disabled={adding || historical} title={historical ? HISTORICAL_TITLE : undefined} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold shadow-xs disabled:opacity-50 transition-all">
-            {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}Publish slot
+            {adding ? <Loader2 className="w-4 h-4 animate-spin text-brand-600" /> : <Plus className="w-4 h-4" />}Publish slot
           </button>
         </div>
         {oneOffSlots.length === 0 ? <p className="text-xs text-muted-foreground">No one-off slots published. Weekly-hour slots appear in the calendar above.</p> : (
@@ -1042,7 +1042,7 @@ function AvailabilityTab() {
                   </span>
                 ) : (
                   <button onClick={() => removeSlot(s.id)} disabled={busyId === s.id || historical} title={historical ? HISTORICAL_TITLE : undefined} className="text-slate-400 hover:text-red-500 transition-colors p-1 disabled:opacity-50">
-                    {busyId === s.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                    {busyId === s.id ? <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-600" /> : <Trash2 className="w-3.5 h-3.5" />}
                   </button>
                 )}
               </div>
@@ -1061,7 +1061,7 @@ function AvailabilityTab() {
           <>
             <button onClick={() => setCancelFor(null)} className="px-4 py-2 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">Keep meeting</button>
             <button onClick={confirmCancel} disabled={busyId === cancelFor?.id} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-semibold inline-flex items-center gap-2 disabled:opacity-50 transition-all">
-              {busyId === cancelFor?.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <X className="w-4 h-4" />}Cancel 1:1
+              {busyId === cancelFor?.id ? <Loader2 className="w-4 h-4 animate-spin text-brand-600" /> : <X className="w-4 h-4" />}Cancel 1:1
             </button>
           </>
         }

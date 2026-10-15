@@ -1456,7 +1456,7 @@ export default function CohortReview() {
 
               {workTab === 'progress' && (
                 tasksLoading ? (
-                  <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-slate-400" /></div>
+                  <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-brand-600" /></div>
                 ) : inProgressTasks.length === 0 ? (
                   <p className="text-sm text-slate-500 px-1 py-2">Nothing on {mentee!.name.split(' ')[0]}&rsquo;s plate — use Assign to give them their next task.</p>
                 ) : (
@@ -1466,7 +1466,7 @@ export default function CohortReview() {
 
               {workTab === 'done' && (
                 tasksLoading ? (
-                  <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-slate-400" /></div>
+                  <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-brand-600" /></div>
                 ) : completedTasks.length === 0 ? (
                   <p className="text-sm text-slate-500 px-1 py-2">Nothing finished in this clan yet.</p>
                 ) : (

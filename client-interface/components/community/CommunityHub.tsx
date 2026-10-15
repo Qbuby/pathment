@@ -139,7 +139,7 @@ function Thread({ post, canModerate, readOnly, people, onChanged }: { post: Comm
   return (
     <div className="mt-3 border-t border-slate-100 pt-3 space-y-3">
       {loading ? (
-        <div className="flex justify-center py-3"><Loader2 className="w-4 h-4 animate-spin text-slate-400" /></div>
+        <div className="flex justify-center py-3"><Loader2 className="w-4 h-4 animate-spin text-brand-600" /></div>
       ) : (
         comments.map((c) => (
           <div key={c.id} className={`flex gap-2.5 ${c.parentId ? 'ml-7' : ''}`}>

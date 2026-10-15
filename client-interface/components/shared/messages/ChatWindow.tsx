@@ -299,7 +299,7 @@ export default function ChatWindow({
           <>
             {isLoadingMore && (
               <div className="flex justify-center py-2 shrink-0">
-                <Loader2 className="w-5 h-5 animate-spin text-brand-500" />
+                <Loader2 className="w-5 h-5 animate-spin text-brand-600" />
               </div>
             )}
             {messages.map((message, index) => {

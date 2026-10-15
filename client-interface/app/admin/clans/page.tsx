@@ -396,7 +396,7 @@ function ClanDrawer({ clanId, mentors, mentees, onClose, onChanged }: {
                         {(pickResults.length > 0 || searching) && (
                           <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-card shadow-lg dark:shadow-[0_8px_30px_rgba(0,0,0,0.5)]">
                             {searching ? (
-                              <div className="py-4 flex justify-center"><Loader2 className="w-4 h-4 animate-spin text-slate-400" /></div>
+                              <div className="py-4 flex justify-center"><Loader2 className="w-4 h-4 animate-spin text-brand-600" /></div>
                             ) : pickResults.map((p) => {
                               // A platform admin can't be a mentee — show them
                               // greyed with the reason rather than omitting them,

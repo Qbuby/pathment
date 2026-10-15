@@ -88,7 +88,7 @@ export function RecipientRosterTable({
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-16">
-        <Loader2 className="animate-spin w-6 h-6 text-brand-500" />
+        <Loader2 className="animate-spin w-6 h-6 text-brand-600" />
         <span className="text-xs text-muted-foreground font-semibold">Loading roster data...</span>
       </div>
     );

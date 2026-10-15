@@ -39,7 +39,7 @@ export default function OnboardingGuard({ children }: { children: React.ReactNod
   if (isLoading || needsOnboarding || needsPhoto) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <Loader2 className="h-8 w-8 animate-spin text-brand-600" />
       </div>
     );
   }

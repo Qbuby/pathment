@@ -18,6 +18,7 @@ import { SubmissionFileList } from '@/components/shared/SubmissionFileList';
 import { ResourceError } from '@/components/shared/ResourceError';
 import { useMentorTaskFeedback } from '@/lib/hooks/mentor';
 import { PageHeader } from '@/components/admin/ui';
+import { Spinner } from '@/components/shared/LoadingSpinner';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -520,7 +521,7 @@ export default function FeedbackProvision({ params }: PageProps) {
           >
             {isSubmitting ? (
               <>
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                <Spinner size="xs" className="text-white" />
                 {alreadyReviewed ? 'Saving...' : 'Submitting...'}
               </>
             ) : (

@@ -16,7 +16,7 @@ export default function MentorCoursesPage() {
   const { courses, loading, fetching, error, refetch } = useCourses(connected);
 
   if (statusLoading) {
-    return <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-slate-300" /></div>;
+    return <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-brand-600" /></div>;
   }
 
   if (!connected) {
@@ -53,7 +53,7 @@ export default function MentorCoursesPage() {
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-slate-300" /></div>
+        <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-brand-600" /></div>
       ) : error ? (
         <div className="rounded-2xl border border-dashed border-slate-200 p-12 text-center">
           <p className="text-slate-900 font-medium">Couldn&apos;t load courses</p>

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import type { DailySession, ActivitySummary, RecentEvent } from '@/lib/types/activity';
 import { Clock, Flame, BarChart2, CalendarCheck, Briefcase, RefreshCw } from 'lucide-react';
+import { Spinner } from '@/components/shared/LoadingSpinner';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -147,7 +148,7 @@ export function ActivityCard({
 
       {loading ? (
         <div className="h-24 flex items-center justify-center">
-          <div className="w-5 h-5 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+          <Spinner size="sm" />
         </div>
       ) : (
         <>

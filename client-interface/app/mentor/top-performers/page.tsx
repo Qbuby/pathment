@@ -108,7 +108,7 @@ export default function MentorTopPerformersPage() {
 
       {loading ? (
         <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-6 h-6 animate-spin text-brand-500" />
+          <Loader2 className="w-6 h-6 animate-spin text-brand-600" />
         </div>
       ) : board.ranked.length + board.notRanked.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border bg-card p-10 text-center">

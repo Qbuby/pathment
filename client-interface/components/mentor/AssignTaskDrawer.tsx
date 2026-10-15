@@ -616,7 +616,7 @@ export function AssignTaskDrawer({
                       <Mic className="w-4 h-4 text-brand-600" /> Interview kit <span className="text-red-500">*</span>
                     </div>
                     {kitsLoading ? (
-                      <div className="flex items-center gap-2 text-sm text-slate-400 py-1"><Loader2 className="w-4 h-4 animate-spin" />Loading your kits…</div>
+                      <div className="flex items-center gap-2 text-sm text-slate-400 py-1"><Loader2 className="w-4 h-4 animate-spin text-brand-600" />Loading your kits…</div>
                     ) : kits.length === 0 ? (
                       <p className="text-sm text-slate-500">
                         No <span className="font-medium">published</span> interview kits to assign.{' '}
@@ -662,7 +662,7 @@ export function AssignTaskDrawer({
                       <ListChecks className="w-4 h-4 text-brand-600" /> Quiz <span className="text-red-500">*</span>
                     </div>
                     {quizKitsLoading ? (
-                      <div className="flex items-center gap-2 text-sm text-slate-400 py-1"><Loader2 className="w-4 h-4 animate-spin" />Loading your quizzes…</div>
+                      <div className="flex items-center gap-2 text-sm text-slate-400 py-1"><Loader2 className="w-4 h-4 animate-spin text-brand-600" />Loading your quizzes…</div>
                     ) : quizKits.length === 0 ? (
                       <p className="text-sm text-slate-500">
                         No <span className="font-medium">published</span> quizzes to assign.{' '}
@@ -716,7 +716,7 @@ export function AssignTaskDrawer({
                       <GraduationCap className="w-4 h-4 text-brand-600" /> Buildment course <span className="text-red-500">*</span>
                     </div>
                     {coursesLoading ? (
-                      <div className="flex items-center gap-2 text-sm text-slate-400 py-1"><Loader2 className="w-4 h-4 animate-spin" />Loading courses…</div>
+                      <div className="flex items-center gap-2 text-sm text-slate-400 py-1"><Loader2 className="w-4 h-4 animate-spin text-brand-600" />Loading courses…</div>
                     ) : courses.length === 0 ? (
                       <p className="text-sm text-slate-500">No courses are available to your workspace on Buildment yet.</p>
                     ) : (
@@ -780,7 +780,7 @@ export function AssignTaskDrawer({
                             {toEnroll.length > 0 && (
                               <button type="button" onClick={enroll} disabled={enrolling || historical}
                                 className="px-3.5 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm font-medium inline-flex items-center gap-2 disabled:opacity-50">
-                                {enrolling ? <Loader2 className="w-4 h-4 animate-spin" /> : <GraduationCap className="w-4 h-4" />}
+                                {enrolling ? <Loader2 className="w-4 h-4 animate-spin text-brand-600" /> : <GraduationCap className="w-4 h-4" />}
                                 {mode === 'single'
                                   ? `Enroll ${firstName} on Buildment`
                                   : `Enroll ${toEnroll.length} mentee${toEnroll.length === 1 ? '' : 's'} on Buildment`}
@@ -938,7 +938,7 @@ export function AssignTaskDrawer({
                     <div>
                       <span className="block text-sm font-medium text-slate-700 mb-1.5">Pick a roadmap</span>
                       {roadmapsLoading ? (
-                        <div className="flex items-center gap-2 text-sm text-slate-400 py-2"><Loader2 className="w-4 h-4 animate-spin" />Loading your roadmaps…</div>
+                        <div className="flex items-center gap-2 text-sm text-slate-400 py-2"><Loader2 className="w-4 h-4 animate-spin text-brand-600" />Loading your roadmaps…</div>
                       ) : localRoadmaps.length === 0 ? (
                         <p className="text-sm text-slate-500 rounded-lg border border-dashed border-slate-200 p-3">No roadmaps yet. Create or import one on the Roadmaps page, then assign it here.</p>
                       ) : (
@@ -959,7 +959,7 @@ export function AssignTaskDrawer({
                     </div>
 
                     {roadmapId && assigneesLoading && (
-                      <p className="flex items-center gap-1.5 text-xs text-slate-400"><Loader2 className="w-3.5 h-3.5 animate-spin" />Checking who already has this roadmap…</p>
+                      <p className="flex items-center gap-1.5 text-xs text-slate-400"><Loader2 className="w-3.5 h-3.5 animate-spin text-brand-600" />Checking who already has this roadmap…</p>
                     )}
 
                     {selectedRoadmap && selectedRoadmap.steps.length > 0 && (() => {
@@ -982,7 +982,7 @@ export function AssignTaskDrawer({
                           </div>
                           <div className="max-h-56 overflow-y-auto rounded-xl border border-slate-200 divide-y divide-slate-100 dark:divide-slate-700 dark:border-slate-700">
                             {stepsLoading ? (
-                              <div className="flex justify-center py-4"><Loader2 className="w-4 h-4 animate-spin text-slate-400" /></div>
+                              <div className="flex justify-center py-4"><Loader2 className="w-4 h-4 animate-spin text-brand-600" /></div>
                             ) : rows.map((s) => {
                               const isActive = !!s.status && ACTIVE_TASK.includes(s.status);
                               const isDone = s.status === 'completed';
@@ -1082,7 +1082,7 @@ export function AssignTaskDrawer({
               <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-2">
                 <button onClick={closeKeepingDraft} className="px-4 py-2 border border-slate-200 text-slate-700 rounded-xl text-sm hover:bg-slate-50">Cancel</button>
                 <button onClick={submit} disabled={!canSubmit || saving} title={source === 'custom' && isCourse && !courseReady ? 'Enroll on Buildment first' : 'Ctrl+Enter'} className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm inline-flex items-center gap-2 disabled:opacity-50">
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin text-brand-600" /> : <Check className="w-4 h-4" />}
                   {source === 'roadmap'
                     ? (mode === 'bulk' ? `Assign roadmap to ${targetCount}` : 'Assign roadmap')
                     : isCourse ? (mode === 'bulk' ? `Assign course to ${selected.size}` : 'Assign course')

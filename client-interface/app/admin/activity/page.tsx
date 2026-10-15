@@ -78,7 +78,7 @@ export default function AdminActivityPage() {
 
       {loading && !overview ? (
         <div className="flex items-center justify-center py-16">
-          <Loader2 className="w-7 h-7 animate-spin text-brand-500" />
+          <Loader2 className="w-7 h-7 animate-spin text-brand-600" />
         </div>
       ) : (
         <>

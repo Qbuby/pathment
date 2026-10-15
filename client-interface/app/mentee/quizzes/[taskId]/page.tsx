@@ -210,7 +210,7 @@ export default function QuizRunnerPage({ params }: { params: Promise<{ taskId: s
 
   // ── Loading / submitting / error ─────────────────────────────────────────────
   if (phase === 'loading') {
-    return <Stage><Loader2 className="w-7 h-7 animate-spin text-slate-400" /></Stage>;
+    return <Stage><Loader2 className="w-7 h-7 animate-spin text-brand-600" /></Stage>;
   }
 
   if (phase === 'submitting') {
@@ -456,7 +456,7 @@ export default function QuizRunnerPage({ params }: { params: Promise<{ taskId: s
     );
   }
 
-  return <Stage><Loader2 className="w-7 h-7 animate-spin text-slate-400" /></Stage>;
+  return <Stage><Loader2 className="w-7 h-7 animate-spin text-brand-600" /></Stage>;
 }
 
 // ── Result screen ─────────────────────────────────────────────────────────────

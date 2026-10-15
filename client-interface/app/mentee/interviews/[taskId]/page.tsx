@@ -506,7 +506,7 @@ export default function InterviewRunnerPage({ params }: { params: Promise<{ task
 
   // ── Renders ──────────────────────────────────────────────────────────────────
   if (phase === 'loading') {
-    return <Stage><Loader2 className="w-7 h-7 animate-spin text-slate-500" /></Stage>;
+    return <Stage><Loader2 className="w-7 h-7 animate-spin text-brand-600" /></Stage>;
   }
 
   if (phase === 'submitting') {

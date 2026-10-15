@@ -44,7 +44,7 @@ export function TaskProgressTimeline({ taskId }: { taskId: string }) {
   if (loading) {
     return (
       <div className="flex justify-center py-3">
-        <Loader2 className="h-4 w-4 animate-spin text-slate-400" aria-hidden />
+        <Loader2 className="h-4 w-4 animate-spin text-brand-600" aria-hidden />
       </div>
     );
   }

@@ -136,7 +136,7 @@ export function FeedbackDrawer({ open, onClose }: { open: boolean; onClose: () =
       ) : (
         <div>
           {loadingMine ? (
-            <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-brand-500" /></div>
+            <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-brand-600" /></div>
           ) : mine.length === 0 ? (
             <p className="text-sm text-slate-400 text-center py-10">You haven&apos;t submitted any feedback yet.</p>
           ) : (

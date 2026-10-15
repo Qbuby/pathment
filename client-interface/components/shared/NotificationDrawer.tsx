@@ -36,6 +36,7 @@ import {
   type StandingClanReview,
 } from "@/components/shared/StandingClanDecisionDrawer";
 import { NotificationCard } from "@/components/shared/NotificationCard";
+import { Spinner } from '@/components/shared/LoadingSpinner';
 
 interface Notification {
   id: string;
@@ -416,7 +417,7 @@ export default function NotificationDrawer({
                 )}
                 {isLoading ? (
                   <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-2">
-                    <Clock className="w-6 h-6 animate-spin" />
+                    <Spinner size="sm" className="h-6 w-6" />
                     <span>Loading notifications...</span>
                   </div>
                 ) : feedNotifications.length === 0 && pendingStanding.length === 0 ? (

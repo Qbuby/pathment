@@ -41,6 +41,7 @@ import {
   SUBMISSION_MAX_FILES,
   getSubmissionFileRejectReason,
 } from '@/lib/utils/submission-files';
+import { Spinner } from '@/components/shared/LoadingSpinner';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -172,7 +173,7 @@ export default function TaskSubmission({ params }: PageProps) {
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-600"></div>
+        <Spinner size="lg" />
       </div>
     );
   }
@@ -529,7 +530,7 @@ export default function TaskSubmission({ params }: PageProps) {
               >
                 {isSubmitting ? (
                   <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <Spinner size="xs" className="text-white" />
                     Submitting...
                   </>
                 ) : (

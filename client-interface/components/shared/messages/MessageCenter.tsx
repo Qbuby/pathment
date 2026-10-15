@@ -849,7 +849,7 @@ export default function MessageCenter({ role }: MessageCenterProps) {
                   {/* Generating loader row — appears while RAG pipeline is running */}
                   {isGenerating && (
                     <div className="flex items-center gap-2.5 bg-brand-500/10 border border-brand-500/20 rounded-xl px-3 py-2.5">
-                      <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-500 shrink-0" />
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-600 shrink-0" />
                       <span className="text-xs text-brand-600 dark:text-brand-400 font-medium">Generating new draft…</span>
                     </div>
                   )}

@@ -356,7 +356,7 @@ export function MenteeEvidenceDrawer({
     >
       {loading ? (
         <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-6 h-6 animate-spin text-brand-500" />
+          <Loader2 className="w-6 h-6 animate-spin text-brand-600" />
         </div>
       ) : error ? (
         <div className="space-y-3 rounded-2xl border border-red-500/30 bg-red-500/5 p-5">

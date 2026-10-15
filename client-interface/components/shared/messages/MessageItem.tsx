@@ -9,6 +9,7 @@ import {
   PopoverContent,
 } from '@/components/ui/popover';
 import type { ChatMessage } from '@/lib/types/messaging';
+import { Spinner } from '@/components/shared/LoadingSpinner';
 
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '🎉', '😢', '🙏'];
 const LONG_PRESS_MS = 420;
@@ -260,7 +261,7 @@ export default function MessageItem({
                     if (isTemp) {
                       return (
                         <span className="inline-flex" title="Sending...">
-                          <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin self-center" />
+                          <Spinner size="xs" className="h-3 w-3 self-center text-white" />
                         </span>
                       );
                     }

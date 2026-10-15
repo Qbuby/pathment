@@ -9,6 +9,7 @@ import type { SubmissionFile } from "@/lib/types/submission";
 import { Star, FileText, MessageSquare, Clock, CheckCircle2, User, ExternalLink, Check } from "lucide-react";
 import { toExternalHref } from "@/lib/utils/url";
 import { getViewerTimeZone } from "@/lib/utils/datetime";
+import { Spinner } from '@/components/shared/LoadingSpinner';
 
 type Feedback = {
   id: string;
@@ -64,7 +65,7 @@ export function TaskSubmissionHistory({ taskId }: { taskId: string }) {
   });
   const submissions = data?.submissions || [];
 
-  if (isPending) return <p role="status" className="text-sm text-slate-500 flex items-center gap-2"><Clock className="w-4 h-4 animate-spin" /> Loading submissions…</p>;
+  if (isPending) return <p role="status" className="text-sm text-slate-500 flex items-center gap-2"><Spinner size="xs" /> Loading submissions…</p>;
   if (isError) return (
     <div role="alert" className="text-sm text-red-600 bg-red-50 p-3 rounded-lg border border-red-200">
       <p>Could not load submissions.</p>

@@ -100,7 +100,7 @@ export function CourseProgressCard({
   };
 
   if (loading) {
-    return <div className="rounded-xl border border-border p-4 flex items-center gap-2 text-sm text-slate-400"><Loader2 className="w-4 h-4 animate-spin" />Loading course…</div>;
+    return <div className="rounded-xl border border-border p-4 flex items-center gap-2 text-sm text-slate-400"><Loader2 className="w-4 h-4 animate-spin text-brand-600" />Loading course…</div>;
   }
   if (!enrollment) {
     return <div className="rounded-xl border border-border p-4 text-sm text-slate-500">{error || 'This course is unavailable.'}</div>;
