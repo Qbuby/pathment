@@ -41,8 +41,8 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 1 | Remember the selected clan (mentor **and** mentee) across navigation/return. Web + mobile. | ⚠️ | `4d990259` | Web done & browser-verified. Mobile is a separate repo — see flag 4. |
 | 2 | Announcements UI/UX is poor for admin, mentor and mentee — redesign. | ✅ | `ad3b73f3` | Feed, composer and dashboard card rebuilt; browser-verified. |
 | 3 | A mentor who also has admin access sees **every clan's** announcements even on the mentor/mentee tab — scope bug. | ✅ | `93b68a66` | Verified against the running API with a mentor+admin account. |
-| 4 | Loader/spinner differs between screens — use one loader everywhere. | ⬜ | | |
-| 5 | Mentee moved to a standing clan still sees previous clans' tasks there; mentor-deleted tasks persist; "My learning" disagrees with "This Week". | ⬜ | | Evidence: This Week shows 5 (incl. a duplicate), My learning shows 1, for the same clan. |
+| 4 | Loader/spinner differs between screens — use one loader everywhere. | ✅ | `18f98c6b` | 5 competing spinners unified; guard test added. |
+| 5 | Mentee moved to a standing clan still sees previous clans' tasks there; mentor-deleted tasks persist; "My learning" disagrees with "This Week". | ✅ | `e5d3a6cd` | Both faults fixed; 5 tests proven to fail on the old code. |
 | 6 | Community must stay open after program completion (currently read-only). | ⬜ | | |
 | 6i | Spaces listing: separate completed vs active programs, designed properly. | ⬜ | | |
 | 6ii | Mentors appear to auto-post (repetitive "Weekly standup") — remove that. | ⬜ | | |
@@ -190,3 +190,58 @@ render, the long body clamps and its tail — links included — stays hidden un
 both link forms resolve (`www.` gets an https scheme) and display shortened, avatars show,
 search and filter chips render, the composer opens as a drawer with **zero** native
 `<select>` elements. No console errors.
+
+### Issue 4 — one loader everywhere
+
+**Root cause.** Five competing indicators: the `Loader2` icon in a dozen sizes and
+colours, three hand-rolled CSS ring spinners with different stroke widths, and on two
+screens a `Clock` or `RotateCw` spun on its axis. Only 1 file used the shared
+`LoadingSpinner`; 189 spun something of their own.
+
+**Fix.** `LoadingSpinner` is the one definition and now exports a `Spinner` primitive for
+places a block wrapper does not fit. The 7 ring spinners and the icons standing in for a
+loader are replaced; 61 spinners that picked their own colour now use the brand token,
+including ones silently inheriting a muted grey from the row around them. A refresh arrow
+that spins only while its own action runs is deliberately left alone — that is one icon in
+two states, not the app-is-busy indicator.
+
+**Files.** `components/shared/LoadingSpinner.tsx`, `components/shared/index.ts`, 49 call
+sites, `tests/one-loader.test.cjs` (new).
+
+**Tests run.** `node --test tests/` → 110 pass / 0 fail (4 new guard tests covering: no
+hand-rolled rings, no other icon standing in for loading, no off-brand loader colours, one
+export point). `tsc --noEmit` clean, `npm run build` compiled.
+
+**Verification gap.** Checked by static guard + build rather than in the browser: loaders
+are transient, so a screenshot catches them only by luck.
+
+### Issue 5 — the day planner showed another clan's work
+
+**Root cause — two faults in `scheduleBoardService.board`.**
+1. `_scheduleRow` fell back to *any* row the mentee had when the requested clan had none,
+   so a standing clan with no schedule rendered the previous clan's blocks.
+2. The task query scoped by the schedule **row's** clan rather than the clan being asked
+   about. With no row — or a legacy row carrying no clan — that is no clan filter at all,
+   so every task the mentee ever had, in any clan, landed on the board. This is exactly
+   the screenshot: "work to plan · 5" beside a My-learning list of 1.
+
+**Fix.** Resolve the clan once and use it for both reads, via the `menteeClanScope` helper
+the rest of the codebase already uses — which keeps the one legacy case working (rows
+predating per-clan schedules carry no clan and are adopted only where they cannot belong
+anywhere else: a single membership, into a cohort clan). The OR groups moved inside the
+single AND so the clan filter's own OR cannot overwrite them. The controller now reads the
+clan through `requestedClanId`, so the sidebar's `X-Active-Clan` reaches the planner and
+not only an explicit `?clanId=`.
+
+**Files.** `server/src/services/scheduleBoardService.js`,
+`server/src/controllers/scheduleBoardController.js`,
+`server/tests/tasks/board-clan-scope.test.js` (new).
+
+**Tests run.** `tests/tasks` + `tests/unit` + `tests/access` → 82 pass / 0 fail.
+**All 5 new tests were run against the previous implementation and all 5 fail**, so they
+genuinely cover the defect rather than the fix.
+
+**API-verified** against the running server: a standing clan was seeded for
+`mentee.maya@demo.pathment.com`, whose 24 tasks belong to her cohort clan. The cohort board
+still shows her work; the standing board shows none of it; the clan header alone is enough
+to scope it; My learning and the day now report the same count for the same clan.
