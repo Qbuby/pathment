@@ -20,6 +20,12 @@ interface DrawerProps {
   width?: "sm" | "md" | "lg";
   /** Override stacking when nested above another sheet (e.g. notification drawer). */
   zClass?: string;
+  /**
+   * Optional row under the title (e.g. who this is about + step controls).
+   * When set, the title may wrap onto two lines instead of truncating, so it
+   * stays readable. Omit for the standard single-block header.
+   */
+  headerMeta?: ReactNode;
   /** Sticky footer (usually the Cancel / Save actions). */
   footer?: ReactNode | ((dismiss: () => void) => ReactNode);
   children: ReactNode;
@@ -44,6 +50,7 @@ export function Drawer({
   subtitle,
   width = "md",
   zClass = "z-50",
+  headerMeta,
   footer,
   children,
 }: DrawerProps) {
@@ -161,17 +168,29 @@ export function Drawer({
 
   if (!mounted) return null;
 
-  /**
-   * Rendered into <body>, not where it is written.
-   *
-   * The panel below carries `will-change: transform`, which makes it a
-   * containing block for `position: fixed` descendants — so a drawer opened
-   * from INSIDE another drawer was sized to its parent's panel rather than the
-   * viewport, and the two overlapped instead of stacking. Portalling every
-   * drawer to the page means nesting works wherever it happens.
-   *
-   * `dark` is set on <html>, so theming is unaffected by the move.
-   */
+  const titleBlock = (
+    <div className="min-w-0">
+      <h2
+        title={headerMeta ? title : undefined}
+        className={`font-semibold text-slate-900 ${headerMeta ? "line-clamp-2 break-words" : "truncate"}`}
+      >
+        {title}
+      </h2>
+      {subtitle && (
+        <p className="text-sm text-slate-500 mt-0.5">{subtitle}</p>
+      )}
+    </div>
+  );
+  const closeButton = (
+    <button
+      onClick={dismiss}
+      aria-label="Close"
+      className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 shrink-0"
+    >
+      <X className="w-5 h-5" />
+    </button>
+  );
+
   return createPortal(
     <div className={`fixed inset-0 ${zClass} flex justify-end`}>
       <div
@@ -189,21 +208,20 @@ export function Drawer({
         style={{ willChange: "transform" }}
         className={`relative w-full ${WIDTHS[width]} h-full bg-card border-l border-slate-200 dark:border-slate-700 shadow-2xl dark:shadow-[-8px_0_30px_rgba(0,0,0,0.6)] flex flex-col outline-none ${drawerPanelClass(shown)}`}
       >
-        <div className="flex items-start justify-between gap-3 px-6 py-4 border-b border-slate-200 dark:border-slate-700 shrink-0">
-          <div className="min-w-0">
-            <h2 className="font-semibold text-slate-900 truncate">{title}</h2>
-            {subtitle && (
-              <p className="text-sm text-slate-500 mt-0.5">{subtitle}</p>
-            )}
+        {headerMeta ? (
+          <div className="px-6 pt-4 pb-3 border-b border-slate-200 dark:border-slate-700 shrink-0">
+            <div className="flex items-start justify-between gap-3">
+              {titleBlock}
+              {closeButton}
+            </div>
+            <div className="mt-3">{headerMeta}</div>
           </div>
-          <button
-            onClick={dismiss}
-            aria-label="Close"
-            className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 shrink-0"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+        ) : (
+          <div className="flex items-start justify-between gap-3 px-6 py-4 border-b border-slate-200 dark:border-slate-700 shrink-0">
+            {titleBlock}
+            {closeButton}
+          </div>
+        )}
 
         <div className="flex-1 overflow-y-auto px-6 py-5">{children}</div>
 

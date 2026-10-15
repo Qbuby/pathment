@@ -39,8 +39,11 @@ class NotificationOrchestrator {
    *   bell (and a toast) the instant this fired — mailing them too is noise. Used
    *   for time-sensitive asks that need a nudge if the person isn't looking.
    *   Still subject to the user's email preferences and the global switches.
+   * @param {string[]} [silentFor] User ids who get the notification as usual
+   *   (bell, unread count, email) but no live snackbar — for the person whose
+   *   own action caused it and who has already been told it worked.
    */
-  async dispatch({ eventKey, recipients, payload, dedupe = null, channelOverrides = null, emailOnlyIfOffline = false }) {
+  async dispatch({ eventKey, recipients, payload, dedupe = null, channelOverrides = null, emailOnlyIfOffline = false, silentFor = null }) {
     const matrix = NOTIFICATION_MATRIX[eventKey];
     if (!matrix || !Array.isArray(recipients) || recipients.length === 0) {
       return { delivered: 0, skipped: recipients?.length || 0 };
@@ -79,6 +82,7 @@ class NotificationOrchestrator {
     });
 
     const userById = new Map(users.map((u) => [u.id, u]));
+    const silentIds = new Set(Array.isArray(silentFor) ? silentFor.filter(Boolean) : []);
     let delivered = 0;
     let skipped = 0;
 
@@ -128,7 +132,8 @@ class NotificationOrchestrator {
               relatedEntityType: created.relatedEntityType,
               relatedEntityId: created.relatedEntityId,
               clanId: created.clanId || null,
-              createdAt: created.createdAt
+              createdAt: created.createdAt,
+              ...(silentIds.has(recipient.userId) ? { silent: true } : {})
             });
           } catch (e) {
             console.error('[Notifications] socket emit failed:', e.message);

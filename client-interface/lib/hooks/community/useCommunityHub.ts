@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
-import { communityApi, type ScopeType, type PostType, type ReactionType, type CreatePostInput } from '@/lib/services/community-api';
+import { communityApi, type ScopeType, type PostType, type ReactionType, type CreatePostInput, type ReportCategory } from '@/lib/services/community-api';
+import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { qk, useApiQuery, STALE } from '@/lib/query';
 import { useClan, ALL_CLANS } from '@/lib/context/ClanContext';
 
@@ -187,8 +188,18 @@ export function useCommunityHub() {
     try { await communityApi.acceptAnswer(postId, commentId); toast.success('Answer accepted'); await fetchFeed(); } catch { toast.error('Could not accept'); }
   }, [fetchFeed]);
 
-  const report = useCallback(async (targetType: 'post' | 'comment', targetId: string, reason?: string) => {
-    try { await communityApi.report({ targetType, targetId, reason }); toast.success('Reported to moderators'); } catch { toast.error('Could not report'); }
+  /** Resolves true when the report was accepted, so the dialog knows to close. */
+  const report = useCallback(async (
+    targetType: 'post' | 'comment', targetId: string, reason: { category: ReportCategory; details?: string },
+  ): Promise<boolean> => {
+    try {
+      await communityApi.report({ targetType, targetId, category: reason.category, details: reason.details || undefined });
+      toast.success('Reported to moderators');
+      return true;
+    } catch (e) {
+      toast.error(extractApiErrorMessage(e, 'Could not report'));
+      return false;
+    }
   }, []);
 
   const refetch = useCallback(async () => {

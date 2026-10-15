@@ -6,6 +6,7 @@ import React from 'react';
 import { Loader2, Users, Sparkles, Info, Edit3, ChevronDown, PauseCircle, CheckCircle2, Clock, Lock, MessageCircleQuestion } from 'lucide-react';
 import { getTierBadgeColor } from '@/lib/utils/certificates';
 import { TierCriteria } from '@/components/admin/certificates/certificate-constants';
+import { Avatar } from '@/components/shared/Avatar';
 
 /**
  * Where one recipient stands in an open review round.
@@ -132,7 +133,6 @@ export function RecipientRosterTable({
             ? { certificate_tier: review.aiTier, decision: review.aiDecision, match_score: review.aiMatchScore }
             : aiEvalMap[m.id];
           const issuedTiersList: string[] = m.issuedTiers ?? [];
-          const initials = `${m.firstName?.charAt(0) || ''}${m.lastName?.charAt(0) || ''}`.toUpperCase();
 
           return (
             <div
@@ -154,9 +154,12 @@ export function RecipientRosterTable({
 
               {}
               <div className="col-span-3 flex items-center gap-2.5 min-w-0">
-                <div className="h-7 w-7 rounded-full bg-gradient-to-tr from-brand-500/10 to-indigo-500/10 dark:from-brand-500/20 dark:to-indigo-500/20 text-brand-700 dark:text-brand-300 flex items-center justify-center text-[10px] font-bold border border-brand-500/20 shrink-0">
-                  {initials || 'U'}
-                </div>
+                <Avatar
+                  name={`${m.firstName ?? ''} ${m.lastName ?? ''}`.trim() || undefined}
+                  src={m.profilePictureUrl}
+                  size="sm"
+                  className="shrink-0"
+                />
                 <div className="min-w-0">
                   <div className="font-bold text-foreground truncate flex items-center gap-1.5">
                     <span className="truncate">{m.firstName} {m.lastName}</span>
