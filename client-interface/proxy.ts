@@ -26,7 +26,11 @@ function isAsset(pathname: string) {
 export function proxy(request: NextRequest) {
   const host = hostname(request);
   const pathname = request.nextUrl.pathname;
-  if (isAsset(pathname) || pathname === '/api' || pathname.startsWith('/api/') || pathname.startsWith('/_link/')) return NextResponse.next();
+  // `/.well-known/` is served as itself on every host. It is how Android and
+  // iOS decide whether a link may open the app, and both fetch it without a
+  // workspace cookie, so a rewrite or a redirect to the workspace chooser reads
+  // as "this host trusts no app" and every email link opens the browser.
+  if (isAsset(pathname) || pathname === '/api' || pathname.startsWith('/api/') || pathname.startsWith('/_link/') || pathname.startsWith('/.well-known/')) return NextResponse.next();
 
   const legacy = legacyWorkspaceFromHostname(host);
   if (legacy) {

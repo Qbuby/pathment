@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, type ReactNode } from 'react';
 import { AttendanceFilters, type AttendanceFilter } from './AttendanceFilters';
 import { MenteeCarousel } from './MenteeCarousel';
 import { MenteeAttendanceCard, type AttendanceMentee } from './MenteeAttendanceCard';
@@ -15,6 +15,14 @@ interface AttendanceSectionProps {
   onSaveAttendance: (updates: Record<string, Attendance>) => Promise<void>;
   isSaving: boolean;
   readOnly?: boolean;
+  /**
+   * The "jump to a mentee" field, rendered in this row.
+   *
+   * It had a full-width row of its own directly above, which is a lot of screen
+   * for one input — and it belongs with the roster it searches, not floating
+   * above the whole page.
+   */
+  search?: ReactNode;
 }
 
 // Sort weight for the "all" view: present → absent → excused → not-yet-marked.
@@ -28,6 +36,7 @@ export function AttendanceSection({
   onSaveAttendance,
   isSaving,
   readOnly = false,
+  search,
 }: AttendanceSectionProps) {
   const [currentFilter, setCurrentFilter] = useState<AttendanceFilter>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -60,6 +69,7 @@ export function AttendanceSection({
     <div className="space-y-3 mb-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 min-w-0">
+          {search}
           <div className="overflow-x-auto no-scrollbar pb-1 sm:pb-0">
             <AttendanceFilters currentFilter={currentFilter} onFilterChange={setCurrentFilter} />
           </div>

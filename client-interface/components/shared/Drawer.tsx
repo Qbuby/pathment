@@ -7,6 +7,8 @@ import {
   useCallback,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
+import { DRAWER_DURATION, drawerPanelClass, drawerBackdropClass } from "./drawerMotion";
 import { X } from "lucide-react";
 
 interface DrawerProps {
@@ -32,7 +34,8 @@ interface DrawerProps {
 const WIDTHS = { sm: "max-w-md", md: "max-w-lg", lg: "max-w-xl" } as const;
 let scrollLocks = 0;
 let originalOverflow = "";
-const DURATION = 250; // keep in sync with the duration-[250ms] classes below
+// Shared with every other drawer, so a second implementation cannot drift.
+const DURATION = DRAWER_DURATION;
 
 /**
  * Drawer - the single, accessible right slide-over used across admin / mentor /
@@ -188,22 +191,22 @@ export function Drawer({
     </button>
   );
 
-  return (
+  return createPortal(
     <div className={`fixed inset-0 ${zClass} flex justify-end`}>
       <div
-        className={`absolute inset-0 bg-black/40 dark:bg-black/70 transition-opacity duration-[250ms] motion-reduce:transition-none ease-out ${shown ? "opacity-100" : "opacity-0"}`}
+        className={drawerBackdropClass(shown)}
         onClick={dismiss}
         aria-hidden="true"
       />
       <div
         ref={panelRef}
-        data-shared-drawer
+        data-drawer-motion
         role="dialog"
         aria-modal="true"
         aria-label={title}
         tabIndex={-1}
         style={{ willChange: "transform" }}
-        className={`relative w-full ${WIDTHS[width]} h-full bg-card border-l border-slate-200 dark:border-slate-700 shadow-2xl dark:shadow-[-8px_0_30px_rgba(0,0,0,0.6)] flex flex-col outline-none transform-gpu transition-transform duration-[250ms] motion-reduce:transition-none ease-[cubic-bezier(0.32,0.72,0,1)] ${shown ? "translate-x-0" : "translate-x-full"}`}
+        className={`relative w-full ${WIDTHS[width]} h-full bg-card border-l border-slate-200 dark:border-slate-700 shadow-2xl dark:shadow-[-8px_0_30px_rgba(0,0,0,0.6)] flex flex-col outline-none ${drawerPanelClass(shown)}`}
       >
         {headerMeta ? (
           <div className="px-6 pt-4 pb-3 border-b border-slate-200 dark:border-slate-700 shrink-0">
@@ -228,7 +231,8 @@ export function Drawer({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

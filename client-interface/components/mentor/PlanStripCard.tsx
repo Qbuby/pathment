@@ -25,12 +25,21 @@ import { DayPlanner } from '@/components/mentee/DayPlanner';
  * stepping-through flow. The strip is the signal; the planner is the work.
  */
 export function PlanStripCard({
-  menteeId, menteeName, clanId, readOnly = false,
+  menteeId, menteeName, clanId, readOnly = false, compact = false,
 }: {
   menteeId: string;
   menteeName?: string;
   clanId?: string | null;
   readOnly?: boolean;
+  /**
+   * One row instead of a card.
+   *
+   * The strip's job on a review screen is to say whether today has a shape and
+   * to be a door into it. Laid out as a full card with a block per chip it was
+   * costing more height than the mentee it belonged to, and the detail it
+   * showed is all in the planner one click away.
+   */
+  compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -46,6 +55,44 @@ export function PlanStripCard({
   const blocks = strip?.blocks ?? [];
   const planned = blocks.reduce((n, b) => n + b.total, 0);
   const done = blocks.reduce((n, b) => n + b.done, 0);
+
+  if (compact) {
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => !readOnly && setOpen(true)}
+          disabled={readOnly}
+          aria-label={`Open ${menteeName ? `${menteeName}\u2019s` : 'their'} plan for today`}
+          className="flex w-full items-center gap-2.5 rounded-2xl border border-slate-200 bg-card px-4 py-2.5 text-left transition-colors hover:border-brand-300 disabled:cursor-default disabled:hover:border-slate-200 dark:border-slate-800"
+        >
+          <CalendarClock className="h-4 w-4 shrink-0 text-brand-600" aria-hidden />
+          <span className="shrink-0 text-sm font-medium text-slate-900 dark:text-slate-100">Today&rsquo;s plan</span>
+          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+            {blocks.length === 0
+              ? 'No blocks yet — give the day a shape'
+              : `${blocks.length} block${blocks.length === 1 ? '' : 's'} · ${done}/${planned} done`}
+            {!!strip?.unplanned && ` · ${strip.unplanned} not in a block`}
+          </span>
+          {!readOnly && (
+            <span className="shrink-0 text-xs font-medium text-brand-600">
+              {blocks.length ? 'Open' : 'Set up'}
+            </span>
+          )}
+        </button>
+
+        <Drawer
+          open={open}
+          onClose={() => { setOpen(false); void refetch(); }}
+          width="lg"
+          title={menteeName ? `${menteeName}\u2019s day` : 'Their day'}
+          subtitle="Add work to a block, make a new one, or lock one so it stays put"
+        >
+          {open && <DayPlanner menteeId={menteeId} menteeName={menteeName} clanId={clanId} onChanged={() => void refetch()} />}
+        </Drawer>
+      </>
+    );
+  }
 
   return (
     <>
@@ -135,7 +182,7 @@ export function PlanStripCard({
         title={menteeName ? `${menteeName}’s day` : 'Their day'}
         subtitle="Add work to a block, make a new one, or lock one so it stays put"
       >
-        {open && <DayPlanner menteeId={menteeId} clanId={clanId} onChanged={() => void refetch()} />}
+        {open && <DayPlanner menteeId={menteeId} menteeName={menteeName} clanId={clanId} onChanged={() => void refetch()} />}
       </Drawer>
     </>
   );

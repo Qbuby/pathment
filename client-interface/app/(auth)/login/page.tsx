@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState, useEffect } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/context/AuthContext';
@@ -15,8 +15,11 @@ export default function LoginPage() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { login, verify2FA, user, isLoading, requiresTwoFactor } = useAuth();
+  const { login, signInWithLink, verify2FA, user, isLoading, requiresTwoFactor } = useAuth();
   const initialEmail = searchParams.get('email')?.trim() || '';
+  // A one-time sign-in link lands here: /w/<workspace>/login?link=<token>.
+  const linkToken = searchParams.get('link')?.trim() || '';
+  const [spendingLink, setSpendingLink] = useState(Boolean(linkToken));
   const [formData, setFormData] = useState({ email: initialEmail, password: '' });
   const [step, setStep] = useState<'email' | 'password'>(initialEmail ? 'password' : 'email');
   const [rememberMe, setRememberMe] = useState(true);
@@ -60,6 +63,50 @@ export default function LoginPage() {
       toast.error('Your session has expired. Please log in again.');
     }
   }, [searchParams]);
+
+  /**
+   * Spend the sign-in link, once, on arrival.
+   *
+   * The whole promise of the link is that nobody types anything, so this runs
+   * before the form is ever shown. A link is single use: a second attempt
+   * fails even when the first one worked, which is what the ref is for, and
+   * React's development double render alone would have burned it.
+   *
+   * A failure is not a dead end. The password form is right underneath it with
+   * the address already filled in where we know it.
+   */
+  const spentLink = useRef(false);
+  useEffect(() => {
+    if (!linkToken || spentLink.current) return;
+    spentLink.current = true;
+
+    void signInWithLink(linkToken)
+      .then((result) => {
+        // An account with two factor still answers for it. The modal below
+        // takes over from here.
+        if (result.requiresTwoFactor) {
+          setSpendingLink(false);
+          return;
+        }
+        if (!result.user) {
+          // Nothing to open and nothing to say: fall through to the form
+          // rather than spinning at somebody indefinitely.
+          setSpendingLink(false);
+          return;
+        }
+        setRedirecting(true);
+        router.replace(destinationFor(result.user));
+      })
+      .catch((err: unknown) => {
+        setSpendingLink(false);
+        const rl = getRateLimit(err);
+        setError(
+          rl.limited
+            ? 'Too many attempts with that link. Ask for a fresh one in a few minutes.'
+            : 'That sign-in link has expired or was already used. Ask for a new one, or sign in with your password.',
+        );
+      });
+  }, [linkToken, signInWithLink, router, destinationFor]);
 
   // Redirect if already logged in
   useEffect(() => {
@@ -121,11 +168,17 @@ export default function LoginPage() {
   };
 
   // Show loading while checking auth
-  if (isLoading || redirecting || (user && !requiresTwoFactor)) {
+  if (isLoading || redirecting || spendingLink || (user && !requiresTwoFactor)) {
     return (
       <div role="status" className="flex min-h-64 flex-col items-center justify-center gap-3 text-slate-600">
         <Loader2 className="h-8 w-8 animate-spin text-brand-600" aria-hidden="true" />
-        <span>{redirecting || user ? 'Opening your workspace…' : 'Checking your account…'}</span>
+        <span>
+          {spendingLink && !redirecting && !user
+            ? 'Signing you in from your email link…'
+            : redirecting || user
+            ? 'Opening your workspace…'
+            : 'Checking your account…'}
+        </span>
       </div>
     );
   }

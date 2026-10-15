@@ -107,6 +107,17 @@ exports.handleResendWebhook = async (req, res) => {
         }
         break;
       }
+      /**
+       * Mail sent TO us. Resend holds a copy either way, so a failure here
+       * delays a message rather than losing it.
+       */
+      case 'email.received': {
+        const result = await require('../services/inboundMailService').forward(data);
+        if (!result.forwarded && result.reason !== 'not_configured') {
+          console.error('[resend-webhook] inbound not forwarded:', result.reason);
+        }
+        break;
+      }
       default:
         // Other events (email.sent, email.opened, …) — ignore for now.
         break;

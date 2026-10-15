@@ -25,6 +25,19 @@ export function initialTaskSchedule(): TaskScheduleDraft {
   };
 }
 
+/** 'YYYY-MM-DD' in the viewer's zone — an ISO instant is a day off west of UTC. */
+const dayKey = (d: Date) => d.toLocaleDateString('en-CA');
+const inDays = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return d; };
+/** The coming Monday — what "next week" means when you are planning work. */
+const comingMonday = () => {
+  const d = new Date();
+  d.setDate(d.getDate() + ((8 - d.getDay()) % 7 || 7));
+  return d;
+};
+const WEEKDAYS = [1, 2, 3, 4, 5];
+const DAY_INITIALS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
 export function TaskScheduleFields({
   value,
   onChange,
@@ -74,43 +87,98 @@ export function TaskScheduleFields({
       </div>
       {value.mode !== 'now' && (
         <>
-          <label className="block text-xs font-medium">
-            {value.mode === 'once' ? 'Scheduled for' : 'Start repeating from'}
-            <input
-              aria-label="Schedule date and time"
-              type="datetime-local"
-              value={`${value.startsOn}T${value.timeLocal}`}
-              onChange={(e) => {
-                const [startsOn, timeLocal] = e.target.value.split('T');
-                patch({ startsOn: startsOn || '', timeLocal: timeLocal || '' });
-              }}
-              className={`${field} mt-1.5`}
-            />
-          </label>
+          <div>
+            <label className="block text-xs font-medium">
+              {value.mode === 'once' ? 'Scheduled for' : 'Start repeating from'}
+              <input
+                aria-label="Schedule date and time"
+                type="datetime-local"
+                value={`${value.startsOn}T${value.timeLocal}`}
+                onChange={(e) => {
+                  const [startsOn, timeLocal] = e.target.value.split('T');
+                  patch({ startsOn: startsOn || '', timeLocal: timeLocal || '' });
+                }}
+                className={`${field} mt-1.5`}
+              />
+            </label>
+            {/* Typing a date you have to work out from a calendar is the slowest
+                part of this form, and these three are nearly always the answer. */}
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {[
+                { label: 'Today', date: new Date() },
+                { label: 'Tomorrow', date: inDays(1) },
+                { label: 'Next week', date: comingMonday() },
+              ].map((quick) => {
+                const key = dayKey(quick.date);
+                return (
+                  <button
+                    type="button"
+                    key={quick.label}
+                    aria-pressed={value.startsOn === key}
+                    onClick={() => patch({
+                      startsOn: key,
+                      // Repeating from a chosen day means that day of the week,
+                      // unless days have already been picked by hand.
+                      ...(value.mode === 'weekly' && value.daysOfWeek.length <= 1
+                        ? { daysOfWeek: [quick.date.getDay()] } : {}),
+                    })}
+                    className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-colors ${
+                      value.startsOn === key
+                        ? 'bg-brand-600 text-white'
+                        : 'border border-border text-muted-foreground hover:border-brand-300 hover:text-brand-700'
+                    }`}
+                  >
+                    {quick.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           {value.mode === 'weekly' && (
             <fieldset>
-              <legend className="text-xs font-medium mb-2">Repeat on</legend>
-              <div className="flex gap-1.5 flex-wrap">
-                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(
-                  (day, index) => (
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <legend className="text-xs font-medium">Repeat on</legend>
+                {/* "Every weekday" is the commonest shape of all and took five
+                    taps to build by hand. */}
+                <button
+                  type="button"
+                  onClick={() => patch({ daysOfWeek: WEEKDAYS })}
+                  className="rounded-lg border border-border px-2 py-0.5 text-[11px] font-medium text-muted-foreground hover:border-brand-300 hover:text-brand-700"
+                >
+                  Weekdays
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {DAY_INITIALS.map((initial, index) => {
+                  const on = value.daysOfWeek.includes(index);
+                  return (
                     <button
                       type="button"
-                      key={day}
-                      aria-pressed={value.daysOfWeek.includes(index)}
+                      key={DAY_NAMES[index]}
+                      aria-pressed={on}
+                      aria-label={DAY_NAMES[index]}
+                      title={DAY_NAMES[index]}
                       onClick={() =>
                         patch({
-                          daysOfWeek: value.daysOfWeek.includes(index)
+                          daysOfWeek: on
                             ? value.daysOfWeek.filter((d) => d !== index)
-                            : [...value.daysOfWeek, index],
+                            : [...value.daysOfWeek, index].sort((a, b) => a - b),
                         })
                       }
-                      className={`h-9 min-w-10 rounded-lg text-xs font-medium ${value.daysOfWeek.includes(index) ? 'bg-brand-600 text-white' : 'bg-card border border-border text-muted-foreground'}`}
+                      className={`h-9 w-9 rounded-full text-xs font-semibold transition-colors ${
+                        on
+                          ? 'bg-brand-600 text-white'
+                          : 'border border-border bg-card text-muted-foreground hover:border-brand-300'
+                      }`}
                     >
-                      {day}
+                      {initial}
                     </button>
-                  ),
-                )}
+                  );
+                })}
               </div>
+              {value.daysOfWeek.length === 0 && (
+                <p className="mt-1.5 text-[11px] text-amber-600">Pick at least one day.</p>
+              )}
             </fieldset>
           )}
           <p className="text-xs text-muted-foreground">

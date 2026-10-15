@@ -40,6 +40,8 @@ interface AuthContextType {
   /** Switch the active role view (no-op if not one of the user's capabilities). */
   setActiveRole: (role: UserRole) => void;
   login: (credentials: LoginCredentials, rememberMe?: boolean) => Promise<{ requiresTwoFactor: boolean; user?: User }>;
+  /** Spend a one-time sign-in link from an email. Same outcome as a password. */
+  signInWithLink: (token: string, rememberMe?: boolean) => Promise<{ requiresTwoFactor: boolean; user?: User }>;
   verify2FA: (code: string, rememberMe?: boolean) => Promise<User>;
   register: (data: RegisterData) => Promise<RegistrationResult>;
   logout: () => Promise<void>;
@@ -218,6 +220,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  /**
+   * Signing in by link.
+   *
+   * The server has issued these for a long time and nothing in the browser
+   * ever spent one, so the link in the email landed on this page and the
+   * person was asked for the password they had just avoided typing.
+   *
+   * It ends exactly where `login` ends, two factor included: the link proves
+   * the address, a second factor is a separate question, and an account that
+   * has one still has to answer it.
+   */
+  const signInWithLink = async (token: string, rememberMe = true) => {
+    const response = await apiClient.post<{ data: AuthResponse & Partial<TwoFactorLoginResponse> }>(
+      apiConfig.endpoints.verifySignInLink,
+      { token, client: 'web' }
+    );
+
+    const responseData = response.data;
+
+    if (responseData?.requiresTwoFactor) {
+      setRequiresTwoFactor(true);
+      setTemporaryToken(responseData?.temporaryToken ?? null);
+      setUser(responseData?.user);
+      setPendingRemember(rememberMe);
+      return { requiresTwoFactor: true };
+    }
+
+    const linkedUser = responseData?.user;
+    const accessToken = responseData?.tokens?.accessToken;
+    const refreshToken = responseData?.tokens?.refreshToken;
+
+    if (!linkedUser || !accessToken || !refreshToken) {
+      throw new Error('Invalid sign-in link response structure');
+    }
+
+    tokenStore.setSession({ token: accessToken, refreshToken, user: linkedUser }, rememberMe);
+    resetAuthSession();
+    clearUserScopedClientState(queryClient);
+    setUser(linkedUser);
+    setRequiresTwoFactor(false);
+    setTemporaryToken(null);
+    return { requiresTwoFactor: false, user: linkedUser };
+  };
+
   const verify2FA = async (code: string, rememberMe = pendingRemember) => {
     if (!temporaryToken) {
       throw new Error('No temporary token available. Please login first.');
@@ -309,6 +355,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     availableRoles: getCapabilities(user),
     setActiveRole,
     login,
+    signInWithLink,
     verify2FA,
     register,
     logout,

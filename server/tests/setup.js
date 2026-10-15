@@ -13,6 +13,10 @@ jest.mock('../src/services/notificationOrchestrator', () => {
   const stub = jest.fn().mockResolvedValue({ delivered: 0, skipped: 0 });
   return {
     dispatch: stub,
+    // The push half, used by paths that write their own notification row (a
+    // direct message). Stubbed here too, or every send in every suite would
+    // reach for a method that is not on the mock.
+    pushOnly: jest.fn().mockResolvedValue({ sent: 0 }),
     sendWelcomeEmail: jest.fn().mockResolvedValue({ sent: true }),
     sendRegistrationInviteEmail: jest.fn().mockResolvedValue({ sent: true }),
     sendPasswordResetEmail: jest.fn().mockResolvedValue({ sent: true }),

@@ -10,7 +10,7 @@ import { toast } from 'sonner';
 import {
   ChevronLeft, ChevronRight, SkipForward, Check, Loader2,
   TrendingUp, TrendingDown, Minus, Flag, Clock, ClipboardCheck, Keyboard, CheckCircle2, ArrowUpRight, Send, Plus, ListTodo, CalendarClock,
-  Trash2, X, History, RotateCcw, CalendarDays, AlertTriangle, StickyNote, Search, Lock, Unlock, PauseCircle, Sparkles, PenLine, Star, Users,
+  Trash2, X, History, RotateCcw, CalendarDays, AlertTriangle, StickyNote, Search, Lock, Unlock, PauseCircle, Sparkles, Star, Users,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useMentorCohort, useMentorApprovals, type CohortMentee, type CohortMomentum, type CohortRisk, type ApprovalItem } from '@/lib/hooks/mentor';
@@ -37,7 +37,6 @@ import { useConfirm } from '@/lib/context/ConfirmContext';
 import { AttendanceSection } from '@/components/mentor/attendance/AttendanceSection';
 import { ReviewMeetingPanel } from '@/components/mentor/ReviewMeetingPanel';
 import { ReviewScheduleDrawer } from '@/components/mentor/ReviewScheduleDrawer';
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { getViewerTimeZone } from '@/lib/utils/datetime';
 import { MobileReviewActionBar } from '@/components/mentor/MobileReviewActionBar';
 import { ContinueWorkLauncher } from '@/components/mentor/ContinueWorkLauncher';
@@ -73,8 +72,8 @@ const TASK_STATUS_META: Record<string, { label: string; cls: string }> = {
   completed: { label: 'Completed', cls: 'bg-emerald-100 text-emerald-700' },
   cancelled: { label: 'Cancelled', cls: 'bg-slate-100 text-slate-400' },
 };
+/** Most urgent first, so a list of mixed statuses reads top-down. */
 const TASK_STATUS_ORDER = ['revision_needed', 'submitted', 'in_progress', 'assigned', 'not_started', 'completed', 'cancelled'];
-const TASK_STATUS_COLLAPSED_DEFAULT = new Set(['completed', 'cancelled']);
 
 const AssignTaskDrawer = dynamic(() => import('@/components/mentor/AssignTaskDrawer').then(module => module.AssignTaskDrawer));
 
@@ -456,17 +455,37 @@ export default function CohortReview() {
   };
 
   const dayTasks = useMemo(() => tasks.filter((t) => t.status !== 'submitted'), [tasks]);
-  const taskGroups = useMemo(() => {
-    const by: Record<string, any[]> = {}; // eslint-disable-line @typescript-eslint/no-explicit-any
-    dayTasks.forEach((t) => { const k = t.status || 'assigned'; (by[k] = by[k] || []).push(t); });
-    return TASK_STATUS_ORDER.filter((s) => by[s]?.length).map((s) => ({ status: s, items: by[s] }));
-  }, [dayTasks]);
-
-  // Finished work collapses by default. A mentee a few months in has far more
-  // completed tasks than live ones, and leaving them all expanded pushed the
-  // "To review" queue — the reason you're on this screen — below the fold.
-  // The count stays on the header, so nothing looks missing when it's shut.
-
+  /**
+   * The mentee's work as three lists rather than three cards.
+   *
+   * To review, in progress and completed were separate stacked panels, so the
+   * queue that is the whole reason for this screen sat above a long accordion
+   * of finished work and everything below it — the side rail, the notes — was
+   * pushed off the fold. They are one surface now, because they are one
+   * question: what is going on with this person's work.
+   */
+  const byUrgency = (a: any, b: any) => // eslint-disable-line @typescript-eslint/no-explicit-any
+    TASK_STATUS_ORDER.indexOf(a.status) - TASK_STATUS_ORDER.indexOf(b.status);
+  const inProgressTasks = useMemo(
+    () => dayTasks.filter((t) => t.status !== 'completed').sort(byUrgency),
+    [dayTasks],
+  );
+  const completedTasks = useMemo(() => dayTasks.filter((t) => t.status === 'completed'), [dayTasks]);
+  const [workTab, setWorkTab] = useState<'review' | 'progress' | 'done'>('review');
+  /**
+   * Land on the tab that has something in it. Opening on an empty "To review"
+   * when there are six live tasks makes the screen look broken.
+   *
+   * Once per mentee, and only after their work has loaded — keying this on the
+   * counts alone would snap the mentor back to "To review" the moment they
+   * approved something while reading the completed list.
+   */
+  const tabPickedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (tasksLoading || tabPickedFor.current === menteeId) return;
+    tabPickedFor.current = menteeId ?? null;
+    setWorkTab(pending.length ? 'review' : inProgressTasks.length ? 'progress' : completedTasks.length ? 'done' : 'review');
+  }, [menteeId, tasksLoading, pending.length, inProgressTasks.length, completedTasks.length]);
 
   // Latest mentor note + rating for a task, surfaced on reviewed/changes rows.
   const reviewOf = (t: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -495,11 +514,6 @@ export default function CohortReview() {
     };
   };
 
-  const openTaskGroups = useMemo(
-    () => taskGroups.filter((g) => !TASK_STATUS_COLLAPSED_DEFAULT.has(g.status)).map((g) => g.status),
-    [taskGroups],
-  );
-
   const go = useCallback((delta: number) => {
     selectMentee(Math.max(0, Math.min(cohort.length - 1, idx + delta)));
   }, [selectMentee, cohort.length, idx]);
@@ -508,6 +522,50 @@ export default function CohortReview() {
     if (mentee && editable) patchEntry(mentee.id, { status: 'deferred' }, true);
     go(1);
   }, [mentee, go, editable, patchEntry]);
+
+  /**
+   * Whether the system thinks THIS mentee should be paused.
+   *
+   * The same read that drives the suggested-to-pause queue on My Mentees. It
+   * belonged here too: clan review is where a mentor actually notices someone
+   * has stopped turning up, and the Pause button sat on this card with nothing
+   * telling them the system had already reached that conclusion.
+   */
+  const [pauseHints, setPauseHints] = useState<Record<string, { reason: string; missedReviews: number; neverAttended: boolean }>>({});
+  useEffect(() => {
+    if (!effectiveClanId) return;
+    let live = true;
+    mentorApi.listPauseSuggestions(effectiveClanId)
+      .then((r: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+        if (!live) return;
+        const next: Record<string, { reason: string; missedReviews: number; neverAttended: boolean }> = {};
+        for (const row of (r?.data?.suggestions ?? [])) {
+          next[row.menteeId] = {
+            reason: row.reason,
+            missedReviews: row.missedReviews ?? 0,
+            neverAttended: !!row.neverAttended,
+          };
+        }
+        setPauseHints(next);
+      })
+      // Quiet on failure: a missing hint is a missing hint, never an error on
+      // the review screen.
+      .catch(() => { if (live) setPauseHints({}); });
+    return () => { live = false; };
+  }, [effectiveClanId]);
+
+  const pauseHint = mentee ? pauseHints[mentee.id] ?? null : null;
+
+  const dismissPauseHint = useCallback(async () => {
+    if (!mentee) return;
+    const id = mentee.id;
+    setPauseHints((prev) => { const next = { ...prev }; delete next[id]; return next; });
+    try {
+      await mentorApi.dismissPauseSuggestion(id, effectiveClanId ?? undefined);
+    } catch (e) {
+      toast.error(extractApiErrorMessage(e, 'Could not dismiss that'));
+    }
+  }, [mentee, effectiveClanId]);
 
   // Pause the mentee you're reviewing (they stopped showing up). Confirms,
   // pauses, drops them from the cohort, and moves on to the next person.
@@ -541,6 +599,163 @@ export default function CohortReview() {
       try { const r: any = await taskApi.getMenteeTasks(menteeId); setTasks(r?.data?.tasks ?? []); } catch { /* keep prior */ } // eslint-disable-line @typescript-eslint/no-explicit-any
     }
   }, [refetchQueue, menteeId]);
+
+
+  /**
+   * One row of assigned work. Lifted out of the status accordion unchanged so
+   * the In-progress and Completed tabs render identically — the only thing
+   * that differed per group was the label, which the row already carries.
+   */
+  const renderTaskRow = (t: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+    const meta = TASK_STATUS_META[t.status as keyof typeof TASK_STATUS_META] ?? TASK_STATUS_META.assigned;
+    const showTimeline = t.status === 'revision_needed' || t.status === 'completed';
+    const dueMs = t.dueDate ? new Date(t.dueDate).getTime() : null;
+    const overdue = dueMs != null && t.status !== 'completed' && dueMs < Date.now();
+    const { note, rating } = reviewOf(t);
+    const { submitted, reviewed } = showTimeline ? taskTimeline(t) : { submitted: null, reviewed: null };
+    const points = t.points ?? t.pointsBase ?? t.roadmapTask?.pointsBase;
+    const source = t.isCustomTask ? 'Custom' : (t.roadmapName || 'Roadmap');
+    const typeLabel = t.roadmapTask?.type
+      ? String(t.roadmapTask.type).charAt(0).toUpperCase() + String(t.roadmapTask.type).slice(1)
+      : null;
+    const dueLabel = fmtCardDate(t.dueDate);
+    const canManage = !['cancelled'].includes(t.status);
+    const canUnassign = !['submitted', 'completed', 'cancelled'].includes(t.status);
+    const isEditingDue = editingDue === t.id;
+    const busy = busyTaskId === t.id;
+    return (
+      <div key={t.id} className="p-3 rounded-xl border border-slate-200">
+        <div className="flex items-center gap-2.5">
+          <button type="button" onClick={() => setTaskDetail(t)} className="min-w-0 flex-1 text-left group">
+            <p className="text-sm font-medium text-slate-900 truncate group-hover:text-brand-600 group-hover:underline">
+              {t.roadmapTask?.title || t.title || 'Task'}
+              {t.hasOverrides && <span className="ml-1.5 align-middle text-[10px] font-medium text-amber-600">• customized</span>}
+            </p>
+            <p className="mt-0.5 text-xs text-slate-500 truncate">
+              {[
+                source, 
+                typeLabel, 
+                (t.status === 'completed' && t.pointsAwarded != null) 
+                  ? `${t.pointsAwarded}${points != null ? ` / ${points}` : ''} pts`
+                  : points != null ? `${points} pts` : null
+              ].filter(Boolean).join(' · ')}
+              {rating != null && (
+                <span className="ml-2 inline-flex items-center gap-1 bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded-full border border-amber-200/50">
+                  <Star className="w-3 h-3 fill-amber-500 text-amber-500" />
+                  <span className="font-semibold">{rating}</span>
+                </span>
+              )}
+              {t.mentorNote && <span className="ml-2 inline-flex items-center gap-0.5 text-amber-600"><StickyNote className="w-3 h-3" />note</span>}
+            </p>
+          </button>
+          <div className="hidden sm:flex items-start gap-5 shrink-0 text-right">
+            {dueLabel && (
+              <div className="min-w-[3.5rem]">
+                <p className="text-[10px] leading-none text-slate-400">Due</p>
+                <p className={`mt-1 text-xs leading-none tabular-nums ${overdue ? 'text-red-600' : 'text-slate-700'}`}>
+                  {overdue && <Clock className="inline-block w-2.5 h-2.5 mr-0.5 align-[-1px]" aria-hidden />}
+                  {dueLabel}
+                </p>
+              </div>
+            )}
+            {showTimeline && (
+              <>
+                <div className="min-w-[3.5rem]">
+                  <p className="text-[10px] leading-none text-slate-400">Submitted</p>
+                  <p className="mt-1 text-xs leading-none text-slate-700 tabular-nums">{submitted || '—'}</p>
+                </div>
+                <div className="min-w-[3.5rem]">
+                  <p className="text-[10px] leading-none text-slate-400">Reviewed</p>
+                  <p className="mt-1 text-xs leading-none text-slate-700 tabular-nums">{reviewed || '—'}</p>
+                </div>
+              </>
+            )}
+          </div>
+          <div className="flex items-center gap-0.5 shrink-0">
+            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${meta.cls}`}>{meta.label}</span>
+            {canManage && (
+              <>
+                <button onClick={() => { setEditingDue(isEditingDue ? null : t.id); setDueVal(t.dueDate ? new Date(t.dueDate).toISOString().split('T')[0] : ''); }}
+                  title={historical ? HISTORICAL_TITLE : 'Change deadline'} className="p-1 text-slate-400 hover:text-brand-600 disabled:opacity-40" disabled={busy || historical}>
+                  <CalendarClock className="w-3.5 h-3.5" />
+                </button>
+                {canUnassign && (
+                  <button onClick={() => unassignTask(t.id)} title={historical ? HISTORICAL_TITLE : 'Unassign task'}
+                    className="p-1 text-slate-400 hover:text-red-500 disabled:opacity-40" disabled={busy || historical}>
+                    {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+        <div className="sm:hidden mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+          {dueLabel && <span className={overdue ? 'text-red-600' : ''}>Due {dueLabel}</span>}
+          {showTimeline && <span>Submitted {submitted || '—'}</span>}
+          {showTimeline && <span>Reviewed {reviewed || '—'}</span>}
+        </div>
+        {isEditingDue && (
+          <div className="mt-2 flex items-center gap-2">
+            <input type="date" value={dueVal} onChange={(e) => setDueVal(e.target.value)}
+              className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-card focus:outline-none focus:ring-2 focus:ring-brand-500" />
+            <button onClick={() => saveDue(t.id)} disabled={busy || !dueVal}
+              className="px-2.5 py-1 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-xs font-medium inline-flex items-center gap-1 disabled:opacity-50">
+              {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : null}Save
+            </button>
+            <button onClick={() => { setEditingDue(null); setDueVal(''); }} className="p-1 text-slate-400 hover:text-slate-700"><X className="w-3.5 h-3.5" /></button>
+          </div>
+        )}
+        {note && (
+          <p className={`mt-1.5 text-xs rounded-lg px-2.5 py-1.5 ${t.status === 'revision_needed' ? 'bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300' : 'text-slate-500'}`}>
+            {t.status === 'revision_needed' && <span className="font-medium">Your note: </span>}“{note}”
+            {t.status === 'revision_needed' && <span className="text-amber-600/80"> · awaiting resubmission</span>}
+          </p>
+        )}
+      </div>
+    );
+  };
+
+  /**
+   * Jump to a mentee. Lives in the attendance row now, beside the roster it
+   * searches, instead of owning a full-width row above everything.
+   */
+  const menteeSearch = (
+  <div className="relative max-w-xs">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <input
+            value={jumpQuery}
+            onChange={(e) => setJumpQuery(e.target.value)}
+            placeholder="Search a mentee…"
+            className="w-full pl-9 pr-8 py-2 border border-slate-200 rounded-xl text-sm bg-card focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+          {jumpQuery && (
+            <button onClick={() => setJumpQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
+          )}
+          {jumpMatches.length > 0 && (
+            <div className="absolute z-20 mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-slate-200 bg-card shadow-lg dark:shadow-[0_8px_30px_rgba(0,0,0,0.5)] py-1">
+              {jumpMatches.map(({ m, i }) => (
+                <button
+                  key={m.id}
+                  onClick={() => { selectMentee(i); setJumpQuery(''); }}
+                  className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center justify-between gap-2 ${i === idx ? 'text-brand-700 font-medium' : 'text-slate-700'}`}
+                >
+                  <span className="truncate">{m.name}</span>
+                  {attendance[m.id] && <span className="text-[11px] text-slate-400 capitalize shrink-0">{attendance[m.id]}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+  );
+
+  /**
+   * Where the live-review Start button lands.
+   *
+   * The meeting panel keeps all its own state and portals its idle button into
+   * this node, so the header gets the button without the page getting a
+   * section.
+   */
+  const [meetingSlot, setMeetingSlot] = useState<HTMLElement | null>(null);
 
   // Click a task row → full detail + edit/note/reassign/unassign, in-context.
   const [taskDetail, setTaskDetail] = useState<any>(null); // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -898,11 +1113,40 @@ export default function CohortReview() {
           <button onClick={openHistory} className="px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg border border-slate-200 text-slate-700 text-xs sm:text-sm hover:bg-slate-50 inline-flex items-center gap-1" title="Past reviews"><History className="w-3.5 h-3.5 sm:w-4 sm:h-4" /><span className="hidden sm:inline">History</span></button>
           <button onClick={() => setAssigning(true)} disabled={historical} title={historical ? 'Completed programs are read-only' : 'Assign a task (t)'} className="px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg border border-slate-200 text-slate-700 text-xs sm:text-sm hover:bg-slate-50 inline-flex items-center gap-1 disabled:opacity-50"><Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" />Assign task</button>
           <button onClick={() => setShowHelp(true)} className="p-1.5 sm:p-2 rounded-lg text-slate-400 hover:bg-slate-100 hidden sm:inline-flex" title="Shortcuts"><Keyboard className="w-4 h-4" /></button>
+          {/* The live-review button lands here, from the meeting panel. */}
+          <div ref={setMeetingSlot} className="contents" />
           <div className="hidden sm:flex items-center gap-1.5 ml-1">
             <button onClick={() => go(-1)} disabled={idx === 0} className="px-3 py-2 rounded-lg border border-slate-200 text-slate-700 text-sm hover:bg-slate-50 disabled:opacity-40 inline-flex items-center gap-1"><ChevronLeft className="w-4 h-4" />Prev</button>
             <button onClick={skip} className="px-3 py-2 rounded-lg border border-slate-200 text-slate-700 text-sm hover:bg-slate-50 inline-flex items-center gap-1"><SkipForward className="w-4 h-4" />Skip</button>
             <button onClick={() => go(1)} disabled={idx === cohort.length - 1} className="px-3 py-2 rounded-lg bg-brand-600 text-white text-sm hover:bg-brand-700 disabled:opacity-40 inline-flex items-center gap-1">Next<ChevronRight className="w-4 h-4" /></button>
           </div>
+          {/*
+              Finishing is the end of the job this screen exists for, and it was
+              the very last thing on the page — under the tallies, under the
+              notes, below the fold on every laptop. It goes where the other
+              session-level actions already are.
+
+              It turns solid only once everyone has been seen, so it reads as
+              "ready" rather than as the obvious next click from the start.
+          */}
+          <button
+            onClick={finishOrReopen}
+            disabled={historical}
+            title={historical ? HISTORICAL_TITLE : (allSeen ? 'Finish this review' : `${pendingCount} still to review`)}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium sm:px-3 sm:py-2 sm:text-sm disabled:opacity-50 ${
+              session?.status === 'finished'
+                ? 'border border-slate-200 text-slate-700 hover:bg-slate-50'
+                : allSeen
+                  // Everyone has been seen: the one thing left to do, and it
+                  // breathes once it becomes true rather than from the start.
+                  ? 'animate-pm-ready bg-emerald-600 text-white hover:bg-emerald-700'
+                  : 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300'
+            }`}
+          >
+            {session?.status === 'finished'
+              ? (<><RotateCcw className="w-3.5 h-3.5 sm:w-4 sm:h-4" />Reopen</>)
+              : (<><CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />{allSeen ? 'Finish' : `Finish · ${pendingCount} left`}</>)}
+          </button>
         </div>
       </div>
 
@@ -916,40 +1160,13 @@ export default function CohortReview() {
         </div>
       )}
 
-      {/* Jump to a mentee */}
-      <div className="relative max-w-xs">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-        <input
-          value={jumpQuery}
-          onChange={(e) => setJumpQuery(e.target.value)}
-          placeholder="Search a mentee…"
-          className="w-full pl-9 pr-8 py-2 border border-slate-200 rounded-xl text-sm bg-card focus:outline-none focus:ring-2 focus:ring-brand-500"
-        />
-        {jumpQuery && (
-          <button onClick={() => setJumpQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
-        )}
-        {jumpMatches.length > 0 && (
-          <div className="absolute z-20 mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-slate-200 bg-card shadow-lg dark:shadow-[0_8px_30px_rgba(0,0,0,0.5)] py-1">
-            {jumpMatches.map(({ m, i }) => (
-              <button
-                key={m.id}
-                onClick={() => { selectMentee(i); setJumpQuery(''); }}
-                className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center justify-between gap-2 ${i === idx ? 'text-brand-700 font-medium' : 'text-slate-700'}`}
-              >
-                <span className="truncate">{m.name}</span>
-                {attendance[m.id] && <span className="text-[11px] text-slate-400 capitalize shrink-0">{attendance[m.id]}</span>}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Live video (Jitsi): start the room, auto-attendance, contribution points. */}
+      {/* Live video (Jitsi): start the room, auto-attendance, contribution points.
+          Idle it is a button in the header; live it is the call, here. */}
       {session && (session.id || isDraft) && (
-        <ReviewMeetingPanel sessionId={session.id} isDraft={isDraft} ensureSession={ensureSession} onAttendanceSync={syncMeetingAttendance} onEnded={loadSession} readOnly={historical} />
+        <ReviewMeetingPanel sessionId={session.id} isDraft={isDraft} ensureSession={ensureSession} onAttendanceSync={syncMeetingAttendance} onEnded={loadSession} readOnly={historical} buttonSlot={meetingSlot} />
       )}
 
-      {/* Attendance Strip */}
+      {/* Attendance Strip — now also the home of the mentee search. */}
       <AttendanceSection
         cohort={cohort}
         attendance={attendance}
@@ -958,6 +1175,7 @@ export default function CohortReview() {
         onSaveAttendance={patchMultipleEntries}
         isSaving={isSavingAttendance}
         readOnly={historical}
+        search={menteeSearch}
       />
 
       {deferred.size > 0 && (
@@ -979,19 +1197,10 @@ export default function CohortReview() {
         </div>
       )}
 
-      {/* Up next: let the next mentee know it's nearly their turn so they're ready. */}
-      {cohort[idx + 1] && (
-        <div className="rounded-xl border border-slate-200 bg-slate-50 dark:bg-slate-800/40 px-4 py-2.5 flex items-center gap-3 text-sm">
-          <span className="inline-flex items-center gap-1.5 text-slate-500 shrink-0"><ChevronRight className="w-4 h-4" />Up next</span>
-          <span className="font-medium text-slate-900 truncate">{cohort[idx + 1].name}</span>
-          <button onClick={notifyNext} disabled={pinged.has(cohort[idx + 1].id)}
-            className="ml-auto shrink-0 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 text-xs font-medium hover:border-brand-300 inline-flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-default">
-            {pinged.has(cohort[idx + 1].id)
-              ? (<><Check className="w-3.5 h-3.5 text-emerald-600" />Notified</>)
-              : (<><Send className="w-3.5 h-3.5" />Let them know they&apos;re next</>)}
-          </button>
-        </div>
-      )}
+      {/* "Up next" was a full-width bar of its own between the roster and the
+          mentee — a whole row to carry one name. It is in the side rail now,
+          with the other things that are about the session rather than about
+          the person in front of you. */}
 
       <div className="grid lg:grid-cols-3 gap-6">
         {/* Main */}
@@ -1067,8 +1276,40 @@ export default function CohortReview() {
                 <Link href={`/mentor/mentees/${mentee!.id}`} className="text-xs text-brand-600 hover:text-brand-700 inline-flex items-center gap-0.5 px-2 py-1 rounded-md hover:bg-brand-50">Profile <ArrowUpRight className="w-3.5 h-3.5" /></Link>
               </div>
             </div>
-            <div className="mt-4"><DualProgress absolute={mentee!.absoluteProgress} relative={mentee!.relativeProgress} compact /></div>
-            {mentee!.riskReason && <p className="mt-3 text-xs text-slate-500 border-t border-slate-100 pt-3">{mentee!.riskReason}</p>}
+            {/*
+                The suggestion sits next to the button that acts on it. Both
+                choices are one click, and saying WHY is what makes it a
+                suggestion rather than a nag.
+            */}
+            {pauseHint && !historical && (
+              <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-500/30 dark:bg-amber-500/10">
+                <PauseCircle className="h-4 w-4 shrink-0 text-amber-600" aria-hidden />
+                <p className="min-w-0 flex-1 text-xs text-amber-800 dark:text-amber-300">
+                  <span className="font-medium">Looks inactive.</span>{' '}
+                  {pauseHint.neverAttended
+                    ? 'They have never attended a review.'
+                    : pauseHint.reason || `Missed ${pauseHint.missedReviews} review${pauseHint.missedReviews === 1 ? '' : 's'}.`}
+                  {' '}Pausing keeps your reports clean — they stay in the clan.
+                </p>
+                <button
+                  type="button"
+                  onClick={pauseCurrent}
+                  disabled={pausing}
+                  className="shrink-0 rounded-lg bg-amber-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+                >
+                  {pausing ? 'Pausing…' : 'Pause'}
+                </button>
+                <button
+                  type="button"
+                  onClick={dismissPauseHint}
+                  className="shrink-0 rounded-lg px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100 dark:text-amber-300"
+                >
+                  Keep active
+                </button>
+              </div>
+            )}
+            <div className="mt-3"><DualProgress absolute={mentee!.absoluteProgress} relative={mentee!.relativeProgress} row /></div>
+            {mentee!.riskReason && <p className="mt-2 text-xs text-slate-500">{mentee!.riskReason}</p>}
           </div>
 
           {/* Today's blocks and how far through them they are — the schedule
@@ -1078,33 +1319,14 @@ export default function CohortReview() {
             menteeName={mentee.name}
             clanId={effectiveClanId}
             readOnly={historical}
+            compact
           />
 
-          {/* What they have actually been doing, day by day, on the work that is
-              open right now. The mentor is already here going person by person,
-              so this turns a status into something to ask about. */}
-          {Array.isArray(profile?.taskProgress) && profile.taskProgress.length > 0 && (
-            <div className="bg-card rounded-2xl border border-slate-200 p-4">
-              <h3 className="text-sm font-medium text-slate-900 mb-2.5 flex items-center gap-1.5">
-                <PenLine className="w-4 h-4 text-brand-600" /> Progress on open work
-              </h3>
-              <div className="space-y-2">
-                {profile.taskProgress.map((tp: { taskId: string; title: string; label: string; loggedDays: number; lastNote: string | null }) => (
-                  <div key={tp.taskId} className="rounded-xl border border-slate-200 px-3 py-2">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <p className="text-sm text-slate-800 truncate">{tp.title}</p>
-                      <span className={`shrink-0 text-xs tabular-nums ${tp.loggedDays === 0 ? 'text-amber-600 font-medium' : 'text-slate-500'}`}>
-                        {tp.label}
-                      </span>
-                    </div>
-                    {tp.lastNote && (
-                      <p className="mt-1 text-xs text-slate-500 line-clamp-2">&ldquo;{tp.lastNote}&rdquo;</p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Day-by-day progress used to be a card of its own here, repeating
+              the titles already listed below and pushing the review down the
+              page. It lives in the task drawer now — open the task and the log
+              is on it, which is where a mentor is already looking when they
+              want to ask about it. */}
 
           {/* Work in other clans and the continuation button both used to live
               here as full-width panels. They are on the mentee card now: this
@@ -1112,7 +1334,7 @@ export default function CohortReview() {
 
           {/* State of this mentee - same read as the profile (AI summary + signals). */}
           {profile?.aiSummary && (
-            <AISummaryPanel summary={profile.aiSummary} signals={profile.aiSignals || []} />
+            <AISummaryPanel summary={profile.aiSummary} signals={profile.aiSignals || []} collapsible />
           )}
 
           {/* Extension requests - mentee asked to move a due date; mentor decides here. */}
@@ -1146,188 +1368,110 @@ export default function CohortReview() {
             </div>
           )}
 
-          {/* Submissions to review */}
-          <div className="bg-card rounded-2xl border border-slate-200">
-            <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-2">
-              <ClipboardCheck className="w-4 h-4 text-brand-500" />
-              <h3 className="text-slate-900 font-medium">To review</h3>
-              {pending.length > 0 && <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-xs rounded-full">{pending.length}</span>}
-            </div>
-            <div className="p-4">
-              {pending.length === 0 ? (
-                <p className="text-sm text-slate-500 flex items-center gap-2 px-1 py-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" />Nothing waiting. All clear.</p>
-              ) : (
-                <div className="space-y-2">
-                  {pending.map((item, i) => (
-                    <button key={item.submissionId} onClick={() => { setFocus(i); setReviewing(item); }}
-                      className={`group w-full text-left flex items-center gap-3 p-3 rounded-xl border transition-colors ${i === focus ? 'border-brand-300 bg-brand-50 dark:bg-brand-500/15' : 'border-slate-200 hover:border-brand-300'}`}>
-                      <span className="w-9 h-9 rounded-xl bg-brand-50 dark:bg-brand-500/15 flex items-center justify-center shrink-0">
-                        <ClipboardCheck className="w-4 h-4 text-brand-600" />
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-slate-900 truncate">{item.title}</p>
-                        <div className="flex items-center gap-2 text-xs text-slate-500">
-                          {item.type && <span className="capitalize">{item.type}</span>}
-                          {typeof item.version === 'number' && item.version > 1 && <span>v{item.version}</span>}
-                          {item.isLate && <span className="inline-flex items-center gap-1 text-red-600"><Clock className="w-3 h-3" />late</span>}
-                        </div>
-                      </div>
-                      <span className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-brand-600 group-hover:bg-brand-700 text-white text-xs font-medium">
-                        Review &amp; decide <ChevronRight className="w-3.5 h-3.5" />
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+          {/*
+              One surface for this mentee's work.
 
-          {/* Assigned work - everything currently on this mentee's plate */}
+              "To review", "Assigned work" and the finished pile were three
+              stacked cards, and the queue that is the whole point of the screen
+              sat on top of a long accordion — so the side rail, the notes and
+              the blockers were always below the fold. The counts are on the
+              tabs, so nothing looks missing when it is not the one showing.
+          */}
           <div className="bg-card rounded-2xl border border-slate-200">
-            <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-2">
-              <ListTodo className="w-4 h-4 text-brand-500" />
-              <h3 className="text-slate-900 font-medium">Assigned work</h3>
-              {dayTasks.length > 0 && <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-xs rounded-full">{dayTasks.length}</span>}
-              <button onClick={() => setAssigning(true)} disabled={historical} title={historical ? 'Completed programs are read-only' : undefined} className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700 disabled:opacity-50"><Plus className="w-3.5 h-3.5" />Assign</button>
+            <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-3 py-2.5 sm:px-4">
+              <div role="tablist" aria-label="This mentee's work" className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+                {([
+                  { key: 'review' as const, label: 'To review', count: pending.length, icon: ClipboardCheck, tone: 'brand' },
+                  { key: 'progress' as const, label: 'In progress', count: inProgressTasks.length, icon: ListTodo, tone: 'slate' },
+                  { key: 'done' as const, label: 'Completed', count: completedTasks.length, icon: CheckCircle2, tone: 'emerald' },
+                ]).map((tab) => {
+                  const active = workTab === tab.key;
+                  const Icon = tab.icon;
+                  return (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => setWorkTab(tab.key)}
+                      className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors ${
+                        active
+                          ? 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300'
+                          : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      <Icon className={`h-4 w-4 ${active ? 'text-brand-600' : 'text-slate-400'}`} aria-hidden />
+                      {tab.label}
+                      {/* A count only earns a badge when there is something to
+                          count — a row of zeroes is noise on every tab. */}
+                      {tab.count > 0 && (
+                        <span className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums ${
+                          tab.tone === 'brand' && tab.key === 'review'
+                            ? 'bg-brand-600 text-white'
+                            : tab.tone === 'emerald'
+                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
+                              : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                        }`}>
+                          {tab.count}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              <button onClick={() => setAssigning(true)} disabled={historical} title={historical ? HISTORICAL_TITLE : undefined}
+                className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700 disabled:opacity-50">
+                <Plus className="w-3.5 h-3.5" />Assign
+              </button>
             </div>
-            {dayTasks.length > 0 && <div className="flex flex-wrap gap-2 px-5 pt-4" aria-label="Assigned work summary">{taskGroups.map((group) => <span key={group.status} className="rounded-lg bg-muted px-3 py-1.5 text-xs text-muted-foreground">{(TASK_STATUS_META[group.status] ?? TASK_STATUS_META.assigned).label} <strong className="ml-1 text-foreground">{group.items.length}</strong></span>)}</div>}
+
             <div className="p-4">
-              {tasksLoading ? (
-                <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-slate-400" /></div>
-              ) : dayTasks.length === 0 ? (
-                <p className="text-sm text-slate-500 px-1 py-2">Nothing assigned yet - use Assign to give {mentee!.name.split(' ')[0]} their first task.</p>
-              ) : (
-                <Accordion
-                  key={mentee?.id || 'tasks'}
-                  type="multiple"
-                  defaultValue={openTaskGroups}
-                  className="space-y-1"
-                >
-                  {taskGroups.map((g) => {
-                    const meta = TASK_STATUS_META[g.status] ?? TASK_STATUS_META.assigned;
-                    const showTimeline = g.status === 'revision_needed' || g.status === 'completed';
-                    return (
-                      <AccordionItem key={g.status} value={g.status} className="border-0">
-                        <AccordionTrigger className="py-2 hover:no-underline">
-                          <span className="flex items-center gap-2">
-                            <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{meta.label}</span>
-                            <span className="text-xs text-slate-400">{g.items.length}</span>
-                          </span>
-                        </AccordionTrigger>
-                        <AccordionContent className="pb-2">
-                          <div className="space-y-1.5">
-                            {g.items.map((t: any) => { /* eslint-disable-line @typescript-eslint/no-explicit-any */
-                              const dueMs = t.dueDate ? new Date(t.dueDate).getTime() : null;
-                              const overdue = dueMs != null && t.status !== 'completed' && dueMs < Date.now();
-                              const { note, rating } = reviewOf(t);
-                              const { submitted, reviewed } = showTimeline ? taskTimeline(t) : { submitted: null, reviewed: null };
-                              const points = t.points ?? t.pointsBase ?? t.roadmapTask?.pointsBase;
-                              const source = t.isCustomTask ? 'Custom' : (t.roadmapName || 'Roadmap');
-                              const typeLabel = t.roadmapTask?.type
-                                ? String(t.roadmapTask.type).charAt(0).toUpperCase() + String(t.roadmapTask.type).slice(1)
-                                : null;
-                              const dueLabel = fmtCardDate(t.dueDate);
-                              const canManage = !['cancelled'].includes(t.status);
-                              const canUnassign = !['submitted', 'completed', 'cancelled'].includes(t.status);
-                              const isEditingDue = editingDue === t.id;
-                              const busy = busyTaskId === t.id;
-                              return (
-                                <div key={t.id} className="p-3 rounded-xl border border-slate-200">
-                                  <div className="flex items-center gap-2.5">
-                                    <button type="button" onClick={() => setTaskDetail(t)} className="min-w-0 flex-1 text-left group">
-                                      <p className="text-sm font-medium text-slate-900 truncate group-hover:text-brand-600 group-hover:underline">
-                                        {t.roadmapTask?.title || t.title || 'Task'}
-                                        {t.hasOverrides && <span className="ml-1.5 align-middle text-[10px] font-medium text-amber-600">• customized</span>}
-                                      </p>
-                                      <p className="mt-0.5 text-xs text-slate-500 truncate">
-                                        {[
-                                          source, 
-                                          typeLabel, 
-                                          (t.status === 'completed' && t.pointsAwarded != null) 
-                                            ? `${t.pointsAwarded}${points != null ? ` / ${points}` : ''} pts`
-                                            : points != null ? `${points} pts` : null
-                                        ].filter(Boolean).join(' · ')}
-                                        {rating != null && (
-                                          <span className="ml-2 inline-flex items-center gap-1 bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded-full border border-amber-200/50">
-                                            <Star className="w-3 h-3 fill-amber-500 text-amber-500" />
-                                            <span className="font-semibold">{rating}</span>
-                                          </span>
-                                        )}
-                                        {t.mentorNote && <span className="ml-2 inline-flex items-center gap-0.5 text-amber-600"><StickyNote className="w-3 h-3" />note</span>}
-                                      </p>
-                                    </button>
-                                    <div className="hidden sm:flex items-start gap-5 shrink-0 text-right">
-                                      {dueLabel && (
-                                        <div className="min-w-[3.5rem]">
-                                          <p className="text-[10px] leading-none text-slate-400">Due</p>
-                                          <p className={`mt-1 text-xs leading-none tabular-nums ${overdue ? 'text-red-600' : 'text-slate-700'}`}>
-                                            {overdue && <Clock className="inline-block w-2.5 h-2.5 mr-0.5 align-[-1px]" aria-hidden />}
-                                            {dueLabel}
-                                          </p>
-                                        </div>
-                                      )}
-                                      {showTimeline && (
-                                        <>
-                                          <div className="min-w-[3.5rem]">
-                                            <p className="text-[10px] leading-none text-slate-400">Submitted</p>
-                                            <p className="mt-1 text-xs leading-none text-slate-700 tabular-nums">{submitted || '—'}</p>
-                                          </div>
-                                          <div className="min-w-[3.5rem]">
-                                            <p className="text-[10px] leading-none text-slate-400">Reviewed</p>
-                                            <p className="mt-1 text-xs leading-none text-slate-700 tabular-nums">{reviewed || '—'}</p>
-                                          </div>
-                                        </>
-                                      )}
-                                    </div>
-                                    <div className="flex items-center gap-0.5 shrink-0">
-                                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${meta.cls}`}>{meta.label}</span>
-                                      {canManage && (
-                                        <>
-                                          <button onClick={() => { setEditingDue(isEditingDue ? null : t.id); setDueVal(t.dueDate ? new Date(t.dueDate).toISOString().split('T')[0] : ''); }}
-                                            title={historical ? HISTORICAL_TITLE : 'Change deadline'} className="p-1 text-slate-400 hover:text-brand-600 disabled:opacity-40" disabled={busy || historical}>
-                                            <CalendarClock className="w-3.5 h-3.5" />
-                                          </button>
-                                          {canUnassign && (
-                                            <button onClick={() => unassignTask(t.id)} title={historical ? HISTORICAL_TITLE : 'Unassign task'}
-                                              className="p-1 text-slate-400 hover:text-red-500 disabled:opacity-40" disabled={busy || historical}>
-                                              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                                            </button>
-                                          )}
-                                        </>
-                                      )}
-                                    </div>
-                                  </div>
-                                  <div className="sm:hidden mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
-                                    {dueLabel && <span className={overdue ? 'text-red-600' : ''}>Due {dueLabel}</span>}
-                                    {showTimeline && <span>Submitted {submitted || '—'}</span>}
-                                    {showTimeline && <span>Reviewed {reviewed || '—'}</span>}
-                                  </div>
-                                  {isEditingDue && (
-                                    <div className="mt-2 flex items-center gap-2">
-                                      <input type="date" value={dueVal} onChange={(e) => setDueVal(e.target.value)}
-                                        className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-card focus:outline-none focus:ring-2 focus:ring-brand-500" />
-                                      <button onClick={() => saveDue(t.id)} disabled={busy || !dueVal}
-                                        className="px-2.5 py-1 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-xs font-medium inline-flex items-center gap-1 disabled:opacity-50">
-                                        {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : null}Save
-                                      </button>
-                                      <button onClick={() => { setEditingDue(null); setDueVal(''); }} className="p-1 text-slate-400 hover:text-slate-700"><X className="w-3.5 h-3.5" /></button>
-                                    </div>
-                                  )}
-                                  {note && (
-                                    <p className={`mt-1.5 text-xs rounded-lg px-2.5 py-1.5 ${t.status === 'revision_needed' ? 'bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300' : 'text-slate-500'}`}>
-                                      {t.status === 'revision_needed' && <span className="font-medium">Your note: </span>}“{note}”
-                                      {t.status === 'revision_needed' && <span className="text-amber-600/80"> · awaiting resubmission</span>}
-                                    </p>
-                                  )}
-                                </div>
-                              );
-                            })}
+              {workTab === 'review' && (
+                pending.length === 0 ? (
+                  <p className="text-sm text-slate-500 flex items-center gap-2 px-1 py-2"><CheckCircle2 className="w-4 h-4 text-emerald-400" />Nothing waiting. All clear.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {pending.map((item, i) => (
+                      <button key={item.submissionId} onClick={() => { setFocus(i); setReviewing(item); }}
+                        className={`group w-full text-left flex items-center gap-3 p-3 rounded-xl border transition-colors ${i === focus ? 'border-brand-300 bg-brand-50 dark:bg-brand-500/15' : 'border-slate-200 hover:border-brand-300'}`}>
+                        <span className="w-9 h-9 rounded-xl bg-brand-50 dark:bg-brand-500/15 flex items-center justify-center shrink-0">
+                          <ClipboardCheck className="w-4 h-4 text-brand-600" />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-slate-900 truncate">{item.title}</p>
+                          <div className="flex items-center gap-2 text-xs text-slate-500">
+                            {item.type && <span className="capitalize">{item.type}</span>}
+                            {typeof item.version === 'number' && item.version > 1 && <span>v{item.version}</span>}
+                            {item.isLate && <span className="inline-flex items-center gap-1 text-red-600"><Clock className="w-3 h-3" />late</span>}
                           </div>
-                        </AccordionContent>
-                      </AccordionItem>
-                    );
-                  })}
-                </Accordion>
+                        </div>
+                        <span className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-brand-600 group-hover:bg-brand-700 text-white text-xs font-medium">
+                          Review &amp; decide <ChevronRight className="w-3.5 h-3.5" />
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )
+              )}
+
+              {workTab === 'progress' && (
+                tasksLoading ? (
+                  <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-slate-400" /></div>
+                ) : inProgressTasks.length === 0 ? (
+                  <p className="text-sm text-slate-500 px-1 py-2">Nothing on {mentee!.name.split(' ')[0]}&rsquo;s plate — use Assign to give them their next task.</p>
+                ) : (
+                  <div className="space-y-1.5">{inProgressTasks.map(renderTaskRow)}</div>
+                )
+              )}
+
+              {workTab === 'done' && (
+                tasksLoading ? (
+                  <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-slate-400" /></div>
+                ) : completedTasks.length === 0 ? (
+                  <p className="text-sm text-slate-500 px-1 py-2">Nothing finished in this clan yet.</p>
+                ) : (
+                  <div className="space-y-1.5">{completedTasks.map(renderTaskRow)}</div>
+                )
               )}
             </div>
           </div>
@@ -1336,6 +1480,45 @@ export default function CohortReview() {
 
         {/* Side rail */}
         <div className="space-y-4">
+          {/*
+              Who follows, and the one action that belongs to them.
+
+              Their face rather than only their name: this screen is a row of
+              faces, so the handover reads faster as the next face than as
+              text. Silent on the last mentee, where there is no "next".
+          */}
+          {cohort[idx + 1] && (
+            <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-card p-3 dark:border-slate-800">
+              <Avatar
+                name={cohort[idx + 1].name}
+                src={cohort[idx + 1].profilePictureUrl}
+                initials={cohort[idx + 1].avatar}
+                size="sm"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Up next</p>
+                <button
+                  type="button"
+                  onClick={() => selectMentee(idx + 1)}
+                  className="block max-w-full truncate text-sm font-medium text-slate-900 hover:text-brand-700 dark:text-slate-100"
+                >
+                  {cohort[idx + 1].name}
+                </button>
+              </div>
+              <button
+                onClick={notifyNext}
+                disabled={pinged.has(cohort[idx + 1].id)}
+                title={pinged.has(cohort[idx + 1].id) ? 'Already told them' : 'Let them know they are next'}
+                aria-label={pinged.has(cohort[idx + 1].id) ? 'Already notified' : 'Let them know they are next'}
+                className="shrink-0 rounded-lg border border-slate-200 p-2 text-slate-500 transition-colors hover:border-brand-300 hover:text-brand-700 disabled:cursor-default disabled:opacity-60 dark:border-slate-700"
+              >
+                {pinged.has(cohort[idx + 1].id)
+                  ? <Check className="h-4 w-4 text-emerald-600" />
+                  : <Send className="h-4 w-4" />}
+              </button>
+            </div>
+          )}
+
           {/* Attendance */}
           <div className="bg-card rounded-2xl border border-slate-200 p-5">
             <div className="flex items-center justify-between mb-3">
@@ -1416,14 +1599,11 @@ export default function CohortReview() {
                 {deferred.size} deferred — jump to them from the dots above before finishing.
               </div>
             )}
-            <button onClick={finishOrReopen} disabled={historical} title={historical ? HISTORICAL_TITLE : undefined}
-              className={`mt-4 w-full px-3 py-2 rounded-xl text-sm font-medium inline-flex items-center justify-center gap-1.5 disabled:opacity-50 ${session?.status === 'finished' || !allSeen ? 'bg-slate-100 text-slate-700 hover:bg-slate-200' : 'bg-brand-600 text-white hover:bg-brand-700'}`}>
-              {session?.status === 'finished'
-                ? (<><RotateCcw className="w-4 h-4" />Reopen to edit</>)
-                : allSeen ? 'Finish review' : `Finish (${pendingCount} not reviewed)`}
-            </button>
+            {/* Finishing moved to the header, where the other session-level
+                actions are and where it is actually visible. This card keeps
+                the tallies that tell you whether you are ready to. */}
             {session?.status === 'finished' && session?.finishedAt && (
-              <p className="mt-2 text-[11px] text-slate-500 text-center">Finished {new Date(session.finishedAt).toLocaleString()}</p>
+              <p className="mt-3 text-[11px] text-slate-500 text-center">Finished {new Date(session.finishedAt).toLocaleString()}</p>
             )}
           </div>
         </div>

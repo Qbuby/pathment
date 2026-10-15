@@ -60,9 +60,15 @@ const resetLink = (token) =>
 const verifyLink = (token, workspaceSlug) =>
   through('v', token, `/verify-email?token=${encodeURIComponent(token || '')}`, workspaceSlug);
 
-/** A one-time sign-in link. Fifteen minutes, single use, straight into a session. */
+/**
+ * A one-time sign-in link. Fifteen minutes, single use, straight into a session.
+ *
+ * The direct path is `/login`, which is where the web app spends the token.
+ * It said `/sign-in` for a while, and the web app has never had such a route,
+ * so with no LINK_URL set every sign-in link in every email was a 404.
+ */
 const signInLink = (token) =>
-  through('m', token, `/sign-in?link=${encodeURIComponent(token || '')}`);
+  through('m', token, `/login?link=${encodeURIComponent(token || '')}`);
 
 /**
  * Where a notification points, made absolute.
