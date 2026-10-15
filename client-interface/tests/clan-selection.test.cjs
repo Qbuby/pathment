@@ -61,3 +61,20 @@ test('a mentor with no clans at all has nothing to land on', () => {
   assert.equal(resolveMenteeClan('', [], false), '');
   assert.equal(defaultClanOf([]), null);
 });
+
+/**
+ * The regression the browser caught: `loading` is false while the memberships
+ * query is still DISABLED (before the user's roles are known), so the clan list
+ * is an empty array meaning "not asked yet". Treating that as "no clans" made
+ * the resolver discard the saved clan and answer "all" — which then got written
+ * to storage, erasing the selection on every sign-in.
+ */
+test('an unasked clan list never discards the saved choice', () => {
+  assert.equal(resolveMentorClan('live', [], true), 'live');
+  assert.equal(resolveMenteeClan('standing', [], true), 'standing');
+});
+
+test('once the list is known, a clan that really is gone falls back', () => {
+  assert.equal(resolveMentorClan('removed', [live], false), 'live');
+  assert.equal(resolveMenteeClan('removed', [standing], false), 'standing');
+});

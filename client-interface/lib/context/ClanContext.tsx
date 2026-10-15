@@ -5,22 +5,11 @@ import { useAuth } from './AuthContext';
 import { qk, useApiQuery, STALE } from '@/lib/query';
 import { clanApi } from '@/lib/services/clan-api';
 import { resolveMentorClan, resolveMenteeClan } from '@/lib/utils/clan-selection';
+import { readClanChoice, writeClanChoice } from '@/lib/services/clan-choice';
 
 // Clan roles that mean "I mentor this clan" (so it belongs in the scope picker).
 const MENTOR_CLAN_ROLES = ['lead_mentor', 'co_mentor', 'core_team'];
-export const MENTOR_CLAN_STORAGE_KEY = 'pathment-active-clan';
-export const MENTEE_CLAN_STORAGE_KEY = 'pathment-active-mentee-clan';
 export const ALL_CLANS = 'all';
-
-function readStored(key: string): string | null {
-  if (typeof window === 'undefined') return null;
-  try { return window.localStorage.getItem(key); } catch { return null; }
-}
-
-function writeStored(key: string, value: string) {
-  if (typeof window === 'undefined') return;
-  try { window.localStorage.setItem(key, value); } catch { /* private mode */ }
-}
 
 export interface ClanLite { id: string; name: string; avatarUrl?: string | null; kind?: 'cohort' | 'standing'; frozenAt?: string | null; programId?: string; programName?: string | null; }
 
@@ -104,10 +93,11 @@ export function ClanProvider({ children }: { children: ReactNode }) {
   const [mentorChoice, setMentorChoice] = useState<string | null>(null);
   const [menteeChoice, setMenteeChoice] = useState<string | null>(null);
 
+  const userId = user?.id ?? null;
   const isMentor = !!availableRoles?.includes('mentor');
   const isMentee = !!availableRoles?.includes('mentee');
 
-  const { data = EMPTY_MEMBERSHIPS, loading } = useApiQuery<{ mentor: ClanLite[]; mentee: ClanLite[] }>({
+  const { data: loadedMemberships, loading } = useApiQuery<{ mentor: ClanLite[]; mentee: ClanLite[] }>({
     queryKey: qk.clan.memberships(user?.id || ''),
     queryFn: async () => {
       const r = await clanApi.myMemberships() as any; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -135,23 +125,39 @@ export function ClanProvider({ children }: { children: ReactNode }) {
     staleTime: STALE.long,
   });
 
+  /**
+   * Has the server actually told us which clans this person is in?
+   *
+   * `loading` is NOT that question. It is false while the query is still
+   * disabled — before `availableRoles` has arrived — and at that moment the
+   * clan list is an empty array that means "not asked yet", not "none". Reading
+   * it as "none" made the resolver decide the saved clan no longer existed and
+   * replace it with "All clans", which the persist effect below then wrote to
+   * storage. That is what erased the selection on every sign-in.
+   */
+  const clansKnown = loadedMemberships !== undefined;
+  const data = loadedMemberships ?? EMPTY_MEMBERSHIPS;
   const clans = data.mentor;
   const menteeClans = data.mentee;
 
   /**
-   * Read the stored choices once, after mount.
+   * Read the stored choices once the account is known.
    *
    * This is the only `setState` in an effect here, and it is unavoidable: the
    * value lives in localStorage, which does not exist during the server render.
+   *
+   * It re-runs when the account changes because the keys are per account. That
+   * is also what makes switching users safe without deleting anything: a second
+   * account reads its own key and finds its own clan, or nothing.
    */
   useEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect -- localStorage does not
        exist during the server render, so this value cannot be seeded in a
-       `useState` initializer without a hydration mismatch. One pass, on mount. */
-    setMentorChoice(readStored(MENTOR_CLAN_STORAGE_KEY) ?? '');
-    setMenteeChoice(readStored(MENTEE_CLAN_STORAGE_KEY) ?? '');
+       `useState` initializer without a hydration mismatch. One pass per account. */
+    setMentorChoice(userId ? readClanChoice('mentor', userId) : null);
+    setMenteeChoice(userId ? readClanChoice('mentee', userId) : null);
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, []);
+  }, [userId]);
 
   /**
    * The clan actually in effect.
@@ -168,12 +174,12 @@ export function ClanProvider({ children }: { children: ReactNode }) {
    * start a day.
    */
   const activeClanId = useMemo(
-    () => resolveMentorClan(mentorChoice, clans, loading),
-    [mentorChoice, clans, loading],
+    () => resolveMentorClan(mentorChoice, clans, !clansKnown),
+    [mentorChoice, clans, clansKnown],
   );
   const menteeActiveClanId = useMemo(
-    () => resolveMenteeClan(menteeChoice, menteeClans, loading),
-    [menteeChoice, menteeClans, loading],
+    () => resolveMenteeClan(menteeChoice, menteeClans, !clansKnown),
+    [menteeChoice, menteeClans, clansKnown],
   );
 
   /**
@@ -186,28 +192,28 @@ export function ClanProvider({ children }: { children: ReactNode }) {
    * telling the same story. No `setState`, so no extra render.
    */
   useEffect(() => {
-    if (mentorChoice === null || loading) return;
-    if (activeClanId && activeClanId !== readStored(MENTOR_CLAN_STORAGE_KEY)) {
-      writeStored(MENTOR_CLAN_STORAGE_KEY, activeClanId);
+    if (!userId || mentorChoice === null || !clansKnown) return;
+    if (activeClanId && activeClanId !== readClanChoice('mentor', userId)) {
+      writeClanChoice('mentor', userId, activeClanId);
     }
-  }, [activeClanId, mentorChoice, loading]);
+  }, [activeClanId, mentorChoice, clansKnown, userId]);
 
   useEffect(() => {
-    if (menteeChoice === null || loading) return;
-    if (menteeActiveClanId && menteeActiveClanId !== readStored(MENTEE_CLAN_STORAGE_KEY)) {
-      writeStored(MENTEE_CLAN_STORAGE_KEY, menteeActiveClanId);
+    if (!userId || menteeChoice === null || !clansKnown) return;
+    if (menteeActiveClanId && menteeActiveClanId !== readClanChoice('mentee', userId)) {
+      writeClanChoice('mentee', userId, menteeActiveClanId);
     }
-  }, [menteeActiveClanId, menteeChoice, loading]);
+  }, [menteeActiveClanId, menteeChoice, clansKnown, userId]);
 
   const setActiveClanId = useCallback((id: string) => {
     setMentorChoice(id);
-    writeStored(MENTOR_CLAN_STORAGE_KEY, id);
-  }, []);
+    writeClanChoice('mentor', userId, id);
+  }, [userId]);
 
   const setMenteeActiveClanId = useCallback((id: string) => {
     setMenteeChoice(id);
-    writeStored(MENTEE_CLAN_STORAGE_KEY, id);
-  }, []);
+    writeClanChoice('mentee', userId, id);
+  }, [userId]);
 
   return (
     <ClanContext.Provider value={{

@@ -10,10 +10,6 @@ import { apiConfig } from '../config/api';
 import { tokenStore } from '../services/token-store';
 import { SessionExpiredError, startAuthSession, resetAuthSession, restoreAccessToken } from '../services/auth-session';
 
-/** Keep in sync with ClanContext storage keys (avoid importing ClanContext here — circular). */
-const MENTOR_CLAN_STORAGE_KEY = 'pathment-active-clan';
-const MENTEE_CLAN_STORAGE_KEY = 'pathment-active-mentee-clan';
-
 /** An explicit empty capability list grants no role views. */
 function getCapabilities(user: User | null): UserRole[] {
   if (!user) return [];
@@ -55,13 +51,16 @@ const getHttpStatus = (error: unknown): number | undefined => {
   return (error as { response?: { status?: number } })?.response?.status;
 };
 
+/**
+ * Drop everything cached for the account that was signed in.
+ *
+ * The clan choice is deliberately NOT dropped. It is stored per account
+ * (`lib/services/clan-choice`), so it cannot leak to whoever signs in next —
+ * and deleting it here was the reason a mentor's or mentee's selected clan
+ * never survived coming back.
+ */
 function clearUserScopedClientState(queryClient: ReturnType<typeof useQueryClient>) {
   queryClient.clear();
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.removeItem(MENTOR_CLAN_STORAGE_KEY);
-    localStorage.removeItem(MENTEE_CLAN_STORAGE_KEY);
-  } catch { /* ignore */ }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
