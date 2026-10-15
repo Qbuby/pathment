@@ -1,7 +1,9 @@
 'use client';
 
 import { Loader2, TrendingUp, TrendingDown, Minus, Flag, Clock, Check, CheckCircle2, Route } from 'lucide-react';
+import Link from 'next/link';
 import { useMyProgress } from '@/lib/hooks/mentee';
+import { workspacePath } from '@/lib/services/workspace-scope';
 import { useMyRoadmaps } from '@/lib/hooks/mentee/useMyRoadmaps';
 import { DualProgress } from '@/components/mentor/DualProgress';
 import { AISummaryPanel } from '@/components/mentor/AISummaryPanel';
@@ -13,18 +15,42 @@ const SEVERITY_CLASS: Record<string, string> = {
   low: 'bg-slate-100 text-slate-600',
 };
 
-function MetricChip({ label, value }: { label: string; value: string | number }) {
+/**
+ * A number is not a measure until you know what it counts.
+ *
+ * These were four bare figures — and one of them read "0/-", which is not a
+ * value, it is a template that ran out of data. Each now says what it counts
+ * in a line underneath, and a figure nobody can act on is not shown at all.
+ */
+function MetricChip({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-card px-4 py-3">
       <div className="text-xs text-slate-500">{label}</div>
       <div className="mt-1 text-lg font-semibold text-slate-900 tabular-nums">{value}</div>
+      {hint && <div className="mt-0.5 text-[11px] leading-snug text-slate-400">{hint}</div>}
     </div>
   );
 }
 
 function MyRoadmapsSection() {
   const { roadmaps, loading } = useMyRoadmaps();
-  if (loading || roadmaps.length === 0) return null;
+  if (loading) return null;
+  // Vanishing when empty is what made this page look broken for a new mentee:
+  // the screen simply had less on it, with nothing to say why.
+  if (roadmaps.length === 0) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-card px-6 py-5">
+        <div className="flex items-center gap-2">
+          <Route className="h-4 w-4 text-brand-600" />
+          <h2 className="text-slate-900">Your roadmaps</h2>
+        </div>
+        <p className="mt-2 text-sm text-slate-500">
+          No roadmap assigned yet — your mentor adds one when you start. Your tasks live
+          in <Link href={workspacePath('/mentee/tasks')} className="font-medium text-brand-700 hover:underline">My learning</Link> in the meantime.
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="bg-card rounded-2xl border border-slate-200">
       <div className="px-6 py-5 border-b border-slate-200 flex items-center gap-2">
@@ -92,11 +118,31 @@ export default function MenteeProgress() {
       </div>
 
       {/* Metrics */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <MetricChip label="On-time" value={`${progress.onTimeRate}%`} />
-        <MetricChip label="Awaiting review" value={progress.pendingApprovals} />
-        <MetricChip label="Open roadblocks" value={openBlockers.length} />
-        <MetricChip label="Week" value={`${progress.week}/${progress.totalWeeks || '-'}`} />
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <MetricChip
+          label="On-time"
+          value={`${progress.onTimeRate}%`}
+          hint="of your work delivered by its due date"
+        />
+        <MetricChip
+          label="Awaiting review"
+          value={progress.pendingApprovals}
+          hint={progress.pendingApprovals ? 'with your mentor now' : 'nothing waiting on them'}
+        />
+        <MetricChip
+          label="Open roadblocks"
+          value={openBlockers.length}
+          hint={openBlockers.length ? 'logged and counted in your score' : 'nothing logged'}
+        />
+        <MetricChip
+          label={progress.totalWeeks ? 'Week' : 'Weeks in'}
+          value={progress.totalWeeks ? `${progress.week}/${progress.totalWeeks}` : progress.week || 'Not started'}
+          hint={
+            progress.totalWeeks ? 'of the programme'
+              : progress.week ? 'this clan runs without a fixed end'
+                : 'your first task starts the clock'
+          }
+        />
       </div>
 
       {/* Summary + dual progress */}
@@ -122,7 +168,21 @@ export default function MenteeProgress() {
       {/* Working style (read-only self-view) */}
       {progress.personality && <PersonalityBars personality={progress.personality} />}
 
-      {/* What's slowing you down */}
+      {/* What's slowing you down. Two empty boxes say less than one sentence. */}
+      {openBlockers.length === 0 && progress.delays.length === 0 ? (
+        <div className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-card px-6 py-5">
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+          <div>
+            <p className="text-sm font-medium text-slate-900">Nothing is in your way right now</p>
+            <p className="mt-1 text-sm text-slate-500">
+              If something starts to block you, log it from{' '}
+              <Link href={workspacePath('/mentee/blockers')} className="font-medium text-brand-700 hover:underline">My support</Link>
+              {' '}— logged roadblocks and delays are counted in the fair measure above, so saying
+              so helps rather than hurts.
+            </p>
+          </div>
+        </div>
+      ) : (
       <div className="grid lg:grid-cols-2 gap-6">
         <div className="bg-card rounded-2xl border border-slate-200">
           <div className="px-6 py-5 border-b border-slate-200 flex items-center gap-2">
@@ -176,6 +236,7 @@ export default function MenteeProgress() {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }
