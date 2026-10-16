@@ -1894,3 +1894,67 @@ overrides, no leftover schedule slot, no leftover `task_resources` row.
 `client-interface/tests/edit-task-matches-assign.test.cjs` pins the shared controls, the
 progress panel, the resource seed and the two locks. All five cases fail on the previous
 drawer. Full client suite: 125 tests, typecheck clean.
+
+---
+
+## Putting it on staging
+
+Staging now runs the full schema and a fresh dataset. What it does **not** yet run is
+the code: Heroku release v150 is `Deploy 17465bfa`, the commit this branch was cut
+from, so none of the 33 fixes are on `staging.pathment.me` until someone deploys. The
+database is deliberately ahead of the code, which is the safe direction — the three
+migrations are additive and nullable, so the old code serving right now cannot see them.
+
+**Database.** `pathment-staging` → add-on `postgresql-lively-65939`, database
+`d99bb8fl7he9ij`, confirmed distinct from production's `postgresql-crystalline-21155`
+before anything was written. Backup `b002` captured first. Every account on it was a
+`@demo.pathment.com` fixture and the only workspace was `devweekends`, so nothing real
+was at stake.
+
+**Migrations.** `schema_migrations` did not exist — staging had never run `migrate.js`;
+its schema came from a `db:sync` someone pointed at it. Replaying history is not an
+option (seven early migrations export no `up()`, and `migrate.js` throws on the first),
+so the schema was checked instead of assumed: dumping `information_schema.columns` from
+both staging and the fully-migrated `pathment_dev` showed **exactly** the gaps 131 and
+133 describe — `users.region`, `users.country_code`, the `cohort_review_locks` table and
+`cohort_review_unlock_grants.scope_type/scope_id` — and nothing else. So 135 files were
+baselined as applied, then 131 and 133 were run for real, from this checkout against
+`DATABASE_URL`, because `heroku run` executes the deployed slug and the deployed slug
+stops at 130. 132 ran last and found **0 tasks and 0 blockers with no clan** — nothing
+to attribute, which is the right answer on data the fixed seeder wrote. 138 recorded;
+a `migrate.js` after the deploy will say the schema is up to date.
+
+**Data.** `seed-demo.js` from this checkout, so staging got the `clan_id` fix rather
+than the stale copy in the container: 31 users, 2 clans, 1 programme, 397 assigned tasks
+(**0 without a clan**), 346 submissions. Then 72 skills, 5 schedule templates and 16
+changelog drafts awaiting review. All accounts use the demo password the seeder prints.
+
+**Two bugs, both from doing this.**
+
+The re-seed deleted all 397 tasks and then died on
+`standing_clan_requests_source_clan_id_fkey`. The wipe clears everything that points at
+a clan before deleting the clans, and a standing-clan request remembers two of them —
+the clan it was raised from and the clan approving it created. One approved request,
+made by hand on staging on 15 Oct, was enough. The sweep now clears standing requests
+and the new scoped review locks, the latter before anyone can hit it.
+
+The staging build then failed at `npm ci --omit=dev`, missing `@emnapi/core` from the
+lock file. `@unrs/resolver-binding-wasm32-wasi` — optional, dev-only, never installed on
+linux-x64 — names `@emnapi/core` and `@emnapi/runtime` as ordinary dependencies. npm 11
+relocked this file when `country-state-city` was added for issue 7 and left them out,
+knowing that binding is unreachable here; npm 10, which `node:20` ships and the
+Dockerfile therefore runs, requires the lock to be internally complete regardless, and
+`--omit=dev` does not help because the consistency check runs before anything is
+omitted. Relocked with npm 10.8.2 — only `@emnapi` entries move, no application
+dependency changes — and verified under both 10.8.2 and 11.6.2. CI already guards this:
+it runs `npm ci` in `server/` on every push to `staging`, and the old lock fails there
+too, so the push that broke the build went in without a green run.
+
+**`RELEASE.md` was wrong in the way that caused the migration gap.** It said `db:sync`
+runs on every staging deploy, so staging's schema is derived from the models and needs
+no migrations. The boot-time sync is commented out and `syncDatabase.js` refuses when
+`DYNO` is set, so staging had been drifting behind its own models while the runbook said
+that could not happen. It also still described a DigitalOcean box, `docker compose` and
+a `deploy-prod.yml` Action that does not exist. Rewritten around the two Heroku
+container apps, including the `heroku run`-runs-the-deployed-slug trap and how to
+baseline a database that has never seen `migrate.js`.
