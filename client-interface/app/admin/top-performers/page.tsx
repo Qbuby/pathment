@@ -43,7 +43,7 @@ export default function AdminTopPerformersPage() {
     if (!programId) return;
     try {
       setLoading(true);
-      const res = await topPerformersApi.list(programId);
+      const res = await topPerformersApi.list({ programId });
       setRows(res.data ?? []);
     } catch (err) {
       toast.error(extractApiErrorMessage(err, 'Could not load nominations'));

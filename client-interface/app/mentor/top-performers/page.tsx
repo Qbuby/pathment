@@ -45,7 +45,10 @@ export default function MentorTopPerformersPage() {
       setLoading(true);
       const [rank, nominations] = await Promise.all([
         topPerformersApi.ranking({ clanId }),
-        topPerformersApi.list(),
+        // Scoped to the clan in the sidebar. This used to ask for everything
+        // the caller could see, which for a mentor who also administers the
+        // workspace was every nomination in the organisation.
+        topPerformersApi.list({ clanId }),
       ]);
       setBoard(rank.data ?? { ranked: [], notRanked: [], rankedCount: 0 });
       setMine(nominations.data ?? []);
@@ -161,7 +164,14 @@ export default function MentorTopPerformersPage() {
 
       {mine.length > 0 && (
         <section className="space-y-3">
-          <h2 className="text-slate-900">Your nominations</h2>
+          {/* Not "Your nominations": it lists every nomination made in THIS
+              clan, including a co-mentor's. That is deliberate — the chip on
+              the roster above warns you somebody has already been put forward,
+              and it can only do that if another mentor's nomination is here.
+              The heading now says what the list is. */}
+          <h2 className="text-slate-900">
+            Nominations in {clan?.name ? `${clan.name}` : 'this clan'}
+          </h2>
           {mine.map((n) => (
             <div key={n.id} className="rounded-2xl border border-border bg-card p-4 space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
