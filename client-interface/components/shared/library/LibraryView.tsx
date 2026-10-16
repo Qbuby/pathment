@@ -19,40 +19,36 @@ import {
   FileText as FileIcon,
   Link2,
   ArrowRight,
+  MoreHorizontal,
 } from "lucide-react";
 import { useLibrary, type LibraryDoc } from "@/lib/hooks/mentor";
 import { libraryApi } from "@/lib/services/library-api";
 import { Drawer } from "@/components/shared/Drawer";
+import { Dropdown } from "@/components/shared/Dropdown";
 import RichTextEditor from "@/components/shared/RichTextEditor";
 import { extractApiErrorMessage } from "@/lib/utils/api-error";
 import { useConfirm } from "@/lib/context/ConfirmContext";
 import { toExternalHref } from "@/lib/utils/url";
 
 const CATEGORIES = ["guidance", "reading", "template", "policy"] as const;
+
+/**
+ * One treatment, four icons.
+ *
+ * Each category used to carry its own accent — brand, sky, emerald, amber —
+ * which made a page of cards read as four unrelated kinds of thing and put
+ * the product's warning colour on "Policy", a category that warns about
+ * nothing. The icon already distinguishes them, and the chip says the word.
+ */
+const CHIP = "bg-muted text-slate-600 dark:text-slate-300";
 const CAT_META: Record<
   string,
   { icon: typeof BookOpen; cls: string; label: string }
 > = {
-  guidance: {
-    icon: GraduationCap,
-    cls: "bg-brand-50 text-brand-700 dark:bg-brand-500/15",
-    label: "Guidance",
-  },
-  reading: {
-    icon: BookOpen,
-    cls: "bg-sky-50 text-sky-700 dark:bg-sky-500/15",
-    label: "Reading",
-  },
-  template: {
-    icon: FileText,
-    cls: "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15",
-    label: "Template",
-  },
-  policy: {
-    icon: ShieldCheck,
-    cls: "bg-amber-50 text-amber-700 dark:bg-amber-500/15",
-    label: "Policy",
-  },
+  guidance: { icon: GraduationCap, cls: CHIP, label: "Guidance" },
+  reading: { icon: BookOpen, cls: CHIP, label: "Reading" },
+  template: { icon: FileText, cls: CHIP, label: "Template" },
+  policy: { icon: ShieldCheck, cls: CHIP, label: "Policy" },
 };
 
 /**
@@ -161,17 +157,25 @@ export default function LibraryView({
             className="w-full border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 bg-card"
           />
         </div>
+        {/* With a count each, the filter row doubles as a contents page —
+            "is there anything in Templates" was previously answered only by
+            clicking and finding out. */}
         <div className="flex flex-wrap items-center gap-1 p-1 bg-muted rounded-xl">
-          {["all", ...CATEGORIES].map((c) => (
-            <button
-              key={c}
-              aria-pressed={category === c}
-              onClick={() => setCategory(c)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${category === c ? "bg-card text-brand-700 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
-            >
-              {c === "all" ? "All" : CAT_META[c].label}
-            </button>
-          ))}
+          {["all", ...CATEGORIES].map((c) => {
+            const count = c === "all" ? documents.length : documents.filter((d) => d.category === c).length;
+            return (
+              <button
+                key={c}
+                aria-pressed={category === c}
+                onClick={() => setCategory(c)}
+                disabled={count === 0 && c !== "all"}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 ${category === c ? "bg-card text-brand-700 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+              >
+                {c === "all" ? "All" : CAT_META[c].label}
+                <span className="ml-1.5 text-xs tabular-nums text-slate-400">{count}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -186,13 +190,27 @@ export default function LibraryView({
       ) : filtered.length === 0 ? (
         <div className="bg-card rounded-2xl border border-dashed border-slate-200 py-16 text-center">
           <BookOpen className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+          {/* "No resources match." was true of a search, a category filter and
+              both at once, and said which it was for none of them. */}
           <p className="text-slate-600">
             {documents.length === 0
               ? canCurate
                 ? "Your library is empty."
                 : "Nothing here yet."
-              : "No resources match."}
+              : query && category !== "all"
+                ? `Nothing in ${CAT_META[category].label} matches “${query}”.`
+                : query
+                  ? `Nothing matches “${query}”.`
+                  : `Nothing in ${CAT_META[category]?.label ?? "this category"} yet.`}
           </p>
+          {documents.length > 0 && (query || category !== "all") && (
+            <button
+              onClick={() => { setQuery(""); setCategory("all"); }}
+              className="mt-3 text-sm font-medium text-brand-600 hover:text-brand-700"
+            >
+              Show everything
+            </button>
+          )}
           {documents.length === 0 && canCurate && (
             <button
               onClick={() => setEditing("new")}
@@ -285,32 +303,55 @@ function ResourceCard({
         >
           <Icon className="w-4 h-4" />
         </div>
+        {/* One menu instead of three always-visible icons.
+            Every card carried pin, edit and delete in its corner — on a page
+            whose job is reading, that is three controls per card competing
+            with the title, and a delete button one slip away at all times.
+            They are the same three actions, behind the overflow menu the rest
+            of the product uses, shown on hover or keyboard focus. */}
         {canCurate && (
-          <div className="flex items-center gap-0.5 opacity-100">
-            <button
-              onClick={onPin}
-              disabled={busy}
-              title={d.pinned ? "Unpin" : "Pin"}
-              className={`p-1.5 rounded-lg hover:bg-slate-100 ${d.pinned ? "text-brand-600" : "text-slate-400"}`}
+          <div className="opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+            <Dropdown
+              align="end"
+              width="w-44"
+              trigger={({ toggle }) => (
+                <button
+                  type="button"
+                  onClick={toggle}
+                  disabled={busy}
+                  aria-label={`Manage ${d.title}`}
+                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                </button>
+              )}
             >
-              <Pin className="w-4 h-4" />
-            </button>
-            <button
-              onClick={onEdit}
-              disabled={busy}
-              title="Edit"
-              className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100"
-            >
-              <Pencil className="w-4 h-4" />
-            </button>
-            <button
-              onClick={onRemove}
-              disabled={busy}
-              title="Delete"
-              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
+              {(close) => (
+                <div className="p-1">
+                  <button
+                    type="button"
+                    onClick={() => { close(); onPin(); }}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    <Pin className="h-4 w-4" />{d.pinned ? "Unpin" : "Pin to the top"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { close(); onEdit(); }}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    <Pencil className="h-4 w-4" />Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { close(); onRemove(); }}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                  >
+                    <Trash2 className="h-4 w-4" />Delete
+                  </button>
+                </div>
+              )}
+            </Dropdown>
           </div>
         )}
       </div>

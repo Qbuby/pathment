@@ -49,7 +49,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 6iii | Paginate members (shows ~1088) and posts (pagination/filters/search or infinite scroll). | ✅ | `75883cfe` | |
 | 7 | Proper country/province/city pickers wherever location is captured, with timezone suggested from the country. | ✅ | `d0a13e8e` | **Needs migration 131 on prod.** API + browser verified. |
 | 8 | Mentee "My progress" page is weak — improve or remove. | ✅ | `998861d3` | Empty-state pass, not a redesign. |
-| 9 | Library (admin → mentor → mentee) redesign. | ⬜ | | |
+| 9 | Library (admin → mentor → mentee) redesign. | ✅ | | A pass over the noise, not a new IA — see the scope note. |
 | 10 | Mentee dashboard: re-prioritise top vs bottom; the daily/planner block does not belong there. | ✅ | | Re-prioritised + planner moved behind a strip; not a ground-up redesign. |
 | 11 | Notification / "What's new" drawers do not open smoothly (the Feedback drawer does). | ✅ | | Notifications had no animation at all; both now use the shared Drawer. |
 | 12 | Paginate (or infinite-scroll) Points & badges — performance leaderboard and earned badges. | ✅ | | Also: a mentee outside the top 10 could not see themselves. |
@@ -1397,3 +1397,38 @@ titled **"Your day"**. No console errors.
 **Scope, stated.** This is the re-prioritisation and the planner move the report asks for,
 not a ground-up redesign of the page. The hero, the work queue and the enrolment cards
 keep their current shape.
+
+### Issue 9 — the Library
+
+One component serves all three roles (`LibraryView`, with `canCurate` for admin and
+mentor), so this is one change for admin, mentor and mentee. Four specific things were
+wrong with it:
+
+- **Three controls on every card, always.** Pin, edit and **delete** sat in the corner of
+  each card, on a page whose job is reading — competing with the titles, and leaving a
+  delete button one slip away at all times. They are the same three actions behind the
+  overflow menu the rest of the product uses, revealed on hover or keyboard focus.
+- **Four decorative accents.** Guidance was brand, Reading sky, Template emerald and
+  **Policy amber** — so a page of cards read as four unrelated kinds of thing, and the
+  product's warning colour sat on a category that warns about nothing. (The report
+  complains about that colour twice elsewhere.) One neutral chip now; the icon already
+  tells them apart.
+- **The filters could not say what was behind them.** "Is there anything in Templates?"
+  was answered only by clicking and finding out. Each filter carries its count now —
+  **All 14 · Guidance 4 · Reading 5 · Template 4 · Policy 1** — and an empty category is
+  disabled rather than a dead end.
+- **"No resources match."** was shown for a search, for a category filter, and for both
+  at once, and said which it was for none of them. It names the search term and the
+  category now, with one button back to everything.
+
+**Files.** `client-interface/components/shared/library/LibraryView.tsx`.
+
+**Tests run.** `tsc` clean.
+
+**Verified in the browser** on the mentor library (the same component the admin and
+mentee pages render): counts on every filter, one chip treatment, cards leading with
+their titles, no console errors. Screenshot captured.
+
+**Scope, stated.** This is a pass over what made the page noisy, not a new information
+architecture. The report says "can be redesigned properly" with no specifics and no
+screenshot; if there is a particular layout you want, say which part and I will build it.
