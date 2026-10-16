@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { AdminScopeFilter } from '@/components/admin/AdminScopeFilter';
 import {
   Download,
   CheckCircle2,
@@ -437,6 +438,7 @@ export default function EnrollmentOverviewPage() {
       </div>
 
       {/* ── Filters ── */}
+      <AdminScopeFilter showClan className="mb-3" />
       <SearchAndFilterBar
         search={search}
         onSearch={setSearch}

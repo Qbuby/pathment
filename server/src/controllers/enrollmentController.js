@@ -18,13 +18,13 @@ exports.getEnrollmentStats = catchAsync(async (req, res) => {
  * GET /api/enrollments
  */
 exports.getEnrollments = catchAsync(async (req, res) => {
-  const { status, programId, menteeId, search, page, limit } = req.query;
+  const { status, programId, menteeId, search, page, limit, clanId } = req.query;
 
   // Scope by what the requester may SEE, not by their primary role (a co-mentor
   // has a 'mentee' primary role but legitimately views others). Asking for a
   // specific mentee requires permission to view them; asking broadly with no
   // mentor/admin capability falls back to "your own enrollments only".
-  let filters = { status, programId, menteeId, search };
+  let filters = { status, programId, menteeId, search, clanId };
   if (menteeId && menteeId !== req.user.id) {
     const allowed = await authzService.canViewMentee(req.user, menteeId, {
       assignments: req.loadAssignments ? await req.loadAssignments() : undefined

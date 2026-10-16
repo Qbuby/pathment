@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { AdminScopeFilter } from '@/components/admin/AdminScopeFilter';
 import Link from 'next/link';
 import {
   GraduationCap,
@@ -400,6 +401,10 @@ export default function AdminMentorsListPage() {
       </div>
 
       {/* Search + Filter */}
+      {/* Which programme, and which clan inside it. Shared across the
+          People screens, so the choice is made once. */}
+      <AdminScopeFilter showClan className="mb-3" />
+
       <SearchAndFilterBar
         search={search}
         onSearch={setSearch}

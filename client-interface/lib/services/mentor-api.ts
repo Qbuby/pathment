@@ -50,8 +50,23 @@ export interface TransferRequest {
 
 export const mentorApi = {
   // Get all active mentors
-  getAll: async (search?: string) => {
-    const params = search ? { search } : {};
+  /**
+   * The mentor directory.
+   *
+   * This took a SEARCH STRING, and both of its paged callers were handing it
+   * a filter object — so `params` came out as `{ search: { search, page,
+   * limit, … } }` and the server received one nonsense parameter instead of
+   * four real ones. The admin mentor list had therefore never paged, never
+   * filtered by "accepting", and searched by an object. It takes the object
+   * now, and a bare string still works for the callers that pass one.
+   */
+  getAll: async (filters?: string | {
+    search?: string; page?: number; limit?: number;
+    accepting?: 'true' | 'false'; programId?: string; clanId?: string;
+  }) => {
+    const params = typeof filters === 'string'
+      ? (filters ? { search: filters } : {})
+      : Object.fromEntries(Object.entries(filters || {}).filter(([, v]) => v !== undefined && v !== ''));
     return apiClient.get(apiConfig.endpoints.mentors, { params });
   },
 

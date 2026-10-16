@@ -63,7 +63,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 20 | Mentor calendar: pick a **time** on the calendar, and set repeating availability by day + time. | ✅ | | |
 | 21 | Feature-usage statistics per role (which pages/features are actually used). | ⬜ | | Open-ended programme. |
 | 22 | Admins can create standing clans too. | ✅ | | |
-| 23 | Program/clan filters across the admin panel (people → mentees/mentors, enrollments, clan requests), ideally one global program selector. | ⬜ | | Open-ended programme. |
+| 23 | Program/clan filters across the admin panel (people → mentees/mentors, enrollments, clan requests), ideally one global program selector. | ⚠️ | | The four People screens; other admin areas not wired to the scope yet. |
 | 24 | Admin live-meeting screen redesign (calendar, Meet-like). | ⬜ | | |
 | 25 | Opening a conversation must land scrolled to the newest message. | ✅ | | Also fixed a page-level crash on Messages. |
 | 26 | Workspace plan & usage shows wrong usage and wrong current plan. | ⚠️ | | Contradiction + NaN + retired-plan cases fixed; the raw counts could not be reproduced locally. |
@@ -1257,3 +1257,75 @@ else that wants it.
 **Verified in the browser:** the page reads *greeting → actions → announcement strip
 ("+2") → stats → nudge → panels*, and **0 elements** carry an amber or yellow class. No
 console errors.
+
+### Issue 23 — admin screens could only ask "what is this person called"
+
+**Root cause.** Every People screen listed the whole workspace and offered a name search,
+which is the only question a name search can answer. An admin running several programmes
+could not ask *"who is in this one"* — the question those pages exist for — and with
+forty-odd clans, *"who is in this clan"* was worse.
+
+**Fix — one scope, shared.** `AdminScopeProvider` holds the chosen programme and clan for
+the admin portal, the way the mentor portal has long held a clan. It is **remembered per
+account** (two people on one browser must not inherit each other's scope) and shared, so
+picking a programme on Mentees carries to Mentors, Enrolments and Clan requests rather
+than being re-picked on each. `AdminScopeFilter` is the control, on all four screens.
+
+Server-side the filters are **subtractive**, like every other scope in the product: they
+intersect with the programme scope a `program_admin` already has, so naming a programme
+they do not administer returns nothing rather than widening anything.
+
+- **Mentees** — by clan (membership) or programme (**enrolment**, deliberately: clan
+  membership alone would miss anyone enrolled but not yet placed, who is exactly the
+  person an admin opens this page to find).
+- **Mentors** — by clan, or every clan of a programme, counting only the roles that
+  actually mentor.
+- **Enrolments** — by programme (already supported) and now by clan, resolved through the
+  enrolment each clan membership was created for.
+- **Clan requests** — filtered in the browser, since the whole queue is one small read.
+  A row with no clan on either side is **never hidden**: hiding what cannot be classified
+  is how a request goes missing.
+
+**Two bugs found on the way.**
+
+1. **The admin mentor list had never paged or filtered.** `mentorApi.getAll` took a
+   *search string*, and both paged callers were handing it a filter object — so `params`
+   came out as `{ search: { search, page, limit, … } }` and the server got one nonsense
+   parameter instead of four real ones. It takes the object now, and a bare string still
+   works for the callers that pass one.
+2. **My own first cut silently reset the scope on every navigation.** The filter clears a
+   clan that is not in the chosen programme — correct — but it ran before the clan list
+   had loaded, so on each page load the stored clan "was not in" an empty list and was
+   dropped. The choice only survived on the page it was made. Caught by following the
+   value through the browser: the picker showed the clan while the request did not carry
+   it.
+
+**Files.** `server/src/controllers/menteeController.js`,
+`server/src/controllers/mentorController.js`,
+`server/src/controllers/enrollmentController.js`,
+`server/src/services/enrollmentService.js`,
+`server/src/services/clanRequestsService.js`;
+`client-interface/lib/context/AdminScopeContext.tsx` (new),
+`client-interface/components/admin/AdminScopeFilter.tsx` (new),
+`client-interface/app/admin/layout.tsx`, the four screens, their three hooks, and
+`mentee-api.ts` / `enrollment-api.ts` / `mentor-api.ts`.
+
+**Tests run.** `tests/admin` + `tests/organizations` → **137 pass / 0 fail**; `tsc` clean.
+
+**A fourth stale test was found and rewritten.** `tests/admin/clan-avatar.test.js` called
+`clanAvatarService.setAvatar`, a function that does not exist and **never existed on
+`origin/staging` either** — the service was split into `uploadAvatarFile` and
+`setAvatarUrl` and the test was not moved across, so it had been failing every run with
+`TypeError: setAvatar is not a function`, which teaches nobody anything. The rules it was
+protecting are unchanged and are now asserted against the two functions that carry them,
+plus the two cases it never covered (a bad URL, and removal). 7 pass.
+
+**Verified over the API and in the browser.** Mentees **27 → 20** (MERN) / **6** (Node
+Guild); mentors **3 → 2**; enrolments **27 → 20**. In the browser, choosing Node Guild on
+Mentees narrowed it to *"Showing 1 - 6 of 6"*, the choice persisted to localStorage, and
+**the Mentors page opened already filtered** — `?clanId=…`, *"Showing 1 - 2 of 2"*.
+
+**Not done.** The report also floats *"all the admin panel screens then show that
+programme wise"* and a "create programme" button when there are none. The scope context is
+built to carry exactly that, and the Learning / Recognition / Insights screens are not
+wired to it yet — the four People screens the report names are.

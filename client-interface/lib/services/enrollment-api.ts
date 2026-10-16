@@ -8,10 +8,11 @@ export const enrollmentApi = {
   },
 
   // Get all enrollments with filters
-  getAll: (filters?: { status?: string; programId?: string; menteeId?: string; search?: string; page?: number; limit?: number }) => {
+  getAll: (filters?: { status?: string; programId?: string; clanId?: string; menteeId?: string; search?: string; page?: number; limit?: number }) => {
     const params = new URLSearchParams();
     if (filters?.status)    params.append('status',    filters.status);
     if (filters?.programId) params.append('programId', filters.programId);
+    if (filters?.clanId)    params.append('clanId',    filters.clanId);
     if (filters?.menteeId)  params.append('menteeId',  filters.menteeId);
     if (filters?.search)    params.append('search',    filters.search);
     if (filters?.page)      params.append('page',      filters.page.toString());
@@ -119,10 +120,19 @@ export const matchingApi = {
 };
 
 // ─── Mentor API ───────────────────────────────────────────────────────────────
+/**
+ * The ADMIN mentor directory. Note there is a second `mentorApi` in
+ * `mentor-api.ts` for the mentor's own portal; this is the one the admin
+ * People screens use, which is worth knowing before editing either.
+ */
 export const mentorApi = {
-  getAll: (filters?: { search?: string; page?: number; limit?: number; accepting?: 'true' | 'false' }) => {
+  getAll: (filters?: { search?: string; page?: number; limit?: number; accepting?: 'true' | 'false'; programId?: string; clanId?: string }) => {
     const params = new URLSearchParams();
     if (filters?.search) params.append('search', filters.search);
+    // Narrowing only: the server intersects these with what the caller may
+    // already see, so naming a programme cannot widen anything.
+    if (filters?.programId) params.append('programId', filters.programId);
+    if (filters?.clanId) params.append('clanId', filters.clanId);
     if (filters?.page) params.append('page', String(filters.page));
     if (filters?.limit) params.append('limit', String(filters.limit));
     if (filters?.accepting) params.append('accepting', filters.accepting);

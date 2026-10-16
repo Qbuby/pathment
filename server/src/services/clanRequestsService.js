@@ -18,16 +18,19 @@ class ClanRequestsService {
         include: [
           { model: models.User, as: 'mentee', attributes: ['firstName', 'lastName'] },
           { model: models.User, as: 'requester', attributes: ['firstName', 'lastName'] },
-          { model: models.Clan, as: 'fromClan', attributes: ['name'] },
-          { model: models.Clan, as: 'toClan', attributes: ['name'] }
+          // The programme each clan belongs to travels with it, so the admin
+          // screen can filter this queue by programme — with forty-odd clans
+          // in a workspace, "which of these are mine" is the first question.
+          { model: models.Clan, as: 'fromClan', attributes: ['name', 'programId'] },
+          { model: models.Clan, as: 'toClan', attributes: ['name', 'programId'] }
         ]
       }),
       models.CrossClanAssignment.findAll({
         order: [['created_at', 'DESC']],
         include: [
           { model: models.User, as: 'user', attributes: ['firstName', 'lastName'] },
-          { model: models.Clan, as: 'fromClan', attributes: ['name'] },
-          { model: models.Clan, as: 'toClan', attributes: ['name'] }
+          { model: models.Clan, as: 'fromClan', attributes: ['name', 'programId'] },
+          { model: models.Clan, as: 'toClan', attributes: ['name', 'programId'] }
         ]
       })
     ]);
@@ -38,6 +41,9 @@ class ClanRequestsService {
         mentee: fullName(r.mentee),
         fromClan: r.fromClan?.name || null,
         toClan: r.toClan?.name || null,
+        fromClanId: r.fromClanId || null,
+        toClanId: r.toClanId || null,
+        programId: r.toClan?.programId || r.fromClan?.programId || null,
         reason: r.reason,
         status: r.status,
         resolutionNote: r.resolutionNote,
@@ -53,6 +59,9 @@ class ClanRequestsService {
         user: fullName(c.user),
         fromClan: c.fromClan?.name || null,
         toClan: c.toClan?.name || null,
+        fromClanId: c.fromClanId || null,
+        toClanId: c.toClanId || null,
+        programId: c.toClan?.programId || c.fromClan?.programId || null,
         note: c.note,
         status: c.status,
         at: c.createdAt

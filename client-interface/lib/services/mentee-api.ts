@@ -32,9 +32,13 @@ export interface TaskProgress {
 }
 
 export const menteeApi = {
-  getAll: (filters?: { search?: string; page?: number; limit?: number }) => {
+  getAll: (filters?: { search?: string; page?: number; limit?: number; programId?: string; clanId?: string }) => {
     const params = new URLSearchParams();
     if (filters?.search) params.append('search', filters.search);
+    // Narrowing only: the server intersects these with what the caller may
+    // already see, so naming a programme cannot widen anything.
+    if (filters?.programId) params.append('programId', filters.programId);
+    if (filters?.clanId) params.append('clanId', filters.clanId);
     if (filters?.page) params.append('page', String(filters.page));
     if (filters?.limit) params.append('limit', String(filters.limit));
     const qs = params.toString();

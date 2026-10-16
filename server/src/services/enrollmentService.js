@@ -24,7 +24,7 @@ class EnrollmentService {
   }
 
   async getEnrollments(filters, pagination) {
-    const { status, programId, programIds, menteeId, search } = filters;
+    const { status, programId, programIds, menteeId, search, clanId } = filters;
     const { page, limit } = pagination;
     const offset = (page - 1) * limit;
 
@@ -39,6 +39,23 @@ class EnrollmentService {
       where.programId = programId;
     }
     if (menteeId) where.menteeId = menteeId;
+
+    /**
+     * One clan's enrolments.
+     *
+     * A clan membership carries the enrolment it was created for, so the
+     * honest answer is "the enrolments those memberships point at" — not
+     * "everyone in the clan", which would also catch a member placed without
+     * one. Narrows only: it intersects with the programme scope above.
+     */
+    if (clanId) {
+      const memberships = await models.ClanMembership.findAll({
+        where: { clanId, role: 'mentee', enrollmentId: { [Op.ne]: null } },
+        attributes: ['enrollmentId'], raw: true,
+      });
+      const ids = [...new Set(memberships.map((m) => m.enrollmentId).filter(Boolean))];
+      where.id = { [Op.in]: ids.length ? ids : ['00000000-0000-0000-0000-000000000000'] };
+    }
 
     // Server-side search across mentee name, email and program name.
     // Uses $association.column$ syntax so Sequelize can push the filter
