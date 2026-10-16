@@ -53,10 +53,10 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 10 | Mentee dashboard: re-prioritise top vs bottom; the daily/planner block does not belong there. | ⬜ | | |
 | 11 | Notification / "What's new" drawers do not open smoothly (the Feedback drawer does). | ⬜ | | |
 | 12 | Paginate (or infinite-scroll) Points & badges — performance leaderboard and earned badges. | ⬜ | | |
-| 13 | Surface paused mentees in clan review on the selected mentee's profile card. | ⬜ | | |
+| 13 | Surface paused mentees in clan review on the selected mentee's profile card. | ✅ | | Also fixed a 403 on every review load. |
 | 14 | Review-access lock should be settable per program or per clan, not org-wide only; remove the yellow styling. | ⬜ | | Same feature as #27, seen from the mentor side. |
 | 15 | Improve the "Something went wrong" screen. | ⬜ | | The screenshot also evidences a real crash on Recognition → Top performers with "All clans". |
-| 16 | Top-performers/nominations not scoped to the active (standing) clan — mentor sees other clans' nominations. | ⬜ | | "Not ranked yet" is correctly scoped; "Your nominations" is not. |
+| 16 | Top-performers/nominations not scoped to the active (standing) clan — mentor sees other clans' nominations. | ✅ | | Also closed a cross-clan ranking leak. |
 | 17 | Mentor Insights → Reports disagrees with leaderboard/progress score (both correct). Align the criteria. Also: no mentee profile pictures in progress. | ⬜ | | |
 | 18 | Mentor dashboard: remove yellow, re-prioritise, show announcements compactly. | ⬜ | | |
 | 19 | Task assign: drop "Assign now / Schedule once / Repeat weekly"; use two icon menus (due date, repeat) like Microsoft To Do. No reminder icon. | ⬜ | | Migration 130 already added `assigned_tasks.repeat_rule`. |
@@ -439,3 +439,136 @@ with an empty error message. 131 and 132 are now applied to it.
 returns **403** for a clan the mentor genuinely leads, whenever that clan is finished —
 `_scopeClans` filters on `frozenAt: null`. Clan review requests it on every load, so the
 page has been logging a forbidden error since programmes started being completed.
+
+### Issue 13 — the paused mentee in clan review
+
+**What the report said.** "Make sure we are suggesting the paused mentee in the clan review
+on the selected mentee on their little profile card."
+
+**What was actually wrong — two things, found by watching the network.** The pause
+suggestion *was* already built into the review card. It could never appear.
+
+1. **`GET /api/mentor/pause-suggestions` returned 403 on every clan review load** for a
+   clan whose programme had finished. `_scopeClans` filtered clans on `frozenAt: null` and
+   then used that one list to answer two different questions: *may this person act here*
+   and *does this apply here*. A mentor who leads a finished clan does oversee it — telling
+   them "You do not oversee this clan" is simply false — and after issue 6 made a finished
+   clan a normal place to be working, the page logged a forbidden error every time it
+   opened. Caught while verifying issue 33; it was the only failing request on the page.
+2. **A paused mentee vanished from clan review entirely.** The roster comes from
+   `/mentor/cohort`, which resolves mentees at `status: 'active'`. Pausing is supposed to
+   take somebody out of reports and reminders — and it does, correctly — but it also took
+   them off the one screen where a mentor goes through their people one at a time and
+   would notice that someone had stopped turning up. They were gone, with no trace, no
+   explanation for the shrunken roster, and no way back from that screen.
+
+**Fix.**
+
+- **Authority and applicability are now separate reads.** `_overseenClans` answers "may
+  they" and includes finished clans; `_scopeClans` answers "does it apply" and is the
+  running subset, which the write paths and the win-back cadence keep using. A finished
+  clan therefore returns **no suggestions instead of an error**, a clan the mentor does not
+  run is **still refused**, and who is paused in a finished clan is still visible —
+  they are, after all, still paused.
+- **Clan review asks for paused mentees, and nothing else does.**
+  `GET /api/mentor/cohort?includePaused=1` adds them, tagged `paused: true`, attributed to
+  their clan, and excluded from every total on both the server and the client. Opt-in
+  rather than always-on so the cockpit, approvals and the leaderboard keep counting exactly
+  who they counted before. A mentee paused in one clan and active in another stays a single
+  active row — a greyed-out second copy of them would be a lie.
+- **On the screen:** they sort last and are greyed in the rail with a pause badge instead
+  of a present/absent one; the attendance tally reads `0/19 marked · 1 paused`; the
+  attendance sheet and the side panel will not mark them, because nobody is expected at a
+  review they are paused out of; and the profile card carries a **Paused** chip in place of
+  the risk chip, an explanation, and **Bring back** where Pause used to be. Offering
+  "Pause" on an already-paused mentee was the old behaviour, and it re-paused them.
+
+**Files.** `server/src/services/mentorshipPauseService.js`,
+`server/src/services/cohortService.js`, `server/src/controllers/cohortController.js`,
+`server/src/controllers/mentorshipPauseController.js`,
+`server/tests/mentor/paused-mentee-access.test.js`;
+`client-interface/app/mentor/review/page.tsx`,
+`client-interface/lib/hooks/mentor/useMentorCohort.ts`,
+`client-interface/lib/services/mentor-api.ts`,
+`client-interface/components/mentor/attendance/AttendanceSection.tsx`,
+`client-interface/components/mentor/attendance/MenteeAttendanceCard.tsx`.
+
+**Tests run.** 6 new cases in `tests/mentor/paused-mentee-access.test.js` → **26 pass / 0
+fail** in that file.
+
+**A second stale test was found and corrected** in the same file. It asserted that
+`scopeOfMentee` prefers an active placement over a paused one; the service deliberately
+stopped choosing — picking for the caller authorises against a clan they did not ask
+about, and a standing clan grants different things from a cohort clan. **Confirmed failing
+on the branch base before any of my changes**, so it was already red. It now asserts the
+real contract, including that naming a clan resolves it either way.
+
+**Verified end to end.**
+- `GET /mentor/cohort` → 19 rows, none paused, `totals.mentees` 19.
+  `?includePaused=1` → 20 rows, 1 paused, `totals.mentees` still 19.
+- A finished clan: suggestions **200 with `[]`** (was 403); paused list **200, 1 row**; a
+  clan the mentor does not run **still 403**.
+- Browser, clan review: 20 chips with the paused one greyed and last,
+  "0/19 marked · 1 paused", the Paused chip and banner on the card, **and no failed
+  requests on the page at all**. Screenshot captured.
+- Clicking **Bring back** produced "Sara Ali is back in the clan", the card dropped the
+  paused state, the rail became `0/20 marked`, and the database row read `active`.
+
+**Note on the suggestion itself.** The demo data cannot trigger one: a suggestion needs
+three or more missed reviews (`INACTIVITY.reviewsBeforeFlag`) and the seeded clans only
+hold two review sessions. The code path is reached — the request now returns 200 — but an
+actual suggestion rendering on the card was **not** observed in the browser, only the
+paused state was. Saying so rather than claiming otherwise.
+
+### Issue 16 — nominations from every clan, on one clan's screen
+
+**Root cause — two faults stacked on the same screen.**
+
+1. **The portal was ignored.** `performanceNominationService.list` asked
+   `authzService.hasAdminAccess`, which answers *does this person hold admin*. The
+   reporter is a mentor **and** an admin, so it answered yes on their own mentor screen
+   and the clan filter below it was skipped entirely — they were handed every nomination
+   in the organisation. This is the same mistake issue 3 had, and the same correction:
+   `actsAsAdmin`, which answers *which portal do they have open*.
+2. **Nothing narrowed by clan.** The sidebar clan picker governs every other mentor
+   screen. This one never sent a clan, so even a plain mentor read the nominations of
+   every clan they mentor while looking at one of them.
+
+**Fix.** `list` uses `actsAsAdmin` and accepts a clan, which the controller takes from
+`?clanId=` or the portal's own `X-Active-Clan`. The narrowing is **subtractive**: naming a
+clan can only remove rows, never add one the caller could not already see.
+
+The heading changed with it. It said "Your nominations" and listed every nomination in the
+clan, a co-mentor's included — which is deliberate, because the "Nominated" chip on the
+roster above can only warn you that somebody has already been put forward if another
+mentor's nomination is in that list. It now reads **"Nominations in &lt;clan&gt;"**, which is
+what it is.
+
+**Found next to it: an authorization hole.** `ranking` took a bare `clanId` and **no
+caller at all**, so any signed-in mentor could ask for any clan in the organisation.
+Demonstrated against the pre-fix code: the mentor of Node Guild requested MERN Fellows and
+got **200 with all 20 mentees by name, with their scores and signals**. It now takes the
+caller and checks the clan against their own scope first — the same mentor now gets 403,
+their own clan still returns 20, and an admin still reads any clan.
+
+**Files.** `server/src/services/performanceNominationService.js`,
+`server/src/controllers/performanceNominationController.js`,
+`server/tests/mentor/top-performer-nominations.test.js`;
+`client-interface/app/mentor/top-performers/page.tsx`,
+`client-interface/app/admin/top-performers/page.tsx`,
+`client-interface/lib/services/top-performers-api.ts`.
+
+**Tests run.** `tests/mentor/top-performer-nominations.test.js` → **20 pass / 0 fail**,
+including 5 new cases: the clan narrowing, that it cannot be widened by naming a clan you
+do not mentor, and the three ranking-authorization cases. The suite **caught my own
+change** first — adding the `user` argument broke all 13 existing cases, which is how the
+two internal `ranking` calls inside `nominate` and `aiDraft` were found still passing no
+caller. They were fixed and re-verified by nominating through the live API (201).
+
+**Verified end to end**, with a genuine mentor+admin account (an org `super_admin` role
+granted to the seeded mentor in the local database for the test):
+- Before: mentor portal, standing clan selected → **2 nominations, both from MERN
+  Fellows** — exactly the report. After: **0**.
+- Admin portal, no clan → still 2. The org-wide view is untouched.
+- Browser: MERN Fellows selected → *"Nominations in MERN Fellows"*, 2 rows. Standing clan
+  selected → the section is **not rendered at all**, and no failed requests.
