@@ -82,11 +82,23 @@ export function TaskTimingRow({
   onDueChange,
   schedule,
   onScheduleChange,
+  repeat = true,
+  minDate,
+  dueUnset = false,
+  assigning = true,
 }: {
   due: TaskDueDraft;
   onDueChange: (next: TaskDueDraft) => void;
   schedule: TaskScheduleDraft;
   onScheduleChange: (next: TaskScheduleDraft) => void;
+  /** Hide the repeat menu where repeating is not on offer (e.g. a task already submitted). */
+  repeat?: boolean;
+  /** Earliest pickable date. Defaults to today; pass '' to allow a date in the past. */
+  minDate?: string;
+  /** The task has no deadline at all, and none has been chosen yet. */
+  dueUnset?: boolean;
+  /** Assigning now (the default) vs editing something already handed over. */
+  assigning?: boolean;
 }) {
   const repeating = schedule.mode === 'weekly' && schedule.daysOfWeek.length > 0;
   const dueLabel = due.exact ? niceDate(due.exact) : `in ${due.days} day${due.days === 1 ? '' : 's'}`;
@@ -121,9 +133,9 @@ export function TaskTimingRow({
         <Dropdown
           width="w-64"
           trigger={({ toggle }) => (
-            <button type="button" onClick={toggle} className={trigger('', true)} aria-label={`Due ${dueLabel}`}>
+            <button type="button" onClick={toggle} className={trigger('', !dueUnset)} aria-label={dueUnset ? 'Set a deadline' : `Due ${dueLabel}`}>
               <CalendarDays className="h-4 w-4" aria-hidden />
-              <span>Due {dueLabel}</span>
+              <span>{dueUnset ? 'Set a deadline' : `Due ${dueLabel}`}</span>
             </button>
           )}
         >
@@ -152,7 +164,7 @@ export function TaskTimingRow({
                 <input
                   type="date"
                   value={due.exact}
-                  min={dayKey(new Date())}
+                  min={minDate ?? dayKey(new Date())}
                   onChange={(e) => setExact(e.target.value)}
                   className="mt-1.5 w-full rounded-lg border border-border bg-card px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
@@ -162,7 +174,7 @@ export function TaskTimingRow({
         </Dropdown>
 
         {/* Repeat */}
-        <Dropdown
+        {repeat && (<Dropdown
           width="w-64"
           trigger={({ toggle }) => (
             <button type="button" onClick={toggle} className={trigger('', repeating)} aria-label={repeating ? `Repeats ${repeatLabel}` : 'Does not repeat'}>
@@ -221,9 +233,9 @@ export function TaskTimingRow({
               </div>
             </div>
           )}
-        </Dropdown>
+        </Dropdown>)}
 
-        {repeating && (
+        {repeat && repeating && (
           <button
             type="button"
             onClick={() => setRepeat([])}
@@ -235,12 +247,21 @@ export function TaskTimingRow({
       </div>
 
       {/* The two controls, read back as one sentence. A mentor should not have
-          to hold the combination in their head. */}
-      <p className="text-xs text-muted-foreground">
-        {repeating
-          ? `Assigned ${describeRepeat(schedule)}, each one due ${schedule.dueOffsetDays} day${schedule.dueOffsetDays === 1 ? '' : 's'} later.`
-          : `Assigned now, due ${dueLabel}.`}
-      </p>
+          to hold the combination in their head. Editing an existing task, the
+          buttons already say it, so the sentence only appears when it adds
+          something the buttons do not. */}
+      {(() => {
+        const line = repeat && repeating
+          ? assigning
+            ? `Assigned ${describeRepeat(schedule)}, each one due ${schedule.dueOffsetDays} day${schedule.dueOffsetDays === 1 ? '' : 's'} later.`
+            : `Future assignments ${describeRepeat(schedule)}, each one due ${schedule.dueOffsetDays} day${schedule.dueOffsetDays === 1 ? '' : 's'} later. This one keeps the deadline above.`
+          : dueUnset
+            ? 'No deadline yet — pick one, or leave it open.'
+            : assigning
+              ? `Assigned now, due ${dueLabel}.`
+              : '';
+        return line ? <p className="text-xs text-muted-foreground">{line}</p> : null;
+      })()}
     </section>
   );
 }

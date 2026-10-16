@@ -1842,3 +1842,55 @@ Carried work that cannot be submitted is the same dead end as work that never ca
 submits, and lands in the lead's queue.
 
 14 suites across `tests/clans` and `tests/admin` pass — 167 tests.
+
+
+## Follow-up — the edit-task drawer
+
+**What was reported.** Editing a task looked nothing like assigning one, and opening an
+in-progress task showed none of the mentee's progress.
+
+**Why both were true at once.** Clan Review does not open the read-only task drawer for
+work a mentor can still edit — it drops straight into the edit form. So that form is
+the whole screen a mentor sees when they click a task in flight, and it was a bare stack
+of labelled boxes: a native `<select>` for the type where assigning uses pills,
+acceptance criteria as one newline-separated textarea where assigning gives each check
+its own row, a scheduling block still asking the timing question in the three-way shape
+the assign form dropped in issue 19, and no sign anywhere of what the mentee had
+actually done.
+
+**The form now.** Same questions, same order, same controls as assigning: title, type
+pills, the shared `TaskTimingRow` (deadline + repeat), the rich-text brief, task value,
+and the `Deliverable, checks & resources` fold — which opens itself when there is
+already something in it, because hiding the filled-in part of a filled-in form is the
+opposite of useful. The mentor note stays; it is the one field that only exists here.
+
+Difficulty is shown beside the task value but is not editable. The server has no
+per-assignment difficulty override — only `pointsBase`, which is the thing difficulty
+decides — so an editable control there would have been a lie. Type is a locked chip for
+the kinds the server refuses to swap (quiz, interview, open-source, course all carry
+their own assignment setup) and for any task that has already been handed in; the repeat
+menu is hidden on the same rule, and until its current value has loaded, so a click
+cannot stomp a setting that has not arrived yet.
+
+**Progress.** A task the mentee has started opens with a panel above the form: when they
+started, the deadline and how far past it they are, the day-by-day log with its gaps
+drawn in, and — behind one click, so it costs nothing on a task with no submissions —
+what they handed in, with the feedback.
+
+**A bug found on the way.** The payload this drawer opens with comes from
+`getMenteeTasks`, which does not include the step's resources; only `getTaskById` does.
+So the resources box read empty on a task that had some, and adding one link saved an
+override containing *only* that link, silently dropping the rest. The drawer now seeds
+the list from the full record it already fetches, without overwriting anything typed.
+
+**Verified in the browser** against the dev database, confirmed as `pathment_dev` first:
+an in-progress task (3 of 13 days logged, a day overdue) showed the panel and the filled
+form; a task flipped to `revision_needed` for the test showed the locked type, no repeat
+menu, and its submission; a repeat was switched on, saved, read back from
+`mentee_schedules`, then switched off again from the same drawer. Two resources were
+saved and both survived — the point of the fix. Every fixture was put back: no leftover
+overrides, no leftover schedule slot, no leftover `task_resources` row.
+
+`client-interface/tests/edit-task-matches-assign.test.cjs` pins the shared controls, the
+progress panel, the resource seed and the two locks. All five cases fail on the previous
+drawer. Full client suite: 125 tests, typecheck clean.
