@@ -37,6 +37,7 @@ function CreateClanDrawer({ programs, mentors, onClose, onCreated }: {
   programs: any[]; mentors: Person[]; onClose: () => void; onCreated: () => void;
 }) {
   const [name, setName] = useState('');
+  const [kind, setKind] = useState<'cohort' | 'standing'>('cohort');
   const [programId, setProgramId] = useState('');
   const [leadMentorId, setLeadMentorId] = useState('');
   const [levelLabel, setLevelLabel] = useState('');
@@ -50,7 +51,7 @@ function CreateClanDrawer({ programs, mentors, onClose, onCreated }: {
     try {
       setSaving(true);
       await clanApi.create({
-        name: name.trim(), programId,
+        name: name.trim(), programId, kind,
         leadMentorId: leadMentorId || undefined,
         levelLabel: levelLabel.trim() || undefined,
         levels,
@@ -90,6 +91,26 @@ function CreateClanDrawer({ programs, mentors, onClose, onCreated }: {
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Program <span className="text-red-500">*</span></label>
             <SelectMenu value={programId} onChange={setProgramId} options={programOpts} placeholder="Select a program" ariaLabel="Program" />
+          </div>
+          {/* An admin could approve a mentor's request for a standing clan and
+              could not make one themselves. The rule is about authority, not
+              about which door you came through. */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Kind</label>
+            <SelectMenu
+              value={kind}
+              onChange={(value) => setKind(value as 'cohort' | 'standing')}
+              options={[
+                { value: 'cohort', label: 'Cohort clan', description: 'Runs with the programme, capped at 25 by default' },
+                { value: 'standing', label: 'Standing clan', description: 'Open-ended mentoring space, no cap, no programme enrolment' },
+              ]}
+              ariaLabel="Clan kind"
+            />
+            <p className="mt-1 text-xs text-slate-500">
+              {kind === 'standing'
+                ? 'A standing clan keeps running after its programme closes. Work done in it does not count toward the programme record.'
+                : 'A cohort clan belongs to the programme intake and closes with it.'}
+            </p>
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Lead mentor <span className="text-slate-400 font-normal">(optional)</span></label>

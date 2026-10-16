@@ -19,6 +19,8 @@ export const clanApi = {
   create: (data: {
     programId: string;
     name: string;
+    /** `standing` is admin-only; the server checks, not the form. */
+    kind?: 'cohort' | 'standing';
     description?: string;
     leadMentorId?: string;
     levelLabel?: string;

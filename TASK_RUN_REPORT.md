@@ -62,7 +62,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 19 | Task assign: drop "Assign now / Schedule once / Repeat weekly"; use two icon menus (due date, repeat) like Microsoft To Do. No reminder icon. | ⬜ | | Migration 130 already added `assigned_tasks.repeat_rule`. |
 | 20 | Mentor calendar: pick a **time** on the calendar, and set repeating availability by day + time. | ⬜ | | |
 | 21 | Feature-usage statistics per role (which pages/features are actually used). | ⬜ | | Open-ended programme. |
-| 22 | Admins can create standing clans too. | ⬜ | | |
+| 22 | Admins can create standing clans too. | ✅ | | |
 | 23 | Program/clan filters across the admin panel (people → mentees/mentors, enrollments, clan requests), ideally one global program selector. | ⬜ | | Open-ended programme. |
 | 24 | Admin live-meeting screen redesign (calendar, Meet-like). | ⬜ | | |
 | 25 | Opening a conversation must land scrolled to the newest message. | ✅ | | Also fixed a page-level crash on Messages. |
@@ -981,3 +981,40 @@ org-wide**, and expired/revoked grants lifting nothing. `tsc` clean.
 a grant for the wrong clan does not cover MERN, one for the right clan does, and a
 scopeless grant covers both. The admin API round-trips (`200`, one row after locking
 twice), and the page renders the new section with the picker.
+
+### Issue 22 — an admin could not make a standing clan
+
+**Root cause, in one line.** `clanService.createClan` refused `kind: 'standing'` unless the
+call came from an approved mentor request:
+
+```js
+if (data.kind === 'standing' && !standingApproval) throw new ValidationError(
+  'Standing clans are created by approving a mentor request');
+```
+
+That rule is right for a mentor — they ask, an admin decides — and it was written against
+the **code path** rather than against **authority**, so the person who makes the decision
+was the one person who could not act on it. The admin's own "New clan" drawer had no kind
+field at all.
+
+**Fix.** The actor travels with the call, and the rule asks the question it means: an
+admin may create a standing clan directly; anyone else still has to go through a request.
+The plan entitlement (`assertStandingClanPlan`) is checked on this path too — an admin
+skipping the request flow must not also skip the gate.
+
+The admin create drawer gains a **Kind** picker with a line of explanation for each
+("runs with the programme, capped at 25" vs "open-ended, no cap, no programme enrolment"),
+since the difference decides whether work counts toward the programme record.
+
+**Files.** `server/src/services/clanService.js`, `server/src/controllers/clanController.js`,
+`server/tests/clans/standing-request-per-clan.test.js`;
+`client-interface/app/admin/clans/page.tsx`, `client-interface/lib/services/clan-api.ts`.
+
+**Tests run.** 3 new cases → `tests/clans/standing-request-per-clan.test.js` **49 pass / 0
+fail**: an admin creates one directly and it is uncapped, a non-admin asking directly is
+still refused, and a call with no actor at all is still refused.
+
+**Verified over the API**, then cleaned up: admin → **201, `kind: standing`**; admin →
+201 cohort; a mentor without `clan.create` → **403** before the kind rule is even reached.
+The seeded mentor who *does* hold admin in this workspace correctly succeeds, which is
+how I noticed the demo data had given her that role.

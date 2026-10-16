@@ -242,7 +242,17 @@ class ClanService {
     return out;
   }
 
-  async createClan(data, createdBy, { transaction: outerTransaction, standingApproval = false } = {}) {
+  /**
+   * `standingApproval` means "this came from an approved mentor request".
+   * `actor` lets an ADMIN make one directly.
+   *
+   * A standing clan used to be creatable only by approving a request, which
+   * is right for a mentor — they ask, an admin decides — and wrong for the
+   * admin, who was the decider and still could not make one themselves. The
+   * rule being enforced is about AUTHORITY, not about which code path you
+   * arrived by, so it now asks that question.
+   */
+  async createClan(data, createdBy, { transaction: outerTransaction, standingApproval = false, actor = null } = {}) {
     const { programId, name } = data;
     if (!programId || !name) {
       throw new ValidationError('programId and name are required');
@@ -250,15 +260,26 @@ class ClanService {
 
     const program = await models.Program.findByPk(programId, { transaction: outerTransaction });
     if (!program) throw new NotFoundError('Program not found');
-    if (data.kind === 'standing' && !standingApproval) throw new ValidationError('Standing clans are created by approving a mentor request');
-    if (data.kind !== 'standing' && program.status === 'completed') throw new ValidationError('Reopen the program before creating a cohort clan');
+    const wantsStanding = data.kind === 'standing';
+    const adminCreating = wantsStanding && !standingApproval && actor
+      ? await require('./authzService').hasAdminAccess(actor)
+      : false;
+    if (wantsStanding && !standingApproval && !adminCreating) {
+      throw new ValidationError('Standing clans are created by approving a mentor request');
+    }
+    if (wantsStanding) {
+      // The plan gate applies however the clan is made — an admin bypassing
+      // the request flow must not also bypass the entitlement.
+      await require('./standingClanService').assertStandingClanPlan(program.organizationId);
+    }
+    if (!wantsStanding && program.status === 'completed') throw new ValidationError('Reopen the program before creating a cohort clan');
 
     const create = async (transaction) => {
       await require('./organizationService').assertLimit(program.organizationId, 'clans', null, { transaction });
       const clan = await models.Clan.create({
         organizationId: program.organizationId,
         programId,
-        kind: standingApproval ? 'standing' : 'cohort',
+        kind: wantsStanding ? 'standing' : 'cohort',
         name,
         description: data.description || null,
         whatsappGroupLink: data.whatsappGroupLink || null,
@@ -274,7 +295,7 @@ class ClanService {
          * its capacity", from a screen with no way to do that. Uncapped unless
          * somebody asks for a cap.
          */
-        maxMentees: data.maxMentees ?? (data.kind === 'standing' ? null : 25),
+        maxMentees: data.maxMentees ?? (wantsStanding ? null : 25),
         status: data.status || 'active',
         createdBy
       }, { transaction });

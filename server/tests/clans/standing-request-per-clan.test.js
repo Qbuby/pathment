@@ -335,6 +335,37 @@ describe('carrying a mentee into a standing clan', () => {
     expect(created.maxMentees).toBeNull();
   });
 
+  /**
+   * An admin could approve a mentor's request for a standing clan and could
+   * not make one themselves — the rule was written against the code path
+   * rather than against authority, so the person who decides these was the
+   * one person who could not act on the decision.
+   */
+  it('lets an ADMIN make one directly, without a request', async () => {
+    const created = await clanService.createClan(
+      { programId: program2.id, name: 'Admin made it', kind: 'standing', leadMentorId: lead2.id },
+      admin2.id,
+      { actor: admin2 },
+    );
+    expect(created.kind).toBe('standing');
+    expect(created.maxMentees).toBeNull();
+  });
+
+  it('still refuses a non-admin asking for one directly', async () => {
+    await expect(clanService.createClan(
+      { programId: program2.id, name: 'Mentor made it', kind: 'standing', leadMentorId: lead2.id },
+      lead2.id,
+      { actor: lead2 },
+    )).rejects.toThrow(/approving a mentor request/i);
+  });
+
+  it('still refuses when nobody is named at all', async () => {
+    await expect(clanService.createClan(
+      { programId: program2.id, name: 'Nobody made it', kind: 'standing' },
+      admin2.id,
+    )).rejects.toThrow(/approving a mentor request/i);
+  });
+
   it('still caps a cohort clan at 25', async () => {
     // A cohort cannot be created in a closed programme, so use an open one.
     const open = await createProgram({ createdBy: admin2.id, name: 'Still running' });

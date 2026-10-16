@@ -97,7 +97,9 @@ const getClan = catchAsync(async (req, res) => {
  * POST /api/clans  (admin)
  */
 const createClan = catchAsync(async (req, res) => {
-  const clan = await clanService.createClan(req.body, req.user.id);
+  // `actor` travels so the service can tell an admin making a standing clan
+  // directly from a mentor trying to skip the request flow.
+  const clan = await clanService.createClan(req.body, req.user.id, { actor: req.user });
   res.status(201).json(successResponse('Clan created', { clan }, 201));
 });
 
