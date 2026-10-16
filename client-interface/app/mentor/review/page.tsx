@@ -1086,12 +1086,59 @@ export default function CohortReview() {
         };
 
     return (
-      <div className="mx-auto max-w-xl rounded-2xl border border-slate-200 bg-card px-6 py-14 text-center dark:border-slate-800">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-400 dark:border-slate-700 dark:bg-slate-900">
-          <Users className="h-5 w-5" aria-hidden />
+      <div className="mx-auto max-w-2xl overflow-hidden rounded-3xl border border-slate-200 bg-card text-center dark:border-slate-800">
+        {/*
+            A picture of the screen they are waiting for.
+            This was a 12px grey icon in an otherwise blank card — accurate and
+            dispiriting, and on a wide monitor almost entirely white space. The
+            band below is a small, honest drawing of what clan review looks
+            like once somebody is in the clan: a roster rail with a marker
+            under the person being reviewed, and the three things the screen
+            does for each of them. It fills the space with something that
+            teaches rather than with decoration, and it is drawn in brand
+            tokens rather than shipped as an image, so it themes and costs
+            nothing to load.
+        */}
+        <div aria-hidden className="relative border-b border-slate-200 bg-gradient-to-b from-brand-50/80 to-card px-6 pb-7 pt-9 dark:border-slate-800 dark:from-brand-500/10">
+          <div className="mx-auto flex w-full max-w-sm items-end justify-center gap-3">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <div key={i} className="flex flex-col items-center gap-1.5">
+                <div className={`rounded-full ${i === 2 ? 'h-12 w-12 bg-brand-500/25 ring-2 ring-brand-500/50' : 'h-9 w-9 bg-slate-200/80 dark:bg-slate-700/70'}`} />
+                <div className={`rounded-full ${i === 2 ? 'h-1.5 w-8 bg-brand-500/60' : 'h-1.5 w-6 bg-slate-200 dark:bg-slate-700'}`} />
+              </div>
+            ))}
+          </div>
+          <div className="mx-auto mt-4 h-2 w-2 rotate-45 rounded-[2px] bg-brand-500/60" />
+          <div className="mx-auto mt-3 w-full max-w-sm space-y-2 rounded-2xl border border-slate-200/80 bg-card/80 p-3 text-left shadow-xs dark:border-slate-700/80">
+            <div className="h-2 w-24 rounded-full bg-slate-200 dark:bg-slate-700" />
+            <div className="h-2 w-40 rounded-full bg-slate-100 dark:bg-slate-800" />
+            <div className="flex gap-1.5 pt-1">
+              <div className="h-5 w-16 rounded-lg bg-brand-500/20" />
+              <div className="h-5 w-14 rounded-lg bg-slate-100 dark:bg-slate-800" />
+              <div className="h-5 w-12 rounded-lg bg-slate-100 dark:bg-slate-800" />
+            </div>
+          </div>
         </div>
-        <h2 className="mt-4 text-base font-semibold text-slate-900 dark:text-slate-100">{state.title}</h2>
+
+        <div className="px-6 pb-12 pt-7">
+        <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">{state.title}</h2>
         <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-slate-500 dark:text-slate-400">{state.body}</p>
+
+        {/* What the screen will actually do, so an empty clan still explains
+            the feature rather than only reporting its own emptiness. */}
+        <ul className="mx-auto mt-6 grid max-w-lg gap-2 text-left sm:grid-cols-3">
+          {[
+            { Icon: Users, label: 'One at a time', note: 'Step through the roster without losing your place' },
+            { Icon: ClipboardCheck, label: 'Their work', note: 'Submissions, blockers and today’s plan on one card' },
+            { Icon: StickyNote, label: 'A note each', note: 'Attendance and a coaching note as you go' },
+          ].map(({ Icon, label, note }) => (
+            <li key={label} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3 dark:border-slate-800 dark:bg-slate-900/40">
+              <Icon className="h-4 w-4 text-brand-600 dark:text-brand-400" aria-hidden />
+              <p className="mt-1.5 text-xs font-semibold text-slate-800 dark:text-slate-100">{label}</p>
+              <p className="mt-0.5 text-[11px] leading-snug text-slate-500 dark:text-slate-400">{note}</p>
+            </li>
+          ))}
+        </ul>
         {state.action && (
           <Link
             href={state.action.href}
@@ -1105,10 +1152,11 @@ export default function CohortReview() {
             being pointed at the wrong clan. Say so, rather than letting them
             conclude the page is broken. */}
         {clans.length >= 2 && (
-          <p className="mt-5 border-t border-slate-100 pt-4 text-xs text-slate-400 dark:border-slate-800">
+          <p className="mt-6 border-t border-slate-100 pt-4 text-xs text-slate-400 dark:border-slate-800">
             Reviewing <span className="font-medium text-slate-600 dark:text-slate-300">{activeClanName || 'this clan'}</span> — switch clan in the sidebar to review another.
           </p>
         )}
+        </div>
       </div>
     );
   }

@@ -71,7 +71,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 28 | Remove unnecessary database data (~700 MB). | ⬜ | | Production data — see flag 4. |
 | 29 | Admin access logs must be human-readable, with pagination and search. | ⬜ | | Currently raw `Post /api/...` rows. |
 | 30 | Extract reusable components (drawers, profile pictures, …) — reduce duplication. | ⬜ | | Open-ended programme. |
-| 31 | Clan review "no mentee" empty state needs to be better. | ⬜ | | |
+| 31 | Clan review "no mentee" empty state needs to be better. | ✅ | | |
 | 32 | A standing-clan request should carry the mentor's active mentees (with their work) across automatically. | ✅ | | Verified on the demo data, then rolled back. |
 | 33 | Blockers/plan shows "N tasks" that cannot be seen; wrong tasks; must be clan-scoped for mentor and mentee. Work-history drawer reports 0 tasks while the profile shows 24. | ✅ | | Migration 132 pending on production. |
 
@@ -1159,3 +1159,28 @@ and removing the page again. Screenshot captured.
 reach the boundary — Next served the shell from cache — so the offline, session,
 forbidden and missing branches are **verified by reading, not by seeing**. The crash
 branch is the one in the report's screenshot, and that one I did see.
+
+### Issue 31 — the empty clan-review screen
+
+**What was wrong.** The copy was already specific — it distinguishes "you do not mentor a
+clan yet", "this clan has finished" and "no one is in it yet", and offers the right way
+out of each. What it looked like was a **12-pixel grey icon in a blank card**, which on a
+wide monitor is almost entirely white space. Accurate, and dispiriting.
+
+**Fix.** The card now opens with a small, honest drawing of **the screen the mentor is
+waiting for**: the roster rail with the marker under the person being reviewed, and the
+mentee card below it. Under the headline, three tiles say what clan review actually does —
+*One at a time*, *Their work*, *A note each* — so an empty clan explains the feature
+instead of only reporting its own emptiness.
+
+The illustration is drawn in brand tokens rather than shipped as an image, so it themes
+with the rest of the product (including dark mode) and costs nothing to load. The copy,
+the three different situations and the "you may be on the wrong clan" hint are all
+unchanged — they were the part that was already right.
+
+**Files.** `client-interface/app/mentor/review/page.tsx`.
+
+**Tests run.** `tsc` clean.
+
+**Verified in the browser** by emptying the standing clan, loading clan review and
+screenshotting the result, then putting the roster back. No console errors.
