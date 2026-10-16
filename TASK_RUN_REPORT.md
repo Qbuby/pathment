@@ -54,7 +54,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 11 | Notification / "What's new" drawers do not open smoothly (the Feedback drawer does). | ✅ | | Notifications had no animation at all; both now use the shared Drawer. |
 | 12 | Paginate (or infinite-scroll) Points & badges — performance leaderboard and earned badges. | ✅ | | Also: a mentee outside the top 10 could not see themselves. |
 | 13 | Surface paused mentees in clan review on the selected mentee's profile card. | ✅ | | Also fixed a 403 on every review load. |
-| 14 | Review-access lock should be settable per program or per clan, not org-wide only; remove the yellow styling. | ⬜ | | Same feature as #27, seen from the mentor side. |
+| 14 | Review-access lock should be settable per program or per clan, not org-wide only; remove the yellow styling. | ✅ | | Same change as #27. |
 | 15 | Improve the "Something went wrong" screen. | ⬜ | | The screenshot also evidences a real crash on Recognition → Top performers with "All clans". |
 | 16 | Top-performers/nominations not scoped to the active (standing) clan — mentor sees other clans' nominations. | ✅ | | Also closed a cross-clan ranking leak. |
 | 17 | Mentor Insights → Reports disagrees with leaderboard/progress score (both correct). Align the criteria. Also: no mentee profile pictures in progress. | ✅ | | Reports read 61 where the score read 79. |
@@ -67,7 +67,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 24 | Admin live-meeting screen redesign (calendar, Meet-like). | ⬜ | | |
 | 25 | Opening a conversation must land scrolled to the newest message. | ✅ | | Also fixed a page-level crash on Messages. |
 | 26 | Workspace plan & usage shows wrong usage and wrong current plan. | ⚠️ | | Contradiction + NaN + retired-plan cases fixed; the raw counts could not be reproduced locally. |
-| 27 | Admin Review-Lock page: remove yellow, improve accessibility, allow grant/revoke per program or clan as well as org-wide. | ⬜ | | Same feature as #14. |
+| 27 | Admin Review-Lock page: remove yellow, improve accessibility, allow grant/revoke per program or clan as well as org-wide. | ✅ | | Same change as #14; migration 133 pending on production. |
 | 28 | Remove unnecessary database data (~700 MB). | ⬜ | | Production data — see flag 4. |
 | 29 | Admin access logs must be human-readable, with pagination and search. | ⬜ | | Currently raw `Post /api/...` rows. |
 | 30 | Extract reusable components (drawers, profile pictures, …) — reduce duplication. | ⬜ | | Open-ended programme. |
@@ -915,3 +915,69 @@ of them rendered none.
 **Note on scope.** This makes the three consistent by making them one thing. It is also a
 concrete piece of issue 30 ("we have no reusable components… drawers… these are just the
 examples"), paid for by a defect rather than by a refactor nobody asked for.
+
+### Issues 14 and 27 — the review lock was all-or-nothing, and yellow
+
+These are one change: both ask for the cohort-review deletion lock to apply per programme
+or per clan instead of only to the whole organisation, and both ask for the yellow to go.
+
+**Root cause.** The lock was a single boolean in `system_settings`. An admin protecting
+the records of a programme that had just closed had to freeze deletion for **every mentor
+in every clan**, including the ones mid-cohort. The grants an admin hands back had the
+same problem in reverse: a grant was org-wide, so answering *"yes, fix that one session"*
+also handed the mentor every other clan they run, for as long as the grant lasted.
+
+**Fix — the lock gained a scope.** Deletion is locked for a session when **any** of these
+holds: the organisation-wide flag is on, **or** its clan is locked, **or** its clan's
+programme is locked. Locks only ever add; a grant only ever subtracts, and has the same
+three scopes.
+
+**Migration 133** adds `cohort_review_locks` (one row per locked programme or clan — the
+row *is* the lock, so there is no "locked: false" row to disagree with a missing one) and
+`scope_type` / `scope_id` on `cohort_review_unlock_grants`. **The org-wide flag does not
+move**: it stays in `system_settings`, so every workspace keeps the lock it had, and every
+grant written before this has no scope, which is exactly what org-wide already meant.
+
+**A grant now covers no more than was asked for.** When the mentor's request names a
+session, the grant defaults to that session's clan. An admin can still widen it, and
+`scopeType: 'organization'` is the old behaviour, named.
+
+**One ordering change worth noting.** `deleteSession`/`reopenSession` called
+`assertCanDelete` *before* resolving the session, so the clan was not yet known. The
+session is resolved first now — which also means a mentor who may not touch a session is
+told *that*, rather than told it is locked.
+
+**The yellow.** A lock that is deliberately on is a normal, intended state, not a warning;
+dressing it in the colour the product reserves for "something needs your attention" made a
+correctly configured workspace look broken. Amber also has the worst contrast of any
+accent in the palette on a tinted panel, which is the accessibility half of #27. The card,
+chip and switch are brand/slate tokens now, the switch gained a visible focus ring, and
+**no element on the page carries an amber or yellow class** (checked in the browser).
+
+**Files.** `server/scripts/migrations/133_scoped_review_locks.js`,
+`server/src/models/scheduling/CohortReviewLock.js`,
+`server/src/models/scheduling/CohortReviewUnlockGrant.js`,
+`server/src/services/cohortReviewLockService.js`,
+`server/src/services/cohortReviewService.js`,
+`server/src/controllers/reviewLockController.js`,
+`server/tests/admin/review-lock-scopes.test.js`;
+`client-interface/components/settings/ReviewLockTab.tsx`,
+`client-interface/lib/services/review-lock-api.ts`.
+
+**Migration 133 has not been run on production.** Applied to the dev and test databases;
+idempotent, with `--dry-run` and a working `--rollback`.
+
+**Tests run.** 13 new cases → `tests/admin/review-lock-scopes.test.js` **13 pass / 0
+fail**, covering each scope in isolation, a programme locking the clans inside it, the
+org-wide flag still answering as it always did, locking twice being the same state,
+unlocking, a bad scope being refused, a clan grant not covering the clan next door, a
+programme grant covering the clans inside it, **a scopeless legacy grant still being
+org-wide**, and expired/revoked grants lifting nothing. `tsc` clean.
+
+**Verified end to end** against the demo data:
+`MERN clan locked → MERN true (clan), Node Guild false`;
+`their programme locked → both true (program)`;
+`org-wide → both true (organization)`;
+a grant for the wrong clan does not cover MERN, one for the right clan does, and a
+scopeless grant covers both. The admin API round-trips (`200`, one row after locking
+twice), and the page renders the new section with the picker.

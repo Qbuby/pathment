@@ -322,8 +322,13 @@ class CohortReviewService {
   }
 
   async reopenSession(mentorId, sessionId) {
-    await lockService.assertCanDelete(mentorId);
+    // The session is resolved FIRST so the lock can be asked about the clan
+    // it belongs to — the lock is per programme or clan now, not one flag for
+    // the whole organisation. `_canAccess` is the ownership check, so running
+    // it first also means a mentor who may not touch this session is told
+    // that, rather than told it is locked.
     const session = await this._canAccess(mentorId, sessionId);
+    await lockService.assertCanDelete(mentorId, session.clanId);
     await clanLifecycleService.assertClanWritable(session.clanId);
     session.status = 'in_progress';
     session.finishedAt = null;
@@ -332,8 +337,8 @@ class CohortReviewService {
   }
 
   async deleteSession(mentorId, sessionId) {
-    await lockService.assertCanDelete(mentorId);
     const session = await this._canAccess(mentorId, sessionId);
+    await lockService.assertCanDelete(mentorId, session.clanId);
     await clanLifecycleService.assertClanWritable(session.clanId);
     await models.CohortReviewEntry.destroy({ where: { sessionId: session.id } });
     await session.destroy();
