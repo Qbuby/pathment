@@ -286,6 +286,22 @@ async function cleanupDemo() {
         if (models.ClanChangeRequest) {
           await models.ClanChangeRequest.destroy({ where: { [Op.or]: [{ toClanId: inClans }, { fromClanId: inClans }] }, force: true });
         }
+        // A standing-clan request remembers both the clan it came FROM and the
+        // one it created, so an approved request pins two clans in place. One
+        // such request, made by hand on staging, is what stopped a re-seed
+        // dead: the wipe deleted every task and then hit the foreign key.
+        if (models.StandingClanRequest) {
+          await models.StandingClanRequest.destroy({
+            where: { [Op.or]: [{ programId: inPrograms }, { sourceClanId: inClans }, { createdClanId: inClans }] },
+            force: true,
+          });
+        }
+        // A review lock names its scope by id, clan or programme alike.
+        if (models.CohortReviewLock) {
+          await models.CohortReviewLock.destroy({
+            where: { [Op.or]: [{ scopeId: inClans }, { scopeId: inPrograms }] }, force: true,
+          });
+        }
       }
     }
     await models.Clan.destroy({ where: { programId: inPrograms }, force: true });
