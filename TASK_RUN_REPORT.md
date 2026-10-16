@@ -85,7 +85,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 10 | Mentee dashboard: re-prioritise top vs bottom; the daily/planner block does not belong there. | ✅ | `9ffb02dc` | Re-prioritised + planner moved behind a strip; not a ground-up redesign. |
 | 11 | Notification / "What's new" drawers do not open smoothly (the Feedback drawer does). | ✅ | `a55df642` | Notifications had no animation at all; both now use the shared Drawer. |
 | 12 | Paginate (or infinite-scroll) Points & badges — performance leaderboard and earned badges. | ✅ | `41d74c53` | Also: a mentee outside the top 10 could not see themselves. |
-| 13 | Surface paused mentees in clan review on the selected mentee's profile card. | ✅ | `4cde0686` | Also fixed a 403 on every review load. |
+| 13 | Suggest **pausing** a mentee who matches the inactivity criteria, on their profile card in clan review. | ✅ | `4cde0686` + `a214193d` | I first read this as "show paused mentees here" and built the opposite. Corrected in `a214193d` — see the section below. |
 | 14 | Review-access lock should be settable per program or per clan, not org-wide only; remove the yellow styling. | ✅ | `89387991` | Same change as #27. |
 | 15 | Improve the "Something went wrong" screen. | ✅ | `4c887e22` | Crash branch seen; the quiet branches verified by reading. |
 | 16 | Top-performers/nominations not scoped to the active (standing) clan — mentor sees other clans' nominations. | ✅ | `f64c1924` | Also closed a cross-clan ranking leak. |
@@ -1733,3 +1733,63 @@ Two traps, both of which make a run look complete when it is not:
 | **total** | | **1,436** | **0** |
 
 `tsc` clean on the client. Lint level with the branch base (one error fewer).
+
+
+## Issue 13, re-read — the suggestion, not the paused list
+
+**I read the issue backwards the first time.** "Make sure we are suggesting the paused
+mentee in the clan review on the selected mentee on their little profile card" means
+*suggest pausing* somebody who matches the inactivity criteria. I built the other
+reading — showing the already-paused — which is close to the opposite: it put paused
+mentees back onto the one screen that pausing exists to take them off.
+
+**Removed.** `includePaused` is gone from the roster read, the controller, the hook, the
+api client and the review page, with everything that existed to render those rows: the
+Paused chip, the Paused banner and Bring back, the attendance exclusions, the greyed
+rail chip and the "N paused" tally. Nobody is stranded — `PausedMenteesPanel` on
+**My Mentees** already lists paused mentees with Resume, which is the right home for it.
+`Avatar`'s `muted` tone went too: I added it in the reusable-components pass solely to
+grey out a paused mentee in this rail, and an unused prop with a test guarding it is
+worse than not having it.
+
+**Kept, because it was a real bug and the suggestion depends on it.**
+`GET /mentor/pause-suggestions` returned **403 on every clan review load** for a clan
+whose programme had finished — one read was answering both "may this person act here"
+and "does this apply here". Authority and applicability stay separate.
+
+**What the card does now**, which is what the issue asked for:
+
+1. A mentee who matches the criteria gets a line on their profile card naming the
+   evidence — *"They have stopped turning up. Never attended — 3 reviews held since they
+   joined."*
+2. **Pause** and **Keep active** sit next to it.
+3. Pause opens the shared confirmation, which **repeats the evidence before anything
+   happens** — a mentor acting on a prompt should see what the prompt was built on
+   rather than trust that something counted correctly.
+4. Confirming pauses them, and they leave the review screen.
+
+No amber. This is the product noticing something on the mentor's behalf, not a warning
+about a failure, and this run has been taking that colour out.
+
+**The criteria** (`server/src/config/engagement.js`, unchanged): three or more reviews
+held since they joined with none attended, a fourteen-day grace period after joining,
+and no recent task activity — somebody doing assigned work is engaged even if they skip
+reviews, so tasks only ever *reduce* flags.
+
+**Tests.** The block that asserted paused mentees come back on request now asserts they
+cannot, that a stale caller passing the old flag still gets the active roster, and that
+they stay reachable from the paused list. 27 pass in that file; all 18 mentor suites
+pass (231 tests). `tsc` clean, lint level with baseline, 120 client tests pass.
+
+**Verified in the browser — which the first attempt never managed, and said so.**
+Nothing in the demo data can trigger a suggestion: every mentee joined six days ago,
+inside the fourteen-day grace period, and the clan holds two review sessions where the
+rule needs three. So I built those conditions on the dev database (backdated one
+mentee's join date, added a third past session), watched the whole flow, and took the
+fixture down again afterwards. The card showed the suggestion, the confirmation repeated
+the reason, and pausing dropped the rail from 19 to 18 with that mentee off the screen.
+No console errors. Screenshot captured.
+
+One thing I could not put back: restoring the fixture removed a single
+`cohort_review_entries` row for that mentee on the dev database. It is demo attendance
+data and nothing depends on it, but it is a change I made and did not fully reverse.
