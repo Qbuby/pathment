@@ -35,6 +35,7 @@ import {
 import { NotificationCard } from "@/components/shared/NotificationCard";
 import { Drawer } from "@/components/shared/Drawer";
 import { Spinner } from '@/components/shared/LoadingSpinner';
+import { useScrollLock } from "@/lib/hooks/useScrollLock";
 
 interface Notification {
   id: string;
@@ -191,16 +192,7 @@ export default function NotificationDrawer({
   }, [isOpen, isAdminDrawer, loadPendingStanding]);
 
   // Lock background scroll while sheet is open.
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [isOpen]);
+  useScrollLock(isOpen);
 
   const handleMarkRead = (notificationId: string) => markRead(notificationId);
   const handleMarkAllRead = () => markAllRead();

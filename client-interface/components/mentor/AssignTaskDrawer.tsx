@@ -27,6 +27,7 @@ import { coursesApi, formatCoursePrice, type CourseEnrollResult, type CourseLife
 import { OpenSourceOrgPicker } from '@/components/shared/OpenSourceOrgPicker';
 import type { OpenSourceOrg } from '@/lib/services/open-source-orgs-api';
 import { useClan, ALL_CLANS, isHistoricalCohortClan } from '@/lib/context/ClanContext';
+import { useScrollLock } from '@/lib/hooks/useScrollLock';
 
 type AssignSource = 'custom' | 'roadmap';
 
@@ -525,10 +526,9 @@ export function AssignTaskDrawer({
   };
   submitRef.current = submit;
 
-  useEffect(() => {
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+  useScrollLock();
 
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
@@ -537,7 +537,6 @@ export function AssignTaskDrawer({
     };
     document.addEventListener('keydown', onKey);
     return () => {
-      document.body.style.overflow = prevOverflow;
       document.removeEventListener('keydown', onKey);
     };
   }, []);

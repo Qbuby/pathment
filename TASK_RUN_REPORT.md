@@ -1958,3 +1958,45 @@ that could not happen. It also still described a DigitalOcean box, `docker compo
 a `deploy-prod.yml` Action that does not exist. Rewritten around the two Heroku
 container apps, including the `heroku run`-runs-the-deployed-slug trap and how to
 baseline a database that has never seen `migrate.js`.
+
+---
+
+## Follow-up — scrolling stops working until you refresh
+
+Reported from several directions at once: mentors and mentees finding a page they
+cannot scroll, on no page in particular, fixed by reloading. That shape — fine after a
+refresh, broken again later, never the same screen twice — is a scroll lock that was
+taken and not given back.
+
+Six overlays locked background scrolling, each in the obvious way: save whatever
+`document.body.style.overflow` currently is, set it to `hidden`, put the saved value
+back on close. Every one of them is correct on its own and they are wrong together,
+because the value the second one saves is the `hidden` the first one just wrote:
+
+```
+drawer opens          saves ""        → overflow: hidden
+notification sheet    saves "hidden"  → overflow: hidden
+drawer closes                         → overflow: ""        (unlocked too early)
+sheet closes          restores        → overflow: hidden    (stuck)
+```
+
+Any two of the six overlapping in that order strands the page, and the page it strands
+is simply wherever you navigate next — which is why it looked like a problem with
+"some screens". The shared `Drawer` already counted its own holders, but only its own,
+so it could not see the notification sheet, the changelog modal, the live-meeting
+overlay, the assign-task drawer or the certificate gallery.
+
+`lib/hooks/useScrollLock.ts` now owns `body.overflow` for all six: a count, not a saved
+value. The first holder records what `overflow` was before anybody touched it, the last
+one out puts it back, and releasing twice is a no-op — React re-runs effects in
+development, and a component unmounting mid-transition could otherwise take the count
+below zero and leave the next lock unable to unlock.
+
+`tests/one-scroll-lock.test.cjs` plays the exact sequence above against the real module
+and asserts the page ends scrollable, pins each of the six to the shared hook, and
+fails any seventh overlay that reaches for `document.body.style.overflow` itself. Both
+of those cases fail against the previous components, checked by restoring them from
+git. `one-drawer.test.cjs` asserted the literal `overflow = "hidden"` line inside
+`Drawer.tsx`; it now asserts the lock instead of the implementation of it.
+
+Client suite 129 tests, typecheck clean, production build clean.

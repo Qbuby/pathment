@@ -80,7 +80,10 @@ test('the shared Drawer still does the things the copies forgot', () => {
   const src = fs.readFileSync(path.join(ROOT, 'components', 'shared', 'Drawer.tsx'), 'utf8');
   assert.match(src, /e\.key === "Escape"/, 'Escape must close it');
   assert.match(src, /e\.key !== "Tab"/, 'Tab must stay inside the panel');
-  assert.match(src, /document\.body\.style\.overflow = "hidden"/, 'the page behind it must not scroll');
+  // Locking is the shared hook's job now — six overlays each saving and
+  // restoring body.overflow raced and left the page stuck. See
+  // one-scroll-lock.test.cjs.
+  assert.match(src, /useScrollLock\(mounted\)/, 'the page behind it must not scroll');
   assert.match(src, /previousFocus\?\.isConnected/, 'focus must go back to whatever opened it');
   assert.match(src, /createPortal/, 'it must escape any transformed ancestor');
 });

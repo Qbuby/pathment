@@ -5,6 +5,7 @@ import { Loader2, X, AlertTriangle } from 'lucide-react';
 import { JitsiRoom } from '@/components/shared/JitsiRoom';
 import { liveMeetingApi, type JoinInfo } from '@/lib/services/live-meeting-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
+import { useScrollLock } from '@/lib/hooks/useScrollLock';
 
 /**
  * LiveMeetingOverlay — full-screen join surface for an admin-hosted meeting.
@@ -24,11 +25,7 @@ export function LiveMeetingOverlay({ meetingId, onClose }: { meetingId: string; 
   }, [meetingId]);
 
   // Lock body scroll while the call is open.
-  useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = prev; };
-  }, []);
+  useScrollLock();
 
   return (
     <div className="fixed inset-0 z-[100] bg-slate-900 flex flex-col">

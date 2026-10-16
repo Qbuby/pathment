@@ -9,6 +9,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { DRAWER_DURATION, drawerPanelClass, drawerBackdropClass } from "./drawerMotion";
+import { useScrollLock } from "@/lib/hooks/useScrollLock";
 import { X } from "lucide-react";
 
 interface DrawerProps {
@@ -32,8 +33,6 @@ interface DrawerProps {
 }
 
 const WIDTHS = { sm: "max-w-md", md: "max-w-lg", lg: "max-w-xl" } as const;
-let scrollLocks = 0;
-let originalOverflow = "";
 // Shared with every other drawer, so a second implementation cannot drift.
 const DURATION = DRAWER_DURATION;
 
@@ -106,7 +105,9 @@ export function Drawer({
     return () => clearTimeout(t);
   }, [open]);
 
-  // Escape + scroll-lock + focus while mounted.
+  useScrollLock(mounted);
+
+  // Escape + focus while mounted.
   useEffect(() => {
     if (!mounted) return;
     const previousFocus =
@@ -153,14 +154,9 @@ export function Drawer({
       }
     };
     document.addEventListener("keydown", onKey);
-    if (scrollLocks++ === 0) {
-      originalOverflow = document.body.style.overflow;
-      document.body.style.overflow = "hidden";
-    }
     const focusTimer = setTimeout(() => panelRef.current?.focus(), DURATION);
     return () => {
       document.removeEventListener("keydown", onKey);
-      if (--scrollLocks === 0) document.body.style.overflow = originalOverflow;
       clearTimeout(focusTimer);
       if (previousFocus?.isConnected) previousFocus.focus();
     };
