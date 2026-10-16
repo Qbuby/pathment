@@ -158,19 +158,16 @@ export function DayPlanner({
   const toggleDone = (item: PlanItem) => {
     if (item.kind === 'review') {
       /**
-       * Deliberately not silent — ticking work for review would tell nobody
-       * anything; it has to go through a submission, which is where the
-       * feedback and the points come from.
+       * Work that goes to a mentor cannot be finished by a checkbox — it has
+       * to go through a submission, which is where the feedback and the
+       * points come from. But ticking it already SAYS something, and both
+       * sides mean it: a mentee means "I'm done with this", a mentor means
+       * "let me look at this". So the tick opens the thing that does it.
        *
-       * And deliberately in the right voice. This said "open it from My
-       * learning and submit your work" to EVERYONE, so a mentor looking at
-       * their mentee's day was told to go and submit it themselves.
+       * This used to answer with a toast telling you where to go and do it
+       * yourself — a dead end on the one gesture everybody tries first.
        */
-      toast.message(mine ? 'This one goes to your mentor' : 'This one is theirs to submit', {
-        description: mine
-          ? 'Open it from My learning and submit your work.'
-          : 'It reaches your Approvals queue once they send it in.',
-      });
+      setOpenTaskId(item.id);
       return;
     }
     const done = item.status !== 'completed';
@@ -476,6 +473,7 @@ export function DayPlanner({
                 onMoveTo={(slotId) => moveItem(item.id, slotId)}
                 onSetRepeat={(repeat) => setRepeat(item, repeat)}
                 onOpen={setOpenTaskId}
+                mine={mine}
               />
             ))}
           </ul>
@@ -728,6 +726,7 @@ function SlotCard({
             onMoveTo={(toSlot) => onMoveTo(item.id, toSlot)}
             onSetRepeat={(repeat) => onSetRepeat(item, repeat)}
             onOpen={onOpen}
+            mine={mine}
           />
         ))}
       </ul>
@@ -764,6 +763,7 @@ function SlotCard({
                   onMoveTo={(toSlot) => onMoveTo(item.id, toSlot)}
                   onSetRepeat={(repeat) => onSetRepeat(item, repeat)}
                   onOpen={onOpen}
+                  mine={mine}
                 />
               ))}
             </ul>
@@ -1100,10 +1100,12 @@ function RepeatMenu({ value, onChange, compact = false }: {
 
 function ItemRow({
   item, busy, onToggleDone, blocks, currentSlotId, onMoveTo, onSetRepeat, onOpen,
-  unplanned = false,
+  mine, unplanned = false,
 }: {
   item: PlanItem;
   busy: boolean;
+  /** True when the viewer IS the mentee — decides what ticking is called. */
+  mine: boolean;
   onToggleDone: (item: PlanItem) => void;
   /** Every block this item could go to, for the move menu. */
   blocks: { id: string; label: string; time: string }[];
@@ -1120,6 +1122,14 @@ function ItemRow({
 }) {
   const done = item.status === 'completed';
   const waiting = item.status === 'submitted';
+  /**
+   * Work for review does not finish on a tick, so the box must not claim it
+   * will. It opens the submission on the mentee's side and the review on the
+   * mentor's, and says so to a screen reader and on hover.
+   */
+  const tickLabel = item.kind === 'review'
+    ? (mine ? `Submit ${item.title}` : `Review ${item.title}`)
+    : done ? `Reopen ${item.title}` : `Finish ${item.title}`;
   return (
     <li
       draggable
@@ -1130,7 +1140,8 @@ function ItemRow({
         type="button"
         onClick={(e) => { e.stopPropagation(); onToggleDone(item); }}
         disabled={busy}
-        aria-label={done ? `Reopen ${item.title}` : `Finish ${item.title}`}
+        aria-label={tickLabel}
+        title={tickLabel}
         aria-pressed={done}
         className={`mt-0.5 grid h-[18px] w-[18px] shrink-0 place-items-center rounded-md border transition-colors ${
           done ? 'border-emerald-600 bg-emerald-600 text-white'
