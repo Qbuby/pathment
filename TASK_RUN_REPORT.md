@@ -52,7 +52,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 9 | Library (admin → mentor → mentee) redesign. | ⬜ | | |
 | 10 | Mentee dashboard: re-prioritise top vs bottom; the daily/planner block does not belong there. | ⬜ | | |
 | 11 | Notification / "What's new" drawers do not open smoothly (the Feedback drawer does). | ⬜ | | |
-| 12 | Paginate (or infinite-scroll) Points & badges — performance leaderboard and earned badges. | ⬜ | | |
+| 12 | Paginate (or infinite-scroll) Points & badges — performance leaderboard and earned badges. | ✅ | | Also: a mentee outside the top 10 could not see themselves. |
 | 13 | Surface paused mentees in clan review on the selected mentee's profile card. | ✅ | | Also fixed a 403 on every review load. |
 | 14 | Review-access lock should be settable per program or per clan, not org-wide only; remove the yellow styling. | ⬜ | | Same feature as #27, seen from the mentor side. |
 | 15 | Improve the "Something went wrong" screen. | ⬜ | | The screenshot also evidences a real crash on Recognition → Top performers with "All clans". |
@@ -816,3 +816,45 @@ this workspace has 31 members and 3 clans, so a 1089-member miscount is not repr
 here. **If the counts are still wrong after this, the remaining problem is in what those
 two queries count, not in how the page shows it** — tell me what the number should be and
 I will chase it.
+
+### Issue 12 — Points &amp; badges, three lists that each outgrew the screen
+
+**Root cause — in two opposite directions.**
+
+- **The leaderboard and the points history were capped and silent.** The page fetched the
+  top **10** standings and the last **12** points entries, with no control to see any
+  more and nothing saying there was more. A mentee ranked 13th of 24 **could not find
+  themselves on their own leaderboard** — the row did not exist in the browser at all —
+  and their points history simply stopped twelve entries ago.
+- **Earned badges had no cap at all.** Every badge rendered as a full-height card, so the
+  section grew without limit.
+
+**Fix.** All three are paged with the same `usePagination` + `TablePagination` the mentor
+tables use, so the control behaves as it does everywhere else: 10 standings, 6 badges, 10
+history entries per page, and the pager only appears when there is a second page. The
+fetches are raised to 100 so there is something to page through.
+
+The leaderboard additionally **opens on the page you are on**. Landing on page one of a
+standings table you are not in is the same as not being shown it.
+
+That jump needed a second effect, which is worth recording: `goToPage` clamps against the
+paginator's `total`, and inside the effect that *sets* the total that value is still the
+previous render's zero — so the first attempt clamped straight back to page one. Waiting a
+render for the total costs nothing and makes the jump actually happen.
+
+**Also:** the leaderboard rows carried a rank number and a name and nothing else, although
+the server has always sent `profilePictureUrl` with every entry — the client type simply
+did not declare it. Faces are the fastest way to find a person in a list of a hundred, so
+they are there now, via the shared `Avatar`.
+
+**Files.** `client-interface/app/mentee/gamification/page.tsx`,
+`client-interface/lib/services/gamification-api.ts`.
+
+**Tests run.** Client guard suite **112 pass / 0 fail**; `tsc` clean.
+
+**Verified in the browser** as a mentee ranked **13th of 24**:
+- the leaderboard opens on **page 2**, showing ranks 11–20 with **"13 · Ivan Petrov · You"**
+  highlighted — a row that did not previously exist in the browser at all;
+- the pager reads **1 2 3**, and **24 photographs** render where there were none;
+- with 10 badges seeded locally, Earned badges reads **"Showing 1 - 6 of 10"** across two
+  pages. The seeded badges were removed afterwards.

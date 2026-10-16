@@ -1,6 +1,6 @@
 "use client";
 
-import { type ComponentType, useEffect, useMemo, useState } from "react";
+import { type ComponentType, useEffect, useMemo, useRef, useState } from "react";
 import {
   Award,
   ChevronDown,
@@ -21,6 +21,9 @@ import {
   type PointsHistoryEntry,
 } from "@/lib/services/gamification-api";
 import { communityApi } from "@/lib/services/community-api";
+import { Avatar } from "@/components/shared/Avatar";
+import { usePagination } from "@/lib/hooks/shared/usePagination";
+import { TablePagination } from "@/components/shared/TablePagination";
 
 interface CommunityStanding {
   rank: number | null;
@@ -40,6 +43,22 @@ export default function MenteeGamificationPage() {
   const [error, setError] = useState<string | null>(null);
   const [badgeProgressOpen, setBadgeProgressOpen] = useState(false);
 
+  /**
+   * Three lists that each outgrew the screen in a different direction.
+   *
+   * The leaderboard and the points history were capped at ten and twelve with
+   * no way past them — a mentee outside the top ten could not find themselves
+   * on their own standings, and their history simply stopped. Earned badges
+   * had the opposite problem: no cap at all, so somebody with thirty badges
+   * got thirty full-height cards.
+   *
+   * Same paginator the mentor tables use, so the control behaves the way it
+   * does everywhere else in the product.
+   */
+  const leaderboardPages = usePagination({ initialPage: 1, initialLimit: 10 });
+  const badgePages = usePagination({ initialPage: 1, initialLimit: 6 });
+  const historyPages = usePagination({ initialPage: 1, initialLimit: 10 });
+
   useEffect(() => {
     if (!user?.id) return;
 
@@ -54,8 +73,17 @@ export default function MenteeGamificationPage() {
           await Promise.all([
             gamificationApi.getUserStats(user.id),
             gamificationApi.getUserBadges(user.id),
-            gamificationApi.getUserPointsHistory(user.id, 12),
-            gamificationApi.getLeaderboard(10),
+            /**
+             * Enough to page through, not enough to be a download.
+             *
+             * These were 12 and 10 with no way to see any more: a mentee
+             * ranked 23rd could not find themselves on their own leaderboard,
+             * and their points history stopped twelve entries ago without
+             * saying so. Both are now paged below, so the fetch has to carry
+             * more than one page's worth.
+             */
+            gamificationApi.getUserPointsHistory(user.id, 100),
+            gamificationApi.getLeaderboard(100),
             communityApi.leaderboard("global", null, "all").catch(() => null),
           ]);
 
@@ -83,6 +111,42 @@ export default function MenteeGamificationPage() {
       mounted = false;
     };
   }, [user?.id]);
+
+  /**
+   * Keep each paginator's total in step with the list it pages, and open the
+   * leaderboard on the page the reader is actually on.
+   *
+   * Landing on page one of a standings table you are not in is the same as
+   * not being shown it. `goToPage` is only called once, when the data first
+   * arrives, so paging away afterwards sticks.
+   */
+  const jumpedToMe = useRef(false);
+  useEffect(() => { leaderboardPages.setTotal(leaderboard.length); }, [leaderboard, leaderboardPages]);
+  useEffect(() => { badgePages.setTotal(badges.length); }, [badges, badgePages]);
+  useEffect(() => { historyPages.setTotal(history.length); }, [history, historyPages]);
+
+  /**
+   * Deliberately a SECOND effect, after the total has landed.
+   *
+   * `goToPage` clamps against the paginator's `total`, and in the effect that
+   * sets it that value is still the previous render's zero — so every jump
+   * clamped straight back to page one and the reader stayed where they could
+   * not see themselves. Waiting for the total costs one render and makes the
+   * jump actually happen.
+   */
+  const leaderboardTotal = leaderboardPages.total;
+  const leaderboardLimit = leaderboardPages.limit;
+  const goToLeaderboardPage = leaderboardPages.goToPage;
+  useEffect(() => {
+    if (jumpedToMe.current || !leaderboardTotal || !user?.id) return;
+    const index = leaderboard.findIndex((entry) => entry.userId === user.id);
+    jumpedToMe.current = true;
+    if (index >= 0) goToLeaderboardPage(Math.floor(index / leaderboardLimit) + 1);
+  }, [leaderboard, leaderboardTotal, leaderboardLimit, goToLeaderboardPage, user?.id]);
+
+  const leaderboardPage = leaderboard.slice(leaderboardPages.offset, leaderboardPages.offset + leaderboardPages.limit);
+  const badgePage = badges.slice(badgePages.offset, badgePages.offset + badgePages.limit);
+  const historyPage = history.slice(historyPages.offset, historyPages.offset + historyPages.limit);
 
   const levelProgress = useMemo(() => {
     const points = stats?.totalPoints || 0;
@@ -280,7 +344,7 @@ export default function MenteeGamificationPage() {
                 Leaderboard is empty right now.
               </div>
             )}
-            {leaderboard.map((entry) => {
+            {leaderboardPage.map((entry) => {
               const name =
                 [entry.user?.firstName, entry.user?.lastName]
                   .filter(Boolean)
@@ -303,6 +367,10 @@ export default function MenteeGamificationPage() {
                     <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center text-sm font-semibold">
                       {entry.rank}
                     </div>
+                    {/* The server has always sent the photo; this list showed
+                        rank numbers only, which is the hardest possible way to
+                        find a person in a list of a hundred. */}
+                    <Avatar name={name} src={entry.user?.profilePictureUrl} size="sm" className="shrink-0" />
                     <div className="min-w-0">
                       <p className="text-slate-900 truncate">{name}</p>
                       {isCurrentUser && (
@@ -336,6 +404,10 @@ export default function MenteeGamificationPage() {
               );
             })}
           </div>
+
+          {leaderboard.length > leaderboardPages.limit && (
+            <TablePagination pagination={leaderboardPages} stack showPageSize={false} className="mt-4" />
+          )}
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-card p-5">
@@ -351,7 +423,7 @@ export default function MenteeGamificationPage() {
               </div>
             )}
 
-            {badges.map((badge) => (
+            {badgePage.map((badge) => (
               <div
                 key={badge.userBadgeId || badge.id}
                 className="rounded-2xl border border-border p-4 bg-muted/40"
@@ -383,6 +455,10 @@ export default function MenteeGamificationPage() {
               </div>
             ))}
           </div>
+
+          {badges.length > badgePages.limit && (
+            <TablePagination pagination={badgePages} stack showPageSize={false} className="mt-4" />
+          )}
         </section>
       </div>
 
@@ -399,7 +475,7 @@ export default function MenteeGamificationPage() {
             </div>
           )}
 
-          {history.map((item) => (
+          {historyPage.map((item) => (
             <div
               key={item.id}
               className="flex items-center justify-between rounded-xl border border-slate-200 p-3"
@@ -421,6 +497,10 @@ export default function MenteeGamificationPage() {
             </div>
           ))}
         </div>
+
+        {history.length > historyPages.limit && (
+          <TablePagination pagination={historyPages} className="mt-4" />
+        )}
       </section>
     </div>
   );
