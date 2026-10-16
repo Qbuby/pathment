@@ -60,7 +60,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 17 | Mentor Insights → Reports disagrees with leaderboard/progress score (both correct). Align the criteria. Also: no mentee profile pictures in progress. | ✅ | | Reports read 61 where the score read 79. |
 | 18 | Mentor dashboard: remove yellow, re-prioritise, show announcements compactly. | ⬜ | | |
 | 19 | Task assign: drop "Assign now / Schedule once / Repeat weekly"; use two icon menus (due date, repeat) like Microsoft To Do. No reminder icon. | ✅ | | Assign drawer only; see the scope note. |
-| 20 | Mentor calendar: pick a **time** on the calendar, and set repeating availability by day + time. | ⬜ | | |
+| 20 | Mentor calendar: pick a **time** on the calendar, and set repeating availability by day + time. | ✅ | | |
 | 21 | Feature-usage statistics per role (which pages/features are actually used). | ⬜ | | Open-ended programme. |
 | 22 | Admins can create standing clans too. | ✅ | | |
 | 23 | Program/clan filters across the admin panel (people → mentees/mentors, enrollments, clan requests), ideally one global program selector. | ⬜ | | Open-ended programme. |
@@ -1067,3 +1067,39 @@ enrolled on the provider the moment it is assigned and cannot repeat.
 the report asked for those three to be removed. A future deadline is still available
 through the date picker; what no longer exists is holding a task back from the mentee
 until a date. Say the word and I will put it back as a third item in the due menu.
+
+### Issue 20 — the calendar you cannot put a time in
+
+**Root cause.** The page had three controls for one job, and they did not talk to each
+other. Picking a day in the calendar only **filtered** the list beside it. To actually
+offer that day you scrolled past a seven-row weekly editor to a separate "One-off slot"
+block and **retyped the date you had just clicked**. And making that time recur meant
+finding the right row in the weekly table and typing the time a third time.
+
+**Fix — the time lives with the date.** Selecting a day opens an inline panel right under
+the calendar: *"Add a time on Thursday, October 29"*, with a time, a length, and two
+buttons — **Just this day** and **Every Thursday**. That second button is the whole of
+"I can make repetitive availability on days and with time": it reads the current weekly
+rules, adds this one, saves them back, and tells the weekly editor below to reload, so two
+views of the same week cannot disagree.
+
+The duplicate "One-off slot" form is gone — the block keeps the *list* of published
+one-offs, which is the part that was worth having. A time already repeating on that
+weekday is recognised and says so rather than writing a duplicate rule.
+
+**Files.** `client-interface/app/mentor/schedules/page.tsx`.
+
+**Tests run.** `tsc` clean. **Lint is one problem better** than before on this file (24 vs
+25); everything remaining predates the change.
+
+**Verified in the browser, end to end.** Picking the 29th opened
+*"Add a time on Thursday, October 29 · Time · Length · Just this day · Every Thursday"*.
+Clicking **Every Thursday** issued
+`PUT /api/meetings/availability/rules {"rules":[{"weekday":4,"startTime":"14:00","endTime":"14:30","slotMins":30}]}`
+and the Weekly hours editor below reloaded with **Thursday no longer "Unavailable"**. The
+rule was removed afterwards. No console errors.
+
+**Not done here.** The weekly editor itself is unchanged — it is a perfectly good seven-row
+table once you are in it, and the complaint was that reaching it was the only way to do
+anything. Drag-to-create directly on the calendar grid would be the next step and is a
+bigger piece of work than this report asks for.
