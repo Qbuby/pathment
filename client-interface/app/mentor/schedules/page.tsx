@@ -20,6 +20,7 @@ import { getBrowserTimeZone, formatMeeting } from '@/lib/utils/datetime';
 import { useConfirm } from '@/lib/context/ConfirmContext';
 import { MenteeTargetSelector } from '@/components/mentor/MenteeTargetSelector';
 import { useClan, isHistoricalMentorScope } from '@/lib/context/ClanContext';
+import { Avatar } from '@/components/shared/Avatar';
 
 const DURATIONS = [15, 30, 45, 60];
 const SLOT_DAYS = ['everyday', 'weekdays', 'weekends'];
@@ -250,14 +251,7 @@ function AssignModal({ template, cohort, onClose }: { template: ScheduleTemplate
               return (
                 <label key={m.id} className={`flex items-center gap-3 p-2.5 rounded-xl border text-xs font-medium cursor-pointer transition-all ${isChecked ? 'border-brand-300 dark:border-brand-500/40 bg-brand-50/60 dark:bg-brand-500/10 text-brand-800 dark:text-brand-200 font-semibold' : 'border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/60'}`}>
                   <input type="checkbox" checked={isChecked} onChange={() => toggle(m.id)} className="rounded border-slate-300 text-brand-600 focus:ring-brand-500 w-3.5 h-3.5 shrink-0" />
-                  {photo ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={photo} alt={m.name} className="w-6.5 h-6.5 rounded-full object-cover shrink-0" />
-                  ) : (
-                    <div className="w-6.5 h-6.5 rounded-full bg-brand-100 dark:bg-brand-500/20 text-brand-700 dark:text-brand-300 font-bold text-[10px] flex items-center justify-center shrink-0">
-                      {initials}
-                    </div>
-                  )}
+                  <Avatar name={m.name} src={photo} initials={initials} size="xs" />
                   <span className="truncate">{m.name}</span>
                 </label>
               );

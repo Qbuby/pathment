@@ -34,13 +34,25 @@ export interface AvatarProps {
   className?: string;
   /** Subtle white ring — handy on coloured/overlapping surfaces. */
   ring?: boolean;
+  /**
+   * `muted` is the person who is not currently taking part — paused in this
+   * clan, left the programme. The photo desaturates and the initials drop to
+   * slate, so a rail of faces reads at a glance without anybody having to
+   * check a badge. It lives here because every surface that lists people has
+   * the same state, and the alternative was each of them keeping its own
+   * avatar in order to recolour one fallback.
+   */
+  tone?: 'brand' | 'muted';
   title?: string;
 }
 
-export function Avatar({ name, src, initials, size = 'md', href, className = '', ring = false, title }: AvatarProps) {
+export function Avatar({ name, src, initials, size = 'md', href, className = '', ring = false, title, tone = 'brand' }: AvatarProps) {
   const label = initials || (name ? getInitials(name) : '?');
   const dim = SIZES[size];
   const ringCls = ring ? 'ring-2 ring-white dark:ring-slate-800' : '';
+  const muted = tone === 'muted';
+  const fallbackTone = muted ? 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400' : 'bg-brand-100 text-brand-700';
+  const photoTone = muted ? 'bg-slate-100 grayscale opacity-60' : 'bg-brand-100';
 
   // A broken / unreachable photo URL renders as an empty (black) circle — fall
   // back to initials when the image fails so an avatar is never a blank void.
@@ -49,9 +61,9 @@ export function Avatar({ name, src, initials, size = 'md', href, className = '',
 
   const inner = src && !imgFailed ? (
     // eslint-disable-next-line @next/next/no-img-element
-    <img src={src} alt={name || 'Profile photo'} onError={() => setImgFailed(true)} className={`${dim} rounded-full object-cover bg-brand-100 ${ringCls} ${className}`} />
+    <img src={src} alt={name || 'Profile photo'} onError={() => setImgFailed(true)} className={`${dim} rounded-full object-cover ${photoTone} ${ringCls} ${className}`} />
   ) : (
-    <span className={`${dim} rounded-full bg-brand-100 text-brand-700 font-semibold flex items-center justify-center select-none ${ringCls} ${className}`}>
+    <span className={`${dim} rounded-full ${fallbackTone} font-semibold flex items-center justify-center select-none ${ringCls} ${className}`}>
       {label}
     </span>
   );

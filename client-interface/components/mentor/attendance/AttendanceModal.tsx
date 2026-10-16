@@ -3,6 +3,7 @@ import { Loader2, UserCheck, UserX, CheckCircle2 } from 'lucide-react';
 import { Drawer } from '@/components/shared/Drawer';
 import { getInitials } from '@/lib/utils/formatting';
 import type { AttendanceMentee } from './MenteeAttendanceCard';
+import { Avatar } from '@/components/shared/Avatar';
 
 type Attendance = 'present' | 'absent' | 'excused' | null;
 
@@ -93,14 +94,7 @@ export function AttendanceModal({ isOpen, onClose, mentees, initialAttendance, o
             return (
               <div key={m.id} className="flex items-center justify-between p-3 rounded-xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
                 <div className="flex items-center gap-3">
-                  {m.profilePictureUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={m.profilePictureUrl} alt={m.name} className="w-8 h-8 rounded-full object-cover shrink-0" />
-                  ) : (
-                    <div className="w-8 h-8 rounded-full bg-brand-50 border border-brand-100 flex items-center justify-center text-brand-700 font-semibold text-xs shrink-0">
-                      {m.avatar || getInitials(m.name)}
-                    </div>
-                  )}
+                  <Avatar name={m.name} src={m.profilePictureUrl} initials={m.avatar || getInitials(m.name)} size="sm" />
                   <span className="text-sm font-medium text-slate-900 truncate max-w-[140px] sm:max-w-[200px]">
                     {m.name}
                   </span>

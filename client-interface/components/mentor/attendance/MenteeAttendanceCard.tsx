@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Check, X, Minus, HelpCircle, Pause } from 'lucide-react';
 import { getInitials } from '@/lib/utils/formatting';
+import { Avatar } from '@/components/shared/Avatar';
 
 type Attendance = 'present' | 'absent' | 'excused' | null;
 
@@ -57,12 +58,6 @@ export function MenteeAttendanceCard({ mentee, attendance, isActive, onClick }: 
   const initials = mentee.avatar || getInitials(mentee.name);
   const firstName = mentee.name.split(' ')[0];
 
-  // A broken / unreachable photo URL otherwise renders as an empty black circle
-  // — fall back to the initials so the chip is always legible.
-  const [imgFailed, setImgFailed] = useState(false);
-  useEffect(() => { setImgFailed(false); }, [mentee.profilePictureUrl]);
-  const showPhoto = !!mentee.profilePictureUrl && !imgFailed;
-
   // When this becomes the active mentee (e.g. via the Prev/Next/Skip buttons),
   // bring the chip into view so the mentor can see where they are in the rail.
   const ref = useRef<HTMLButtonElement>(null);
@@ -99,21 +94,13 @@ export function MenteeAttendanceCard({ mentee, attendance, isActive, onClick }: 
           }`}
         >
           <div className="rounded-full bg-card p-[2px]">
-            {showPhoto ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={mentee.profilePictureUrl as string}
-                alt={mentee.name}
-                onError={() => setImgFailed(true)}
-                className={`w-14 h-14 rounded-full object-cover bg-brand-50 ${paused ? 'grayscale opacity-60' : ''}`}
-              />
-            ) : (
-              <div className={`w-14 h-14 rounded-full flex items-center justify-center font-semibold text-base ${
-                paused ? 'bg-slate-100 text-slate-500' : 'bg-brand-50 text-brand-700'
-              }`}>
-                {initials}
-              </div>
-            )}
+            <Avatar
+              name={mentee.name}
+              src={mentee.profilePictureUrl}
+              initials={initials}
+              size="lg"
+              tone={paused ? 'muted' : 'brand'}
+            />
           </div>
         </div>
 

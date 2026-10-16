@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { Plus, X, Loader2, Users, ChevronRight, CalendarRange } from 'lucide-react';
+import { Plus, Loader2, ChevronRight, CalendarRange } from 'lucide-react';
+import { Drawer } from '@/components/shared/Drawer';
 import { useCohorts, type Cohort, type CohortStatus } from '@/lib/hooks/admin';
 import { cohortApi } from '@/lib/services/intake-api';
 import { programsApi } from '@/lib/services/program-api';
@@ -53,46 +54,47 @@ function CreateCohortDrawer({ onClose, onCreated }: { onClose: () => void; onCre
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/30 dark:bg-black/70" onClick={onClose}>
-      <div role="dialog" aria-modal="true" className="relative w-full max-w-md h-full bg-card border-l border-slate-200 dark:border-slate-700 shadow-2xl dark:shadow-[-8px_0_30px_rgba(0,0,0,0.6)] flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
-          <h2 className="text-slate-900 font-medium">New cohort</h2>
-          <button onClick={onClose} aria-label="Close" className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Program <span className="text-red-500">*</span></label>
-            <select value={form.programId} onChange={(e) => setForm({ ...form, programId: e.target.value })} className={field}>
-              <option value="">Select a program…</option>
-              {programs.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Name <span className="text-red-500">*</span></label>
-            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. 2026 Spring intake" className={field} />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
-            <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className={field}>
-              <option value="planning">Planning - not yet accepting</option>
-              <option value="open">Open - accepting applications</option>
-              <option value="closed">Closed - intake done</option>
-              <option value="running">Running</option>
-              <option value="completed">Completed</option>
-            </select>
-          </div>
-          <p className="text-xs text-slate-400">
-            Dates, capacity, the application window and assessments are set in the cohort&apos;s <span className="font-medium text-slate-500">Admissions settings</span> after you create it.
-          </p>
-        </div>
-        <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 rounded-lg">Cancel</button>
+    <Drawer
+      open
+      onClose={onClose}
+      width="sm"
+      title="New cohort"
+      footer={(dismiss) => (
+        <>
+          <button onClick={dismiss} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 rounded-lg">Cancel</button>
           <button onClick={submit} disabled={saving} className="inline-flex items-center gap-2 px-4 py-2 text-sm bg-brand-600 hover:bg-brand-700 disabled:bg-brand-400 text-white rounded-lg">
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Create cohort
           </button>
+        </>
+      )}
+    >
+      <div className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Program <span className="text-red-500">*</span></label>
+          <select value={form.programId} onChange={(e) => setForm({ ...form, programId: e.target.value })} className={field}>
+            <option value="">Select a program…</option>
+            {programs.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
         </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Name <span className="text-red-500">*</span></label>
+          <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. 2026 Spring intake" className={field} />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
+          <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className={field}>
+            <option value="planning">Planning - not yet accepting</option>
+            <option value="open">Open - accepting applications</option>
+            <option value="closed">Closed - intake done</option>
+            <option value="running">Running</option>
+            <option value="completed">Completed</option>
+          </select>
+        </div>
+        <p className="text-xs text-slate-400">
+          Dates, capacity, the application window and assessments are set in the cohort&apos;s <span className="font-medium text-slate-500">Admissions settings</span> after you create it.
+        </p>
       </div>
-    </div>
+    </Drawer>
   );
 }
 

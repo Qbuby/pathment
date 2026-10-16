@@ -119,20 +119,43 @@ function ApplicationDrawer({
   const entries = Object.entries(responses).filter(([k]) => !['email', 'role'].includes(k.toLowerCase()));
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/30 dark:bg-black/70" onClick={onClose}>
-      <div role="dialog" aria-modal="true" className="relative w-full max-w-lg h-full bg-card border-l border-slate-200 dark:border-slate-700 shadow-2xl dark:shadow-[-8px_0_30px_rgba(0,0,0,0.6)] flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-start justify-between px-6 py-4 border-b border-slate-200">
-          <div>
-            <h2 className="text-slate-900 font-medium">{fullName(app)}</h2>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
-              <span className="inline-flex items-center gap-1"><Mail className="w-3 h-3" />{app.email}</span>
-              {app.phone && <span className="inline-flex items-center gap-1"><Phone className="w-3 h-3" />{app.phone}</span>}
-            </div>
-          </div>
-          <button onClick={onClose} aria-label="Close" className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg"><X className="w-5 h-5" /></button>
+    <Drawer
+      open
+      onClose={onClose}
+      title={fullName(app)}
+      headerMeta={(
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
+          <span className="inline-flex items-center gap-1"><Mail className="w-3 h-3" />{app.email}</span>
+          {app.phone && <span className="inline-flex items-center gap-1"><Phone className="w-3 h-3" />{app.phone}</span>}
         </div>
-
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+      )}
+      footer={decided ? undefined : (
+        <div className="w-full">
+          {rejecting ? (
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-slate-700">Reason for rejection <span className="text-slate-400 font-normal">(shown to the applicant)</span></label>
+              <textarea value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} rows={3} placeholder="e.g. A strong application, but we filled every spot at this level for this round." className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-rose-500" />
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setRejecting(false)} disabled={busy} className="px-4 py-2 text-sm border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50">Cancel</button>
+                <button onClick={() => run(() => onReject(app.id, rejectReason.trim() || undefined))} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm bg-rose-600 hover:bg-rose-700 text-white rounded-lg disabled:opacity-50">
+                  {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />} Confirm rejection
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setRejecting(true)} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm border border-rose-200 text-rose-700 hover:bg-rose-50 rounded-lg">
+                <XCircle className="w-4 h-4" /> Reject
+              </button>
+              <button onClick={() => run(() => onAccept(app.id))} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm bg-brand-600 hover:bg-brand-700 text-white rounded-lg">
+                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Accept & invite
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    >
+      <div className="space-y-5">
           <div className="flex items-center gap-2">
             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_CHIP[app.status]}`}>{app.status.replace(/_/g, ' ')}</span>
             {app.level && <span className="inline-flex items-center gap-1 text-xs text-slate-500"><Layers className="w-3 h-3" />{app.level.replace(/-/g, ' ')}</span>}
@@ -209,35 +232,8 @@ function ApplicationDrawer({
           {detail?.submission && detail?.assessment && (
             <AssessmentSubmissionView assessment={detail.assessment} submission={detail.submission} onChanged={reloadDetail} />
           )}
-        </div>
-
-        {!decided && (
-          <div className="px-6 py-4 border-t border-slate-200">
-            {rejecting ? (
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-slate-700">Reason for rejection <span className="text-slate-400 font-normal">(shown to the applicant)</span></label>
-                <textarea value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} rows={3} placeholder="e.g. A strong application, but we filled every spot at this level for this round." className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-rose-500" />
-                <div className="flex justify-end gap-2">
-                  <button onClick={() => setRejecting(false)} disabled={busy} className="px-4 py-2 text-sm border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50">Cancel</button>
-                  <button onClick={() => run(() => onReject(app.id, rejectReason.trim() || undefined))} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm bg-rose-600 hover:bg-rose-700 text-white rounded-lg disabled:opacity-50">
-                    {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />} Confirm rejection
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex justify-end gap-2">
-                <button onClick={() => setRejecting(true)} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm border border-rose-200 text-rose-700 hover:bg-rose-50 rounded-lg">
-                  <XCircle className="w-4 h-4" /> Reject
-                </button>
-                <button onClick={() => run(() => onAccept(app.id))} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm bg-brand-600 hover:bg-brand-700 text-white rounded-lg">
-                  {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Accept & invite
-                </button>
-              </div>
-            )}
-          </div>
-        )}
       </div>
-    </div>
+    </Drawer>
   );
 }
 
