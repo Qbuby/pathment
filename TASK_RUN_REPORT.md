@@ -1639,3 +1639,65 @@ cannot say where its 700 MB is — only give you the screen that will. Open
 Administration → Storage on prod and the largest-tables list answers it in one look. If
 the tables there add up to far less than 700 MB, it is bloat, and the fix is a
 `pg_repack` in a maintenance window rather than deleting anything.
+
+---
+
+## Full test run, 2026-10-16
+
+### A regression this run caught — issue 5
+
+The first attempt at a full server run **crashed** (V8 heap OOM at 56 minutes,
+core dumped). It had reported exit code 0, which came from the `tail` at the end of
+the pipe rather than from jest. Before it died it surfaced one real failure, in a file
+my own issue-5 commit sits directly under.
+
+Checked against the branch base rather than assumed:
+
+| | result |
+|---|---|
+| `origin/staging` | 57 / 57 pass |
+| this branch, before the fix | 51 / 57 — **6 failures** |
+
+**Cause.** `scheduleBoardService._scheduleRow` took `membershipCount = 0` as a default.
+Zero quietly means "this mentee is in more than one clan", which switches
+`clanScopedWhere` to the strict branch that cannot match a schedule row written before
+schedules were per-clan. Only `board()` ever passed the count, so every other path read
+the strict way. A default that is wrong in the common case is not a default.
+
+**The visible symptom** was the planner rendering a legacy row and then refusing every
+change to it with "This mentee has no schedule yet".
+
+**The one underneath it had no test at all and is worse.** `addSlot` and
+`applyTemplate` do not refuse when the lookup misses — they create a row. A mentee with
+a legacy clanless row would have got a **second** row stamped with the clan, every block
+they already had left behind in the orphaned one, and a planner showing a day that had
+silently lost everything on it. Nothing throws, so nothing says so. That would have
+reached production.
+
+**Fixed** in `269cc07f`: the count is resolved inside `_scheduleRow` when a caller has
+not already paid for it, so omitting it costs one indexed query rather than correctness.
+A test for the duplicate-row path is added and confirmed to fail on the unfixed code
+(7 failures). Suite now 58 / 58, against 57 on the base.
+
+### How the suite has to be run
+
+Two traps, both of which make a run look complete when it is not:
+
+- **One `npx jest --runInBand` pass over all 119 files OOMs** at the 2 GB V8 heap limit
+  around 56 minutes. Raising `--max-old-space-size` is not available here (~1 GB free of
+  15). Run it sharded, one process per `tests/*/` directory, so each hands its memory
+  back and a failure is attributable to a directory.
+- **`testMatch` is `**/tests/**/*.test.js`, so the 12 `*.test.cjs` files are never run
+  by jest** — nine in `tests/migrations/`, two in `tests/organizations/`, one in
+  `tests/staging/`. They are `node:test` files and need `node --test`.
+
+### Result
+
+| | suites / files | tests | failures |
+|---|---|---|---|
+| server, jest (20 directories) | 119 | **1,285** | 0 |
+| server, `node:test` `.cjs` | 12 | **30** | 0 |
+| client, `node:test` | 22 | **121** | 0 |
+| **total** | | **1,436** | **0** |
+
+`tsc` clean on the client. Lint level with the branch base (one error fewer).
