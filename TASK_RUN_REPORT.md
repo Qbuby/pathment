@@ -51,7 +51,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 8 | Mentee "My progress" page is weak — improve or remove. | ✅ | `998861d3` | Empty-state pass, not a redesign. |
 | 9 | Library (admin → mentor → mentee) redesign. | ⬜ | | |
 | 10 | Mentee dashboard: re-prioritise top vs bottom; the daily/planner block does not belong there. | ⬜ | | |
-| 11 | Notification / "What's new" drawers do not open smoothly (the Feedback drawer does). | ⬜ | | |
+| 11 | Notification / "What's new" drawers do not open smoothly (the Feedback drawer does). | ✅ | | Notifications had no animation at all; both now use the shared Drawer. |
 | 12 | Paginate (or infinite-scroll) Points & badges — performance leaderboard and earned badges. | ✅ | | Also: a mentee outside the top 10 could not see themselves. |
 | 13 | Surface paused mentees in clan review on the selected mentee's profile card. | ✅ | | Also fixed a 403 on every review load. |
 | 14 | Review-access lock should be settable per program or per clan, not org-wide only; remove the yellow styling. | ⬜ | | Same feature as #27, seen from the mentor side. |
@@ -858,3 +858,60 @@ they are there now, via the shared `Avatar`.
 - the pager reads **1 2 3**, and **24 photographs** render where there were none;
 - with 10 badges seeded locally, Earned badges reads **"Showing 1 - 6 of 10"** across two
   pages. The seeded badges were removed afterwards.
+
+### Issue 11 — "feedback is smooth, notification / what's new is not"
+
+**Root cause.** Three sheets sit on the same sidebar rail and there were three
+implementations of a slide-over between them.
+
+- **Feedback** uses `components/shared/Drawer`: mounts, waits two frames so the off-screen
+  transform paints, then slides in over 250ms, and stays mounted to slide back out.
+- **Notifications had no animation at all.** `isMounted && isOpen && createPortal(...)`
+  put a full-height panel on screen in a single frame — no transform, no transition, no
+  exit. That is the whole of the complaint: one of them was animating and one was
+  appearing.
+- **What's new** was a near-copy of the shared Drawer — its own backdrop, its own
+  two-frame slide, its own 250ms constant, its own Escape handler and scroll lock.
+  Correct, and a third thing to keep in step.
+
+**Fix.** Both now use the shared `Drawer`. One timing constant, one focus trap, one scroll
+lock, one Escape handler, one backdrop. The sheets on that rail cannot feel like three
+different products any more, and a change to the motion is one change rather than three.
+
+This removed, from the notification drawer alone: a hand-rolled focus trap (tab-cycling
+and focus restore), its own Escape listener, its own portal-mount guard, its own backdrop
+and panel markup. From the what's-new drawer: the duplicate enter/exit effect, the
+duplicate scroll lock and the duplicate Escape listener.
+
+**Files.** `client-interface/components/shared/NotificationDrawer.tsx`,
+`client-interface/components/shared/ChangelogDrawer.tsx`.
+
+**Lint improved, not just unchanged.** Those two files carried **3 errors and 1 warning**
+before (two of them `setState` called synchronously inside an effect — the cascading
+render that makes an opening panel stutter). They now carry **2 errors and no warnings**,
+and both remaining errors predate this work. The React-compiler memoization error in
+`NotificationDrawer` is untouched and out of scope here.
+
+**Tests run.** `tsc` clean; client guard suite 112 pass.
+
+**A third cause of the same complaint, found while measuring it.** The drawer rendered
+**every** notification the feed held — on a busy account, hundreds of cards laid out in
+the same commit that opens the panel, before the first frame of the slide can paint. No
+transition survives that. The drawer is a peek and there is a "View all" button at the
+bottom going to the page that *is* the list, so it now shows the most recent 20 and
+offers "N older notifications — see them all".
+
+**Verified in the browser**: all three triggers now produce a panel carrying
+`data-drawer-motion` with `transition-duration: 0.25s` — the shared component — where
+notifications previously had no animated panel in the DOM at all.
+
+**Measurement I could not get.** I tried to sample the panel's transform frame by frame
+to show the slide itself. In headless Chrome the panel was already at its final transform
+by the first sample I could take, and I could not tell that apart from the browser not
+compositing the transition at all, so **I am not claiming a measured slide** — only that
+the three sheets now render the same animated component with the same timing, where one
+of them rendered none.
+
+**Note on scope.** This makes the three consistent by making them one thing. It is also a
+concrete piece of issue 30 ("we have no reusable components… drawers… these are just the
+examples"), paid for by a defect rather than by a refactor nobody asked for.

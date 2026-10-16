@@ -1,12 +1,9 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Bell,
-  X,
-  Clock,
   ListTodo,
   MessageSquare,
   Award,
@@ -36,6 +33,7 @@ import {
   type StandingClanReview,
 } from "@/components/shared/StandingClanDecisionDrawer";
 import { NotificationCard } from "@/components/shared/NotificationCard";
+import { Drawer } from "@/components/shared/Drawer";
 import { Spinner } from '@/components/shared/LoadingSpinner';
 
 interface Notification {
@@ -83,7 +81,7 @@ export default function NotificationDrawer({
   userId,
   showLabel = false,
 }: NotificationDrawerProps) {
-  const dialogRef = useRef<HTMLElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const pathname = logicalPathname(usePathname());
   const { activeRole } = useAuth();
@@ -92,7 +90,6 @@ export default function NotificationDrawer({
   const [isOpen, setIsOpen] = useState(false);
   const [filter, setFilter] = useState<"all" | "unread">("all");
   const [showAllRoles, setShowAllRoles] = useState(false);
-  const [isMounted, setIsMounted] = useState(false);
   const [pendingStanding, setPendingStanding] = useState<StandingRequest[]>([]);
   const [standingReview, setStandingReview] = useState<StandingClanReview | null>(null);
   // The feed itself is shared: this bell renders twice (desktop sidebar + mobile
@@ -137,7 +134,7 @@ export default function NotificationDrawer({
     () => new Set(pendingStanding.map((row) => row.id)),
     [pendingStanding],
   );
-  const feedNotifications = visibleNotifications.filter(
+  const allFeedNotifications = visibleNotifications.filter(
     (n) =>
       !(
         n.relatedEntityType === "standing_clan_request" &&
@@ -145,16 +142,26 @@ export default function NotificationDrawer({
         pendingStandingIds.has(n.relatedEntityId)
       ),
   );
+  /**
+   * The drawer is a peek, not the list.
+   *
+   * Every notification the feed held was rendered here, in the same commit
+   * that opens the panel — on a busy account that is hundreds of cards laid
+   * out before the first frame of the slide, which is most of what "not
+   * smooth" actually felt like. "View all" at the bottom goes to the page
+   * that is the list.
+   */
+  const DRAWER_PREVIEW = 20;
+  const feedNotifications = allFeedNotifications.slice(0, DRAWER_PREVIEW);
+  const olderCount = allFeedNotifications.length - feedNotifications.length;
+
   const unreadCount = useMemo(
     () => clanScoped.filter((item) => item.status === "unread").length,
     [clanScoped],
   );
   const hiddenOtherRoleCount = notifications.length - roleScoped.length;
 
-  // Ensure we only render portal on client.
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
+  // The portal guard lived here; the shared Drawer owns the portal now.
 
   // Opening the drawer asks for a fresh read; the cache serves the current list
   // meanwhile, so there is no spinner over existing data.
@@ -235,35 +242,8 @@ export default function NotificationDrawer({
     return date.toLocaleDateString();
   };
 
-  // Keep keyboard focus inside the open sheet and return it to the bell.
-  useEffect(() => {
-    if (!isOpen) return;
-    const previous = document.activeElement as HTMLElement | null;
-    dialogRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setIsOpen(false);
-      if (event.key !== "Tab") return;
-      const controls = Array.from(
-        dialogRef.current?.querySelectorAll<HTMLElement>(
-          'button:not(:disabled), [href], [tabindex="0"]',
-        ) || [],
-      );
-      const first = controls[0],
-        last = controls.at(-1);
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last?.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first?.focus();
-      }
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      previous?.focus();
-    };
-  }, [isOpen]);
+  // Escape, the focus trap and returning focus to the bell all belong to
+  // the shared Drawer now — three near-copies of them used to live here.
 
   return (
     <>
@@ -297,52 +277,43 @@ export default function NotificationDrawer({
         )}
       </button>
 
-      {isMounted &&
-        isOpen &&
-        createPortal(
-          <>
-            <div
-              className="fixed inset-0 z-70 bg-black/30 dark:bg-black/60 lg:left-64"
-              onClick={() => setIsOpen(false)}
-              aria-hidden="true"
-            />
-
-            <aside
-              ref={dialogRef}
-              className="fixed right-0 top-0 z-80 h-dvh w-full max-w-lg bg-card shadow-2xl border-l border-slate-200 dark:border-slate-700 flex flex-col"
-              role="dialog"
-              aria-labelledby="notif-title"
-              aria-modal="true"
+      {/*
+          The shared Drawer, not a second hand-rolled sheet.
+          This one had no animation at all: `isOpen && createPortal(...)` put a
+          full-height panel on screen in a single frame, while the feedback
+          drawer beside it in the same sidebar slid in over 250ms. That is the
+          whole of "notifications is not smooth" — one of them was animating
+          and one was not. Using the shared component also brings the focus
+          trap, the scroll lock, Escape and the backdrop dismiss that were
+          reimplemented here, each slightly differently.
+      */}
+      <Drawer
+        open={isOpen}
+        onClose={() => setIsOpen(false)}
+        width="md"
+        title="Notifications"
+        subtitle={`${unreadCount > 0 ? `${unreadCount} unread` : 'All caught up'}${role ? ` · ${showAllRoles ? 'all roles' : role}` : ''}`}
+        footer={
+          <div className="grid w-full grid-cols-2 gap-2">
+            <button
+              onClick={handleMarkAllRead}
+              className="px-3 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
             >
-              <div className="flex items-center justify-between px-6 py-5 border-b border-border">
-                <div>
-                  <h2
-                    id="notif-title"
-                    className="text-base font-semibold text-slate-900"
-                  >
-                    Notifications
-                  </h2>
-                  <p className="text-sm text-slate-500">
-                    {unreadCount > 0
-                      ? `${unreadCount} unread`
-                      : "All caught up"}
-                    {role && (
-                      <span className="capitalize">
-                        {" "}
-                        · {showAllRoles ? "all roles" : role}
-                      </span>
-                    )}
-                  </p>
-                </div>
-                <button
-                  onClick={() => setIsOpen(false)}
-                  className="p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
-                  aria-label="Close notifications"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
+              Mark all as read
+            </button>
+            <button
+              onClick={() => {
+                router.push(workspacePath(notificationsPath));
+                setIsOpen(false);
+              }}
+              className="px-3 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-colors"
+            >
+              View all
+            </button>
+          </div>
+        }
+      >
+        <div ref={dialogRef} className="-mx-6 -my-5 flex h-full flex-col">
               {/* Role scope toggle — only meaningful for dual-role users who actually
                 have other-role notifications to reveal. */}
               {role && (showAllRoles || hiddenOtherRoleCount > 0) && (
@@ -474,42 +445,34 @@ export default function NotificationDrawer({
                         />
                       );
                     })}
+                    {olderCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          router.push(workspacePath(notificationsPath));
+                          setIsOpen(false);
+                        }}
+                        className="w-full rounded-xl border border-dashed border-slate-300 px-3 py-2.5 text-sm text-slate-500 hover:border-brand-300 hover:text-brand-700 dark:border-slate-700"
+                      >
+                        {olderCount} older notification{olderCount === 1 ? '' : 's'} — see them all
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
 
-              <div className="p-3 border-t border-slate-200 bg-card">
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={handleMarkAllRead}
-                    className="px-3 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-                  >
-                    Mark all as read
-                  </button>
-                  <button
-                    onClick={() => {
-                      router.push(workspacePath(notificationsPath));
-                      setIsOpen(false);
-                    }}
-                    className="px-3 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-colors"
-                  >
-                    View all
-                  </button>
-                </div>
-              </div>
-            </aside>
-            <StandingClanDecisionDrawer
-              review={standingReview}
-              zClass="z-[90]"
-              onClose={() => setStandingReview(null)}
-              onDecided={() => {
-                void loadPendingStanding();
-                reload();
-              }}
-            />
-          </>,
-          document.body,
-        )}
+        </div>
+      </Drawer>
+
+      <StandingClanDecisionDrawer
+        review={standingReview}
+        zClass="z-[90]"
+        onClose={() => setStandingReview(null)}
+        onDecided={() => {
+          void loadPendingStanding();
+          reload();
+        }}
+      />
     </>
   );
 }

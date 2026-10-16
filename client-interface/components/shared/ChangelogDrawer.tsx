@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { createPortal } from 'react-dom';
-import { PackageOpen, X, Wrench, ArrowUpCircle, Rocket, ChevronRight, ChevronDown } from 'lucide-react';
+import React, { useState } from 'react';
+import { PackageOpen, Wrench, ArrowUpCircle, Rocket, ChevronRight, ChevronDown } from 'lucide-react';
 import { type ChangelogEntry } from '@/lib/services/changelog-api';
 import { useChangelogFeed } from '@/lib/hooks/shared/useChangelogFeed';
+import { Drawer } from '@/components/shared/Drawer';
 
 interface ChangelogDrawerProps {
   role: string;
@@ -60,9 +60,6 @@ function EntryRow({ entry }: { entry: ChangelogEntry }) {
 
 export default function ChangelogDrawer({ role }: ChangelogDrawerProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [render, setRender] = useState(false); // in the DOM (true while animating out)
-  const [shown, setShown] = useState(false);   // visual open state (drives the slide)
-  const [isMounted, setIsMounted] = useState(false);
   const [showFixes, setShowFixes] = useState(false);
 
   // Shared with ChangelogMount — the modal marking seen clears this badge through
@@ -71,37 +68,15 @@ export default function ChangelogDrawer({ role }: ChangelogDrawerProps) {
   const updates: ChangelogEntry[] = feed.updates;
   const unreadCount = feed.unreadCount;
 
-  useEffect(() => { setIsMounted(true); }, []);
-
   // Opening the drawer = the user has seen what's new → clear badge + persist.
   const open = () => {
     setIsOpen(true);
     if (unreadCount > 0) markSeen();
   };
 
-  // Drive the enter/exit animation off `isOpen`: mount → next frame slide in;
-  // close → slide out, then unmount after the transition (250ms).
-  useEffect(() => {
-    if (isOpen) {
-      setRender(true);
-      let r2 = 0;
-      const r1 = requestAnimationFrame(() => { r2 = requestAnimationFrame(() => setShown(true)); });
-      return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); };
-    }
-    setShown(false);
-    const t = setTimeout(() => setRender(false), 250);
-    return () => clearTimeout(t);
-  }, [isOpen]);
-
-  // Escape + scroll-lock while the sheet is on screen.
-  useEffect(() => {
-    if (!render) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setIsOpen(false); };
-    document.addEventListener('keydown', onKey);
-    return () => { document.body.style.overflow = prev; document.removeEventListener('keydown', onKey); };
-  }, [render]);
+  // The slide, the Escape handler and the scroll lock all belong to the shared
+  // Drawer now. They were reimplemented here, and the third copy of a timing
+  // constant is how two sheets on the same rail end up feeling different.
 
   const highlights = updates.filter((u) => u.type !== 'fix');
   const fixes = updates.filter((u) => u.type === 'fix');
@@ -128,32 +103,24 @@ export default function ChangelogDrawer({ role }: ChangelogDrawerProps) {
         </span>
       </button>
 
-      {isMounted && render && createPortal(
-        <>
-          <div
-            className={`fixed inset-0 z-70 bg-black/30 dark:bg-black/60 lg:left-64 transition-opacity duration-[250ms] ${shown ? 'opacity-100' : 'opacity-0'}`}
-            onClick={() => setIsOpen(false)}
-            aria-hidden="true"
-          />
-          <aside
-            className={`fixed right-0 top-0 z-80 h-dvh w-full max-w-md bg-card shadow-2xl border-l border-slate-200 dark:border-slate-700 flex flex-col transition-transform duration-[250ms] ease-out will-change-transform ${shown ? 'translate-x-0' : 'translate-x-full'}`}
-            role="dialog"
-            aria-labelledby="changelog-title"
-            aria-modal="true"
-          >
-            <div className="flex items-center justify-between px-4 py-4 border-b border-slate-200 dark:border-slate-700">
-              <div className="flex items-center gap-2">
-                <PackageOpen className="w-5 h-5 text-brand-600" />
-                <div>
-                  <h2 id="changelog-title" className="text-base font-semibold text-slate-900 dark:text-slate-100">What's new</h2>
-                  <p className="text-sm text-slate-500">Latest features &amp; fixes</p>
-                </div>
-              </div>
-              <button onClick={() => setIsOpen(false)} className="p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors" aria-label="Close">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
+      {/*
+          The shared Drawer, not a second copy of it.
+          This carried its own backdrop, panel, two-frame slide, Escape
+          handler and scroll lock — a near-duplicate of `components/shared/
+          Drawer`, which is what the feedback sheet beside it in the same
+          sidebar uses. One timing constant and one focus trap now, so the
+          three sheets on that rail cannot feel like three different products.
+      */}
+      {/* No mount guard: the shared Drawer portals only once it is open, and
+          `open` is false during server rendering. */}
+      <Drawer
+          open={isOpen}
+          onClose={() => setIsOpen(false)}
+          width="sm"
+          title="What's new"
+          subtitle="Latest features &amp; fixes"
+        >
+          <div className="-mx-6 -my-5 flex h-full flex-col">
             <div className="flex-1 overflow-y-auto">
               {isLoading ? (
                 <div className="h-full flex items-center justify-center text-slate-400 text-sm">Loading…</div>
@@ -186,10 +153,8 @@ export default function ChangelogDrawer({ role }: ChangelogDrawerProps) {
                 </>
               )}
             </div>
-          </aside>
-        </>,
-        document.body
-      )}
+          </div>
+      </Drawer>
     </>
   );
 }
