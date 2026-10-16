@@ -9,6 +9,8 @@ export interface TaskProgressEntry {
   minutesSpent: number | null;
   loggedAt: string;
   updatedAt: string;
+  /** Filled in after the fact rather than written on the day. Shown, not hidden. */
+  addedLate: boolean;
 }
 
 export interface TaskProgressDay {
@@ -21,6 +23,10 @@ export interface TaskProgressDay {
 
 export interface TaskProgress {
   days: TaskProgressDay[];
+  /** Whether the mentee may still write here. False once the task is with the mentor. */
+  canLog: boolean;
+  /** Why not, in words a mentee can read. Null while the log is open. */
+  closedBecause: string | null;
   summary: {
     loggedDays: number;
     elapsedDays: number;
@@ -64,8 +70,11 @@ export const menteeApi = {
   // work done where the work actually happens.
   getTaskProgress: (taskId: string) =>
     apiClient.get<{ data: TaskProgress }>(`/mentee/tasks/${taskId}/progress`),
-  logTaskProgress: (taskId: string, note: string, minutesSpent?: number) =>
-    apiClient.post<{ data: { entry: TaskProgressEntry } }>(`/mentee/tasks/${taskId}/progress`, { note, minutesSpent }),
+  /** `dateKey` fills in a day that was missed; omit it and the server writes today. */
+  logTaskProgress: (taskId: string, note: string, opts?: { minutesSpent?: number; dateKey?: string }) =>
+    apiClient.post<{ data: { entry: TaskProgressEntry } }>(`/mentee/tasks/${taskId}/progress`, {
+      note, minutesSpent: opts?.minutesSpent, dateKey: opts?.dateKey,
+    }),
   removeTaskProgress: (taskId: string, dateKey: string) =>
     apiClient.delete(`/mentee/tasks/${taskId}/progress/${dateKey}`),
 

@@ -8,11 +8,13 @@ const { successResponse } = require('../utils/responses');
  * so these stay thin.
  */
 
-// Mentee: record or replace today's note on their own task.
+// Mentee: record or replace one day's note on their own task. The day defaults
+// to today; the service decides whether a requested one is allowed.
 const log = catchAsync(async (req, res) => {
   const entry = await svc.log(req.user.id, req.params.id, {
     note: req.body?.note,
     minutesSpent: req.body?.minutesSpent,
+    dateKey: req.body?.dateKey,
   });
   res.status(200).json(successResponse('Progress saved', { entry }));
 });

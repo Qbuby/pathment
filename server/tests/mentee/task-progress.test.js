@@ -35,9 +35,12 @@ describe('task progress log', () => {
     await clanService.addMember(clan.id, { userId: mentor.id, role: 'lead_mentor' });
     await clanService.addMember(clan.id, { userId: mentee.id, role: 'mentee' });
 
+    // Assigned a week ago: the log therefore has earlier days in it, which is
+    // the whole subject of the backfill cases below.
     task = await models.AssignedTask.create({
       menteeId: mentee.id, mentorId: mentor.id, status: 'assigned',
-      assignedAt: new Date(), dueDate: new Date(Date.now() + 3 * 86400000),
+      assignedAt: new Date(Date.now() - 7 * 86400000),
+      dueDate: new Date(Date.now() + 3 * 86400000),
     }, { validate: false });
   });
 
@@ -70,6 +73,67 @@ describe('task progress log', () => {
   it('refuses progress on a closed task', async () => {
     await task.update({ status: 'completed' });
     await expect(svc.log(mentee.id, task.id, { note: 'late note' })).rejects.toThrow(/closed/i);
+  });
+
+  // ── filling in a day you missed, until the mentor has it ──────────────────
+  it('lets a mentee write a day they missed', async () => {
+    const tuesday = shift(todayKey(), -3);
+    const entry = await svc.log(mentee.id, task.id, {
+      dateKey: tuesday, note: 'forgot to write this at the time',
+    });
+    expect(entry.dateKey).toBe(tuesday);
+  });
+
+  it('marks a backfilled day as added later, and a same-day one as not', async () => {
+    await svc.log(mentee.id, task.id, { note: 'written today' });
+    await svc.log(mentee.id, task.id, { dateKey: shift(todayKey(), -2), note: 'written late' });
+
+    const { days } = await svc.listForTask(task.id, { menteeId: mentee.id });
+    const byKey = Object.fromEntries(days.filter((d) => d.entry).map((d) => [d.dateKey, d.entry]));
+    expect(byKey[todayKey()].addedLate).toBe(false);
+    expect(byKey[shift(todayKey(), -2)].addedLate).toBe(true);
+  });
+
+  /**
+   * The reason the daily log stopped taking a date from the client. Backfilling
+   * the task record is honest; backfilling "I showed up" is not.
+   */
+  it('does not let a backfilled day feed the streak', async () => {
+    await svc.log(mentee.id, task.id, { dateKey: shift(todayKey(), -4), note: 'catching up' });
+
+    await expect(models.DailyLogEntry.count({ where: { menteeId: mentee.id } })).resolves.toBe(0);
+    const profile = await models.MenteeProfile.findOne({ where: { userId: mentee.id } });
+    expect(Number(profile?.currentStreakDays || 0)).toBe(0);
+  });
+
+  it('cannot write a day that has not happened', async () => {
+    await expect(svc.log(mentee.id, task.id, { dateKey: shift(todayKey(), 1), note: 'tomorrow' }))
+      .rejects.toThrow(/has not happened/i);
+  });
+
+  it('cannot write a day before the task existed', async () => {
+    await expect(svc.log(mentee.id, task.id, { dateKey: shift(todayKey(), -20), note: 'long before' }))
+      .rejects.toThrow(/before this task started/i);
+  });
+
+  it('freezes the whole log once the mentor has it', async () => {
+    const yesterday = shift(todayKey(), -1);
+    await task.update({ status: 'submitted' });
+    await expect(svc.log(mentee.id, task.id, { dateKey: yesterday, note: 'tidying up' }))
+      .rejects.toThrow(/mentor has this now/i);
+    await expect(svc.log(mentee.id, task.id, { note: 'and today too' }))
+      .rejects.toThrow(/mentor has this now/i);
+  });
+
+  it('says whether the log is still open', async () => {
+    const open = await svc.listForTask(task.id, { menteeId: mentee.id });
+    expect(open.canLog).toBe(true);
+    expect(open.closedBecause).toBeNull();
+
+    await task.update({ status: 'submitted' });
+    const shut = await svc.listForTask(task.id, { menteeId: mentee.id });
+    expect(shut.canLog).toBe(false);
+    expect(shut.closedBecause).toMatch(/mentor has this now/i);
   });
 
   // ── the streak connection, the reason this lives on the task ───────────────
@@ -141,37 +205,38 @@ describe('task progress log', () => {
     await expect(svc.listForMentor(otherMentor, task.id)).rejects.toThrow(/do not mentor/i);
   });
 
-  // ── today is editable, yesterday is history ───────────────────────────────
+  // ── removing, on the same line as writing ─────────────────────────────────
   it('lets a mentee remove today', async () => {
     await svc.log(mentee.id, task.id, { note: 'oops' });
     await expect(svc.remove(mentee.id, task.id, todayKey())).resolves.toMatchObject({ removed: true });
     await expect(models.TaskProgressEntry.count({ where: { assignedTaskId: task.id } })).resolves.toBe(0);
   });
 
-  /**
-   * This used to stay open for 48 hours, which meant a mentee could delete the
-   * day before last on the morning of a review. A record a mentor reads is
-   * only worth reading if nobody can tidy it first.
-   */
-  it('closes yesterday, not only the distant past', async () => {
+  it('lets a mentee take back an earlier day while the task is theirs', async () => {
     const yesterday = shift(todayKey(), -1);
     await models.TaskProgressEntry.create({
       assignedTaskId: task.id, menteeId: mentee.id, dateKey: yesterday, note: 'what I did',
     });
-    await expect(svc.remove(mentee.id, task.id, yesterday)).rejects.toThrow(/closed/i);
+    await expect(svc.remove(mentee.id, task.id, yesterday)).resolves.toMatchObject({ removed: true });
+    await expect(models.TaskProgressEntry.count({ where: { assignedTaskId: task.id } })).resolves.toBe(0);
+  });
+
+  /**
+   * The case that started all this: a mentee deleting the day before last on
+   * the morning of the review. The handover is what stops it, not the calendar.
+   */
+  it('refuses to remove anything once the mentor has it', async () => {
+    const yesterday = shift(todayKey(), -1);
+    await models.TaskProgressEntry.create({
+      assignedTaskId: task.id, menteeId: mentee.id, dateKey: yesterday, note: 'what I did',
+    });
+    await task.update({ status: 'submitted' });
+    await expect(svc.remove(mentee.id, task.id, yesterday)).rejects.toThrow(/mentor has this now/i);
     await expect(models.TaskProgressEntry.count({ where: { assignedTaskId: task.id } })).resolves.toBe(1);
   });
 
-  it('freezes a day well in the past', async () => {
-    const old = shift(todayKey(), -5);
-    await models.TaskProgressEntry.create({
-      assignedTaskId: task.id, menteeId: mentee.id, dateKey: old, note: 'ancient history',
-    });
-    await expect(svc.remove(mentee.id, task.id, old)).rejects.toThrow(/closed/i);
-  });
-
-  /** The write path never took a date, and now neither does the daily log. */
-  it('writes today whatever else is going on', async () => {
+  /** No date still means today, which is what almost every save sends. */
+  it('writes today when no day is named', async () => {
     const entry = await svc.log(mentee.id, task.id, { note: 'today only' });
     expect(entry.dateKey).toBe(todayKey());
   });

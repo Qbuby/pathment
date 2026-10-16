@@ -29,7 +29,12 @@ import { RecurringRitualsCard } from "@/components/mentee/RecurringRitualsCard";
 import { PlanStripCard } from "@/components/mentor/PlanStripCard";
 import { AnnouncementsCard } from "@/components/shared/AnnouncementsCard";
 import { ClanWorkspaceNotice } from "@/components/shared/ClanWorkspaceNotice";
-import { useClan } from "@/lib/context/ClanContext";
+import { TaskDrawer } from "@/components/mentee/TaskDrawer";
+import {
+  SubmitTaskDrawer,
+  type SubmitTaskTarget,
+} from "@/components/mentee/SubmitTaskDrawer";
+import { useClan, isHistoricalCohortClan } from "@/lib/context/ClanContext";
 
 function WhatsAppGroupCard({
   enrollment,
@@ -131,6 +136,20 @@ function MenteeDashboardInner() {
   const { user } = useAuth();
   const searchParams = useSearchParams();
   const { menteeClans, menteeActiveClanId } = useClan();
+  const historical = isHistoricalCohortClan(
+    menteeClans.find((c) => c.id === menteeActiveClanId),
+  );
+  /**
+   * The task being read, in a drawer over this page.
+   *
+   * Every other mentee surface opens a task this way — the list, the day
+   * planner — and this one sent you to a full page instead, so clicking the
+   * same task from two places did two different things. `/mentee/tasks/:id`
+   * is still the address and still what notifications link to; this is the
+   * shortcut from here, as it is everywhere else.
+   */
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [submitTarget, setSubmitTarget] = useState<SubmitTaskTarget | null>(null);
   // Standing has no program enrollment — hide cohort enrollment chrome so
   // completed-clan history never appears while this clan is selected.
   const standing =
@@ -172,7 +191,40 @@ function MenteeDashboardInner() {
     refetch: refetchActivity,
   } = useMyActivity();
 
-  const { tasks: allTasks, loading: tasksLoading } = useMenteeTasks();
+  const {
+    tasks: allTasks,
+    loading: tasksLoading,
+    handleStartTask,
+    fetchTasks,
+  } = useMenteeTasks();
+
+  /** Hand a dashboard row to the submit drawer in the shape it expects. */
+  const askToSubmit = (task: {
+    id: string;
+    title?: string;
+    status?: string;
+    roadmapTask?: {
+      title?: string;
+      deliverable?: string | null;
+      acceptanceCriteria?: string[];
+    };
+  }) => setSubmitTarget({
+    id: task.id,
+    title: task.roadmapTask?.title || task.title || "Task",
+    status: task.status,
+    deliverable: task.roadmapTask?.deliverable,
+    acceptanceCriteria: task.roadmapTask?.acceptanceCriteria || [],
+  });
+
+  /**
+   * Still an anchor, so ⌘-click and "open in new tab" reach the real page; a
+   * plain click opens the drawer instead of navigating.
+   */
+  const openInDrawer = (taskId: string) => (e: React.MouseEvent) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    setOpenTaskId(taskId);
+  };
 
   // This Week: surface the single most important next action.
   const now = Date.now();
@@ -287,6 +339,7 @@ function MenteeDashboardInner() {
         {heroTask && (
           <Link
             href={`/mentee/tasks/${heroTask.id}`}
+            onClick={openInDrawer(heroTask.id)}
             className="mentee-next-task block transition-colors"
           >
             <div className="flex items-center gap-2 mb-2">
@@ -382,6 +435,7 @@ function MenteeDashboardInner() {
               <Link
                 key={t.id}
                 href={`/mentee/tasks/${t.id}`}
+                onClick={openInDrawer(t.id)}
                 className="flex items-center gap-3 px-6 py-3.5 hover:bg-slate-50 transition-colors"
               >
                 {t.status === "revision_needed" ? (
@@ -802,6 +856,28 @@ function MenteeDashboardInner() {
           )}
         </>
       )}
+
+      <TaskDrawer
+        taskId={openTaskId}
+        open={!!openTaskId}
+        onClose={() => setOpenTaskId(null)}
+        readOnly={historical}
+        onStart={async (id) => { await handleStartTask(id); }}
+        onSubmit={(task) => {
+          // One drawer at a time: hand off to the submit form rather than
+          // stacking a second panel on top of this one.
+          setOpenTaskId(null);
+          askToSubmit(task);
+        }}
+      />
+
+      <SubmitTaskDrawer
+        open={!!submitTarget}
+        task={submitTarget}
+        onClose={() => setSubmitTarget(null)}
+        onSubmitted={fetchTasks}
+        readOnly={historical}
+      />
 
       {/* Anonymous mentor feedback drawer */}
       <MentorFeedbackDrawer
