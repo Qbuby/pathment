@@ -104,7 +104,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 29 | Admin access logs must be human-readable, with pagination and search. | ✅ | `2419ed2e` |  |
 | 30 | Extract reusable components (drawers, profile pictures, …) — reduce duplication. | ✅ | `d2acc534` | 10 hand-rolled drawers and 9 avatar forks consolidated onto the shared components; both held by guard tests. |
 | 31 | Clan review "no mentee" empty state needs to be better. | ✅ | `58a3a2e8` |  |
-| 32 | A standing-clan request should carry the mentor's active mentees (with their work) across automatically. | ✅ | `95896644` | Verified on the demo data, then rolled back. |
+| 32 | A standing-clan request should carry the mentor's active mentees (with their work) across automatically. | ✅ | `95896644` + `920b1522` | First pass carried the roster and left the work behind a button; `920b1522` carries the unfinished work too. |
 | 33 | Blockers/plan shows "N tasks" that cannot be seen; wrong tasks; must be clan-scoped for mentor and mentee. Work-history drawer reports 0 tasks while the profile shows 24. | ✅ | `4f8e73cf` | Migration 132 pending on production. |
 
 ## Run log
@@ -1793,3 +1793,52 @@ No console errors. Screenshot captured.
 One thing I could not put back: restoring the fixture removed a single
 `cohort_review_entries` row for that mentee on the dev database. It is demo attendance
 data and nothing depends on it, but it is a change I made and did not fully reverse.
+
+
+## Issue 32, second pass — the work comes too
+
+**What the first pass got wrong.** It carried the roster and left the work behind a
+button, and the reasoning it gave was about not re-pointing the source rows: that would
+empty the finished programme's record and break the certificate read off it live. That
+part is true and still holds. But it answered a question nobody asked. *Completed* work
+staying where it was earned does not mean *unfinished* work should stay there too — and
+the result was a mentee arriving in their continuation with an empty plan and no way to
+finish what they had already started.
+
+**What it does now.** Approving a standing-clan request carries every unfinished item
+across as live work: `assigned` and `in_progress` tasks become real assignments in the
+new clan, visible to the mentor without pressing anything and submittable by the mentee.
+Completed work does not move.
+
+| | source cohort clan | new standing clan |
+| --- | --- | --- |
+| completed work | **stays** — the programme record and its certificate read it live | not copied |
+| assigned / in progress | source row left as history | **carried as a live assignment** |
+
+**The gate that was holding work back** was "only work whose mentor came too". That is
+the right rule for a mentee added one at a time: handing somebody's half-finished
+roadmap to a mentor who has not read the submissions behind it is a judgement, and a
+person should make it. It is unchanged there. It is the wrong rule for an approval,
+where the whole clan is continuing and nothing is changing hands.
+
+Worth knowing why this was easy to miss: approval already carries the source clan's
+whole mentor team across, so a *serving* co-mentor is never a stranger to the new clan.
+The only way to be genuinely absent is to have **left** the clan — a mentor who taught
+for a while and moved on. Their open work was the work that silently went missing, and
+it is now carried and **re-pointed at the new clan's lead**, because keeping it on a
+mentor who is not in the clan lets the mentee submit something nobody present can
+review. Not at the actor — the actor is the admin who clicked Approve.
+
+**Tests.** Six new ones on the approval path, which had none of its own; every existing
+test in that file covered the ad-hoc join. They cover the lead's own work carrying, the
+departed mentor's work carrying and where it lands, completed work staying put, and the
+ad-hoc rule still holding for a single hand-added mentee. The departed-mentor case is
+confirmed to fail on the old code.
+
+One of them **submits the carried task for real** rather than inspecting its shape. That
+is the check worth having: the source programme is closed and carried rows are created
+with no enrolment, and either of those is the sort of thing a writability check keys on.
+Carried work that cannot be submitted is the same dead end as work that never came. It
+submits, and lands in the lead's queue.
+
+14 suites across `tests/clans` and `tests/admin` pass — 167 tests.
