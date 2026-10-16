@@ -26,7 +26,7 @@ import { ProgressBar, StatusBadge } from "@/components/admin/ui";
 import { MentorFeedbackDrawer } from "@/components/mentee/MentorFeedbackDrawer";
 import { ActivityCard } from "@/components/shared/ActivityCard";
 import { RecurringRitualsCard } from "@/components/mentee/RecurringRitualsCard";
-import { DayPlanner } from "@/components/mentee/DayPlanner";
+import { PlanStripCard } from "@/components/mentor/PlanStripCard";
 import { AnnouncementsCard } from "@/components/shared/AnnouncementsCard";
 import { ClanWorkspaceNotice } from "@/components/shared/ClanWorkspaceNotice";
 import { useClan } from "@/lib/context/ClanContext";
@@ -341,52 +341,25 @@ function MenteeDashboardInner() {
             </Link>
           </div>
         )}
-        <section className="rounded-3xl border border-border bg-card p-6 space-y-2">
-          <h2 className="font-semibold mb-3">Your support, one click away</h2>
-          {[
-            {
-              href: "/mentee/daily-log",
-              title: "Log today’s progress",
-              detail: "Capture what you learned.",
-              icon: ListTodo,
-            },
-            {
-              href: "/mentee/meetings",
-              title: "Meet your mentor",
-              detail: "Find a time to talk it through.",
-              icon: MessageSquareHeart,
-            },
-            {
-              href: "/mentee/blockers",
-              title: "Get unstuck",
-              detail: "Share what is slowing you down.",
-              icon: Flag,
-            },
-          ].map(({ href, title, detail, icon: Icon }) => (
-            <Link
-              key={href}
-              href={href}
-              className="flex gap-3 items-center rounded-xl p-3 hover:bg-muted transition-colors"
-            >
-              <Icon className="h-5 w-5 text-brand-600 shrink-0" />
-              <span className="flex-1">
-                <span className="block text-sm font-medium">{title}</span>
-                <span className="text-xs text-muted-foreground">{detail}</span>
-              </span>
-              <ArrowRight className="h-4 w-4 text-muted-foreground" />
-            </Link>
-          ))}
-        </section>
+
       </div>
+
       {/*
-        The day, as blocks you can put work in.
-        
-        It lives on This Week rather than behind a new nav item because this is
-        already the screen a mentee opens first — a planner one click away is a
-        planner that gets used, and a planner behind a menu is one that does not.
+          Today as a line, with the planner one click behind it.
+
+          The whole DayPlanner was rendered inline here — the blocks, the
+          "work to plan" tray with a row and two controls per task, the drag
+          targets — so on a mentee with five unplanned items the dashboard was
+          mostly the planner, and the work queue underneath it was below the
+          fold. Planning a day is a thing you sit down to do; a dashboard
+          should say whether it is done.
+
+          `PlanStripCard` is the mentor's existing strip-plus-drawer: one row
+          saying what today looks like, the full planner in a drawer when you
+          open it. Same component, same behaviour, one screen lighter.
       */}
       <section aria-label="Your plan for today" className="mt-6">
-        <DayPlanner menteeId="me" clanId={menteeActiveClanId || null} />
+        <PlanStripCard menteeId="me" clanId={menteeActiveClanId || null} compact own />
       </section>
 
       {/* Recurring rituals (from your schedule) */}
@@ -444,6 +417,46 @@ function MenteeDashboardInner() {
         </summary>
         <div className="mt-5">
           {" "}
+      {/* Reference, not today's work.
+          These three links were directly under the hero, above the day and
+          above the queue — three things a mentee might do, in front of the
+          two they came to do. Below them now. */}
+      <section className="rounded-3xl border border-border bg-card p-6 space-y-2">
+        <h2 className="font-semibold mb-3">Your support, one click away</h2>
+        {[
+          {
+            href: "/mentee/daily-log",
+            title: "Log today’s progress",
+            detail: "Capture what you learned.",
+            icon: ListTodo,
+          },
+          {
+            href: "/mentee/meetings",
+            title: "Meet your mentor",
+            detail: "Find a time to talk it through.",
+            icon: MessageSquareHeart,
+          },
+          {
+            href: "/mentee/blockers",
+            title: "Get unstuck",
+            detail: "Share what is slowing you down.",
+            icon: Flag,
+          },
+        ].map(({ href, title, detail, icon: Icon }) => (
+          <Link
+            key={href}
+            href={href}
+            className="flex gap-3 items-center rounded-xl p-3 hover:bg-muted transition-colors"
+          >
+            <Icon className="h-5 w-5 text-brand-600 shrink-0" />
+            <span className="flex-1">
+              <span className="block text-sm font-medium">{title}</span>
+              <span className="text-xs text-muted-foreground">{detail}</span>
+            </span>
+            <ArrowRight className="h-4 w-4 text-muted-foreground" />
+          </Link>
+        ))}
+      </section>
           {/* Activity self-view */}
           <ActivityCard
             summary={actSummary}

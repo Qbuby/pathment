@@ -50,7 +50,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 7 | Proper country/province/city pickers wherever location is captured, with timezone suggested from the country. | ✅ | `d0a13e8e` | **Needs migration 131 on prod.** API + browser verified. |
 | 8 | Mentee "My progress" page is weak — improve or remove. | ✅ | `998861d3` | Empty-state pass, not a redesign. |
 | 9 | Library (admin → mentor → mentee) redesign. | ⬜ | | |
-| 10 | Mentee dashboard: re-prioritise top vs bottom; the daily/planner block does not belong there. | ⬜ | | |
+| 10 | Mentee dashboard: re-prioritise top vs bottom; the daily/planner block does not belong there. | ✅ | | Re-prioritised + planner moved behind a strip; not a ground-up redesign. |
 | 11 | Notification / "What's new" drawers do not open smoothly (the Feedback drawer does). | ✅ | | Notifications had no animation at all; both now use the shared Drawer. |
 | 12 | Paginate (or infinite-scroll) Points & badges — performance leaderboard and earned badges. | ✅ | | Also: a mentee outside the top 10 could not see themselves. |
 | 13 | Surface paused mentees in clan review on the selected mentee's profile card. | ✅ | | Also fixed a 403 on every review load. |
@@ -1361,3 +1361,39 @@ errors. Screenshot captured.
 blocks, and drag-to-create, is the next step and a much larger piece than this — what is
 here answers the specific complaint (no calendar, can't see the day you are booking into)
 without pretending to be that.
+
+### Issue 10 — the mentee dashboard, and the planner living in it
+
+**What was wrong.** The whole `DayPlanner` was rendered inline on the dashboard — the
+blocks, the "work to plan" tray with a row and two controls per task, the drag targets.
+On a mentee with five unplanned items (the report's screenshot) **the dashboard was
+mostly the planner**, and the work queue underneath it was below the fold. Planning a day
+is something you sit down to do; a dashboard should tell you whether it is done.
+
+Above it, three "your support" links — log progress, meet your mentor, get unstuck — sat
+directly under the hero, so three things a mentee *might* do came before the two they
+opened the page for.
+
+**Fix.** The planner becomes a one-line strip that opens the full planner in a drawer —
+`PlanStripCard`, the component the mentor side already uses for exactly this. Same
+behaviour, one screen lighter, and no new pattern invented. The support links move below
+the work queue.
+
+`PlanStripCard` gained an `own` flag, which only changes the words: a mentee on their own
+dashboard was being shown **"Their day"**.
+
+Top to bottom the page now reads: the one next action → today, in a line → your work
+queue → support → programmes and history.
+
+**Files.** `client-interface/app/mentee/dashboard/page.tsx`,
+`client-interface/components/mentor/PlanStripCard.tsx`.
+
+**Tests run.** `tsc` clean; client guard suite 112 pass.
+
+**Verified in the browser** as a seeded mentee: the strip reads *"Today's plan · No blocks
+yet — give the day a shape · Set up"*, and opening it gives the full planner in a drawer
+titled **"Your day"**. No console errors.
+
+**Scope, stated.** This is the re-prioritisation and the planner move the report asks for,
+not a ground-up redesign of the page. The hero, the work queue and the enrolment cards
+keep their current shape.

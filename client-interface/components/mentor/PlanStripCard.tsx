@@ -25,12 +25,18 @@ import { DayPlanner } from '@/components/mentee/DayPlanner';
  * stepping-through flow. The strip is the signal; the planner is the work.
  */
 export function PlanStripCard({
-  menteeId, menteeName, clanId, readOnly = false, compact = false,
+  menteeId, menteeName, clanId, readOnly = false, compact = false, own = false,
 }: {
   menteeId: string;
   menteeName?: string;
   clanId?: string | null;
   readOnly?: boolean;
+  /**
+   * The viewer is the mentee. Only changes the words: "Your day" rather than
+   * "Their day", which is what a mentee saw on their own dashboard when this
+   * component was reused there.
+   */
+  own?: boolean;
   /**
    * One row instead of a card.
    *
@@ -63,7 +69,7 @@ export function PlanStripCard({
           type="button"
           onClick={() => !readOnly && setOpen(true)}
           disabled={readOnly}
-          aria-label={`Open ${menteeName ? `${menteeName}\u2019s` : 'their'} plan for today`}
+          aria-label={`Open ${own ? 'your' : menteeName ? `${menteeName}\u2019s` : 'their'} plan for today`}
           className="flex w-full items-center gap-2.5 rounded-2xl border border-slate-200 bg-card px-4 py-2.5 text-left transition-colors hover:border-brand-300 disabled:cursor-default disabled:hover:border-slate-200 dark:border-slate-800"
         >
           <CalendarClock className="h-4 w-4 shrink-0 text-brand-600" aria-hidden />
@@ -85,7 +91,7 @@ export function PlanStripCard({
           open={open}
           onClose={() => { setOpen(false); void refetch(); }}
           width="lg"
-          title={menteeName ? `${menteeName}\u2019s day` : 'Their day'}
+          title={own ? 'Your day' : menteeName ? `${menteeName}\u2019s day` : 'Their day'}
           subtitle="Add work to a block, make a new one, or lock one so it stays put"
         >
           {open && <DayPlanner menteeId={menteeId} menteeName={menteeName} clanId={clanId} onChanged={() => void refetch()} />}
@@ -134,7 +140,7 @@ export function PlanStripCard({
                     type="button"
                     onClick={() => !readOnly && setOpen(true)}
                     disabled={readOnly}
-                    title={readOnly ? undefined : `Open ${menteeName ? `${menteeName}’s` : 'their'} plan at ${b.label}`}
+                    title={readOnly ? undefined : `Open ${own ? 'your' : menteeName ? `${menteeName}’s` : 'their'} plan at ${b.label}`}
                     className={`flex items-center gap-2 rounded-xl border px-2.5 py-1.5 text-xs transition-colors ${
                       readOnly ? 'cursor-default' : 'hover:border-brand-400'
                     } ${
@@ -179,7 +185,7 @@ export function PlanStripCard({
         open={open}
         onClose={() => { setOpen(false); void refetch(); }}
         width="lg"
-        title={menteeName ? `${menteeName}’s day` : 'Their day'}
+        title={own ? 'Your day' : menteeName ? `${menteeName}’s day` : 'Their day'}
         subtitle="Add work to a block, make a new one, or lock one so it stays put"
       >
         {open && <DayPlanner menteeId={menteeId} menteeName={menteeName} clanId={clanId} onChanged={() => void refetch()} />}
