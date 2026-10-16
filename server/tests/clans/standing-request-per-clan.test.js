@@ -711,3 +711,178 @@ describe('work carries over automatically on join', () => {
     });
   });
 });
+
+/**
+ * What an APPROVAL carries, as opposed to an ad-hoc join.
+ *
+ * Every test above adds one mentee by hand. Approval is the other door and
+ * the one the issue is about: a mentor asks to continue their clan, an admin
+ * says yes, and the whole roster arrives. The question nobody had written
+ * down is what happens to the work those people were in the middle of.
+ */
+describe('approving a standing-clan request brings the unfinished work with it', () => {
+  const { models: m } = require('../../src/db');
+  const { Op } = require('sequelize');
+  const { createRoadmap, createRoadmapTask, createMentee } = require('../helpers/seed');
+  let admin4, lead4, stranger4, menteeA, program4, cohort4;
+
+  const seedWorkBy = async (mentor, mentee, label) => {
+    const roadmap = await createRoadmap({ programId: program4.id, createdBy: admin4.id, name: `${label} roadmap` });
+    for (const [order, status] of [[1, 'completed'], [2, 'in_progress'], [3, 'assigned']]) {
+      const step = await createRoadmapTask({ roadmapId: roadmap.id, title: `${label} ${order}`, taskOrder: order });
+      await m.AssignedTask.create({
+        organizationId: cohort4.organizationId, clanId: cohort4.id, menteeId: mentee.id,
+        mentorId: mentor.id, roadmapTaskId: step.id, status,
+        assignedAt: new Date(), completedAt: status === 'completed' ? new Date() : null,
+      });
+    }
+    return roadmap;
+  };
+
+  beforeEach(async () => {
+    await cleanDb();
+    admin4 = await createAdmin({ email: 'a4@test.com' });
+    lead4 = await createMentor({ email: 'l4@test.com' });
+    stranger4 = await createMentor({ email: 's4@test.com' });
+    menteeA = await createMentee({ email: 'm4a@test.com' });
+
+    program4 = await createProgram({ createdBy: admin4.id });
+    cohort4 = await m.Clan.create({
+      programId: program4.id, name: 'Cohort D', kind: 'cohort',
+      leadMentorId: lead4.id, createdBy: admin4.id,
+    });
+    await clanService.addMember(cohort4.id, { userId: lead4.id, role: 'lead_mentor' });
+    await clanService.addMember(cohort4.id, { userId: stranger4.id, role: 'co_mentor' });
+    await clanService.addMember(cohort4.id, { userId: menteeA.id, role: 'mentee' });
+    await program4.update({ status: 'completed', closedAt: new Date() });
+  });
+
+  const approve = async () => {
+    const request = await standingClanService.request({
+      sourceClanId: cohort4.id, name: 'Cohort D · Standing', reason: 'carry on',
+    }, lead4);
+    return standingClanService.decide(request.id, 'approved', 'yes', admin4);
+  };
+
+  const carried = (clanId, menteeId) => m.AssignedTask.findAll({
+    where: { clanId, menteeId, continuedFromTaskId: { [Op.ne]: null } },
+    include: [{ model: m.RoadmapTask, as: 'roadmapTask', attributes: ['title'] }],
+  });
+
+  it('carries work the approving mentor set', async () => {
+    await seedWorkBy(lead4, menteeA, 'Lead');
+    const saved = await approve();
+
+    const rows = await carried(saved.createdClanId, menteeA.id);
+    expect(rows.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * The case the issue is actually about.
+   *
+   * Work set by a mentor who is NOT on the new team was held back for a
+   * manual button — a deliberate rule for somebody added one at a time, where
+   * handing a half-finished roadmap to a mentor who has not read the
+   * submissions is a judgement. On an approval it is the wrong rule: the whole
+   * clan is continuing, nothing is changing hands, and the mentee would arrive
+   * with an empty plan and no way to finish what they had started.
+   *
+   * The mentor here has LEFT the source clan, which is the only way to be
+   * genuinely absent from the new team — approval carries the source clan's
+   * whole mentor team across, so a serving co-mentor is never a stranger. A
+   * mentor who taught for a while and moved on, leaving open work behind, is
+   * the realistic version of this.
+   */
+  it('carries work whose mentor has left, re-pointed at the lead', async () => {
+    await seedWorkBy(stranger4, menteeA, 'Departed');
+    await m.ClanMembership.update(
+      { status: 'removed' },
+      { where: { clanId: cohort4.id, userId: stranger4.id } },
+    );
+
+    const saved = await approve();
+
+    const rows = await carried(saved.createdClanId, menteeA.id);
+    expect(rows.length).toBeGreaterThan(0);
+    // Keeping the departed mentor would leave the mentee able to submit work
+    // that nobody in the clan can review.
+    expect(rows.every((r) => r.mentorId === lead4.id)).toBe(true);
+    expect(rows.some((r) => r.mentorId === stranger4.id)).toBe(false);
+  });
+
+  /**
+   * ...and the rule it does NOT change: one mentee added by hand still only
+   * gets the work whose mentor came with them.
+   */
+  it('still holds a departed mentor\'s work when one mentee is added by hand', async () => {
+    await seedWorkBy(stranger4, menteeA, 'Departed');
+    await m.ClanMembership.update(
+      { status: 'removed' },
+      { where: { clanId: cohort4.id, userId: stranger4.id } },
+    );
+    const standing = await m.Clan.create({
+      programId: program4.id, name: 'Hand-made standing', kind: 'standing',
+      leadMentorId: lead4.id, createdBy: admin4.id,
+    });
+    await clanService.addMember(standing.id, { userId: lead4.id, role: 'lead_mentor' });
+
+    await standingClanService.addMenteesToStandingClan(standing.id, [menteeA.id], lead4);
+
+    expect(await carried(standing.id, menteeA.id)).toHaveLength(0);
+  });
+
+  it('leaves the completed work where it was earned', async () => {
+    await seedWorkBy(lead4, menteeA, 'Lead');
+    const saved = await approve();
+
+    // The certificate for the finished programme reads these rows live.
+    const stillThere = await m.AssignedTask.count({
+      where: { clanId: cohort4.id, menteeId: menteeA.id, status: 'completed' },
+    });
+    expect(stillThere).toBe(1);
+    const movedCompleted = await m.AssignedTask.count({
+      where: { clanId: saved.createdClanId, menteeId: menteeA.id, status: 'completed' },
+    });
+    expect(movedCompleted).toBe(0);
+  });
+
+  it('gives the mentee something they can actually submit', async () => {
+    await seedWorkBy(lead4, menteeA, 'Lead');
+    const saved = await approve();
+
+    const rows = await carried(saved.createdClanId, menteeA.id);
+    // Carried work must be live work in the new clan, not a read-only trace:
+    // open status, stamped with this clan, and owned by this mentee.
+    expect(rows.every((r) => ['assigned', 'in_progress'].includes(r.status))).toBe(true);
+    expect(rows.every((r) => r.clanId === saved.createdClanId)).toBe(true);
+    expect(rows.every((r) => r.menteeId === menteeA.id)).toBe(true);
+  });
+
+  /**
+   * And submitting it actually works.
+   *
+   * The structural check above would pass on a task the mentee can see and
+   * cannot touch, which is the failure worth guarding: the source programme
+   * is CLOSED, carried rows are created with no enrolment, and either of
+   * those is the sort of thing a writability check keys on. Carried work that
+   * cannot be submitted is the same dead end as work that never came.
+   */
+  it('and the mentee can submit it, and the mentor can see it waiting', async () => {
+    await seedWorkBy(lead4, menteeA, 'Lead');
+    const saved = await approve();
+    const [task] = await carried(saved.createdClanId, menteeA.id);
+    expect(task).toBeTruthy();
+
+    const taskService = require('../../src/services/taskService');
+    await taskService.submitTask(task.id, menteeA.id, {
+      submissionText: 'Finished this in the continuation',
+      submissionUrls: ['https://github.com/example/pr/1'],
+    });
+
+    const after = await m.AssignedTask.findByPk(task.id);
+    expect(after.status).toBe('submitted');
+    expect(after.clanId).toBe(saved.createdClanId);
+    // It has to land in a queue somebody here owns, or nobody reviews it.
+    expect([lead4.id, admin4.id]).toContain(after.mentorId);
+  });
+});

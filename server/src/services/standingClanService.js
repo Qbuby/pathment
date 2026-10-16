@@ -286,11 +286,17 @@ class StandingClanService {
    * deciding whether a continuation is the way to bring them back is a
    * judgement for their mentor, who can add them by name. A removed one left.
    *
-   * Their work is NOT re-pointed at the new clan — `priorRecord` explains why
-   * that would be wrong — the ordinary join carry runs instead, bringing
-   * forward unfinished work whose mentor came too. It is the same path as the
-   * manual "add mentees" button, so there is one definition of what joining a
-   * standing clan does.
+   * What happens to their work. The source rows are NOT re-pointed —
+   * `priorRecord` explains why that would empty the finished programme's
+   * record and break the certificate read off it. Instead the UNFINISHED work
+   * is continued into the new clan as live assignments the mentee can submit
+   * and the mentor can see without pressing anything: completed work stays
+   * where it was earned, work in progress comes with the person.
+   *
+   * Unlike an ordinary join, an approval carries work whose mentor did not
+   * come across as well, re-pointed at this clan's lead. The whole clan is
+   * continuing; leaving somebody's half-finished roadmap behind would hand
+   * them an empty plan on their first day in it.
    *
    * One mentee at a time and never throwing: the batch method is all-or-
    * nothing by design, which is right when a mentor picked the names and wrong
@@ -308,7 +314,10 @@ class StandingClanService {
       });
       for (const { userId } of members) {
         try {
-          await this.addMenteesToStandingClan(clanId, [userId], actor);
+          // An approval carries the work too, including the work whose mentor
+          // stayed behind — see `_autoContinueFor`. This is the difference
+          // between a whole clan continuing and one mentee being added to it.
+          await this.addMenteesToStandingClan(clanId, [userId], actor, { carryAll: true });
           result.moved += 1;
         } catch (error) {
           result.skipped.push({ menteeId: userId, reason: error.message });
@@ -684,8 +693,16 @@ class StandingClanService {
    * the same work following the mentee, and "work you assigned follows you" is
    * already how `authzService.canActOnTask` reads a task's owner. The manual
    * button leaves it off, because there a mentor really is assigning it.
+   *
+   * `mentorIdOverride` names the mentor instead. It exists for the one case
+   * where neither of the above is right: an approval carrying work whose
+   * original mentor did not come across. Keeping them would leave the task
+   * owned by somebody outside the clan, so the mentee could submit it and
+   * nobody here could review it; using the actor would stamp the admin who
+   * clicked Approve. It goes to this clan's lead, who is the person now
+   * responsible for the mentee.
    */
-  async continueWork(clanId, menteeId, input, actor, { preserveSourceMentor = false } = {}) {
+  async continueWork(clanId, menteeId, input, actor, { preserveSourceMentor = false, mentorIdOverride = null } = {}) {
     const clan = await this._assertContinuationAccess(clanId, menteeId, actor);
     const preview = await this.continuationPreview(clanId, menteeId, actor);
     const requestedRoadmapIds = [...new Set(Array.isArray(input.roadmapIds) ? input.roadmapIds : [])];
@@ -815,7 +832,7 @@ class StandingClanService {
              * carried step was stamped with whoever did the adding, which is
              * the one thing the automatic carry is meant not to do.
              */
-            mentorId: (preserveSourceMentor && (source?.mentorId || row.sourceMentorId)) || actor.id,
+            mentorId: mentorIdOverride || (preserveSourceMentor && (source?.mentorId || row.sourceMentorId)) || actor.id,
             enrollmentId: null,
             roadmapTaskId: row.resumeStep.stepId,
             continuedFromTaskId: source?.id || null,
@@ -888,7 +905,7 @@ class StandingClanService {
             organizationId: clan.organizationId,
             clanId,
             menteeId,
-            mentorId: (preserveSourceMentor && source.mentorId) || actor.id,
+            mentorId: mentorIdOverride || (preserveSourceMentor && source.mentorId) || actor.id,
             enrollmentId: null,
             roadmapTaskId: copiedTask.id,
             continuedFromTaskId: source.id,
@@ -1002,7 +1019,7 @@ class StandingClanService {
     return clan;
   }
 
-  async addMenteesToStandingClan(clanId, menteeIds, actor) {
+  async addMenteesToStandingClan(clanId, menteeIds, actor, { carryAll = false } = {}) {
     const clan = await models.Clan.findByPk(clanId);
     if (!clan) throw new NotFoundError('Clan not found');
     if (clan.kind !== 'standing') throw new ValidationError('This operation is only for standing clans');
@@ -1083,7 +1100,7 @@ class StandingClanService {
      * explains why the rest waits for a person.
      */
     if (clan.autoContinueOnJoin && joined.length) {
-      await Promise.all(joined.map((menteeId) => this.carryWorkOnJoin(clanId, menteeId, actor)));
+      await Promise.all(joined.map((menteeId) => this.carryWorkOnJoin(clanId, menteeId, actor, { carryAll })));
     }
     return rows;
   }
@@ -1100,13 +1117,13 @@ class StandingClanService {
    * Returns rather than throws, always: the caller has already committed the
    * membership and must not fail because of what happens here.
    */
-  async carryWorkOnJoin(clanId, menteeId, actor) {
+  async carryWorkOnJoin(clanId, menteeId, actor, { carryAll = false } = {}) {
     try {
       const clan = await models.Clan.findByPk(clanId);
       if (!clan || clan.kind !== 'standing' || !clan.autoContinueOnJoin) {
         return { menteeId, continued: 0, skipped: true };
       }
-      return this._autoContinueFor(clanId, menteeId, actor);
+      return this._autoContinueFor(clanId, menteeId, actor, { carryAll });
     } catch (error) {
       logger.warn(`[standingClan] could not carry work for ${menteeId} into ${clanId}: ${error.message}`);
       return { menteeId, error: error.message };
@@ -1133,7 +1150,7 @@ class StandingClanService {
    * carried is a smaller problem than an add that half-failed, and the mentor
    * can still press the button.
    */
-  async _autoContinueFor(clanId, menteeId, actor) {
+  async _autoContinueFor(clanId, menteeId, actor, { carryAll = false } = {}) {
     try {
       const [preview, team] = await Promise.all([
         this.continuationPreview(clanId, menteeId, actor),
@@ -1151,9 +1168,33 @@ class StandingClanService {
       const roadmapIds = roadmaps.map((row) => row.roadmapId).filter(Boolean);
       const taskIds = customTasks.map((row) => row.sourceTaskId).filter(Boolean);
 
-      const held = (preview.roadmaps || []).length - roadmaps.length
-        + (preview.customTasks || []).filter((row) => row.supported).length - customTasks.length;
-      if (!roadmapIds.length && !taskIds.length) {
+      /**
+       * On an approval, the work whose mentor stayed behind comes too.
+       *
+       * Holding it back is the right rule for somebody added one at a time:
+       * handing a half-finished roadmap to a mentor who has not read the
+       * submissions behind it is a judgement, and a person should make it.
+       * An approval is not that case. The whole clan is continuing, the
+       * mentor team moves across with it, and nothing is changing hands —
+       * so withholding leaves the mentee standing in their new clan with an
+       * empty plan and no way to finish what they had already started.
+       *
+       * It is re-pointed at this clan's lead rather than kept on a mentor who
+       * is not here, because otherwise the mentee can submit it and nobody in
+       * the clan can review it.
+       */
+      const strandedRoadmaps = carryAll
+        ? (preview.roadmaps || []).filter((row) => !sameMentor(row.sourceMentorId))
+        : [];
+      const strandedTasks = carryAll
+        ? (preview.customTasks || []).filter((row) => row.supported && !sameMentor(row.sourceMentorId))
+        : [];
+
+      const held = (preview.roadmaps || []).length - roadmaps.length - strandedRoadmaps.length
+        + (preview.customTasks || []).filter((row) => row.supported).length
+        - customTasks.length - strandedTasks.length;
+
+      if (!roadmapIds.length && !taskIds.length && !strandedRoadmaps.length && !strandedTasks.length) {
         if (held) {
           logger.info('[standingClan] left work for the manual button (different mentor)', {
             clanId, menteeId, held,
@@ -1162,13 +1203,31 @@ class StandingClanService {
         return { menteeId, continued: 0, held };
       }
 
-      const result = await this.continueWork(
-        clanId, menteeId, { roadmapIds, taskIds }, actor, { preserveSourceMentor: true },
-      );
+      let result = null;
+      if (roadmapIds.length || taskIds.length) {
+        result = await this.continueWork(
+          clanId, menteeId, { roadmapIds, taskIds }, actor, { preserveSourceMentor: true },
+        );
+      }
+      let adopted = null;
+      if (strandedRoadmaps.length || strandedTasks.length) {
+        adopted = await this.continueWork(
+          clanId, menteeId,
+          {
+            roadmapIds: strandedRoadmaps.map((row) => row.roadmapId).filter(Boolean),
+            taskIds: strandedTasks.map((row) => row.sourceTaskId).filter(Boolean),
+          },
+          actor,
+          { preserveSourceMentor: true, mentorIdOverride: team.leadId || actor.id },
+        );
+      }
       logger.info('[standingClan] carried work on join', {
-        clanId, menteeId, roadmaps: roadmapIds.length, customTasks: taskIds.length, held,
+        clanId, menteeId,
+        roadmaps: roadmapIds.length, customTasks: taskIds.length,
+        adoptedRoadmaps: strandedRoadmaps.length, adoptedTasks: strandedTasks.length,
+        held,
       });
-      return { menteeId, result, held };
+      return { menteeId, result, adopted, held };
     } catch (error) {
       logger.warn(`[standingClan] could not carry work for ${menteeId} into ${clanId}: ${error.message}`);
       return { menteeId, error: error.message };
