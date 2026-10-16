@@ -95,25 +95,6 @@ class CohortService {
     return [...new Set(memberships.map((m) => m.userId))];
   }
 
-  /**
-   * Mentees PAUSED in the clans this mentor runs.
-   *
-   * Deliberately its own read rather than a widening of `resolveMenteeIds`:
-   * that one feeds approvals, reports, reminders and the leaderboard, and a
-   * paused mentee belongs in none of them.
-   */
-  async pausedMenteeIdsFor(mentorId, clanId = null) {
-    const authzService = require('./authzService');
-    const mentored = await authzService.mentoredClanIds(mentorId);
-    const clanIds = clanId ? mentored.filter((id) => id === clanId) : mentored;
-    if (!clanIds.length) return [];
-    const rows = await models.ClanMembership.findAll({
-      where: { clanId: { [Op.in]: clanIds }, role: 'mentee', status: 'paused' },
-      attributes: ['userId'], raw: true,
-    });
-    return [...new Set(rows.map((r) => r.userId))];
-  }
-
   /** Join date per mentee within ONE clan → Map(menteeId → Date). */
   async menteeJoinDatesForClan(clanId) {
     const map = new Map();
@@ -1048,24 +1029,16 @@ class CohortService {
   }
 
   /**
-   * The mentor's roster.
+   * The mentor's roster: the people who are active in these clans.
    *
-   * `includePaused` adds the mentees who are paused in these clans, tagged
-   * and kept out of every total. Pausing is supposed to take somebody out of
-   * reports and reminders, and it does — but it also took them off the clan
-   * review screen entirely, which is the one place a mentor would notice
-   * they had gone and bring them back. They are opt-in rather than always
-   * present so that the cockpit, approvals and the leaderboard, which all
-   * read this, keep counting exactly who they counted before.
+   * Paused mentees are deliberately not here. Pausing takes somebody out of
+   * reports, reminders and reviews — that is the whole point of it — and the
+   * place to bring one back is the paused list on My Mentees, which exists
+   * for exactly that. A review screen that still listed them would be asking
+   * the mentor to step past the same greyed-out row every week.
    */
-  async getCohort(mentorId, { clanId = null, includePaused = false } = {}) {
-    const activeIds = await this.resolveMenteeIds(mentorId, clanId ? { clanIds: [clanId] } : {});
-    const pausedIds = includePaused ? await this.pausedMenteeIdsFor(mentorId, clanId) : [];
-    const active = new Set(activeIds);
-    // A mentee paused in one clan and active in another is active: they are on
-    // the roster already, and a second, greyed-out copy of them would be a lie.
-    const paused = new Set(pausedIds.filter((id) => !active.has(id)));
-    const menteeIds = [...activeIds, ...paused];
+  async getCohort(mentorId, { clanId = null } = {}) {
+    const menteeIds = await this.resolveMenteeIds(mentorId, clanId ? { clanIds: [clanId] } : {});
     if (!menteeIds.length) return { cohort: [], totals: { mentees: 0, pendingApprovals: 0, openBlockers: 0, atRisk: 0, onTimeRate: 0 } };
 
     const scope = await this.workScopeForClan(clanId);
@@ -1080,12 +1053,7 @@ class CohortService {
             where: {
               clanId: { [Op.in]: scopedClanIds },
               role: 'mentee',
-              // A paused row has to be read here too when paused mentees are
-              // asked for. Without it they come back attributed to no clan,
-              // and the client's rule for an unattributable row is to show it
-              // in EVERY clan — one person paused in one clan appearing in all
-              // of them.
-              status: includePaused ? { [Op.in]: ['active', 'paused'] } : 'active',
+              status: 'active',
             },
             attributes: ['userId', 'clanId'],
           });
@@ -1133,21 +1101,16 @@ class CohortService {
       r.daysSinceJoined = joined ? Math.floor((Date.now() - new Date(joined).getTime()) / 86400000) : null;
     });
 
-    cohort.forEach((r) => { r.paused = paused.has(r.id); });
-
-    // Every headline number is about the people still taking part. A paused
-    // mentee dragging the clan's on-time rate down is precisely what pausing
-    // exists to prevent.
-    const counted = cohort.filter((r) => !r.paused);
+    // Everyone on this roster is taking part — a paused mentee never reaches
+    // it — so the totals are simply the roster.
     const totals = {
-      mentees: counted.length,
-      pendingApprovals: counted.reduce((n, m) => n + m.pendingApprovals, 0),
-      openBlockers: counted.reduce((n, m) => n + m.openBlockers, 0),
-      atRisk: counted.filter((m) => m.risk !== 'low').length,
-      onTimeRate: counted.length
-        ? Math.round(counted.reduce((n, m) => n + m.onTimeRate, 0) / counted.length)
+      mentees: cohort.length,
+      pendingApprovals: cohort.reduce((n, m) => n + m.pendingApprovals, 0),
+      openBlockers: cohort.reduce((n, m) => n + m.openBlockers, 0),
+      atRisk: cohort.filter((m) => m.risk !== 'low').length,
+      onTimeRate: cohort.length
+        ? Math.round(cohort.reduce((n, m) => n + m.onTimeRate, 0) / cohort.length)
         : 0,
-      ...(includePaused ? { paused: cohort.length - counted.length } : {}),
     };
 
     return { cohort, totals };

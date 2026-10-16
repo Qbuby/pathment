@@ -248,16 +248,21 @@ describe('paused mentee remains visible to their mentor', () => {
     });
   });
 
-  describe('a paused mentee is reachable from clan review', () => {
+  describe('a paused mentee is off the review roster, and stays off it', () => {
     const cohortService = require('../../src/services/cohortService');
 
     /**
-     * Pausing takes somebody out of the numbers, which is its job. It also
-     * took them off clan review — the one screen where a mentor goes through
-     * their people one at a time and would notice someone had stopped turning
-     * up. They were simply gone, with no trace and no way back.
+     * Pausing takes somebody out of reports, reminders and reviews. That is
+     * the whole point of it, and clan review is not an exception — a mentor
+     * stepping through their people one at a time should not be stepping past
+     * the same greyed-out row every week. Bringing somebody back belongs to
+     * the paused list on My Mentees, which exists for exactly that.
+     *
+     * This is the issue's actual ask read correctly the second time: what
+     * belongs on the review card is the SUGGESTION to pause somebody who is
+     * still active and has stopped turning up — not the people already paused.
      */
-    it('is left out of the roster by default', async () => {
+    it('is left out of the roster', async () => {
       await mentorshipPauseService.pause(lead, mentee.id, clan.id, 'exams', 'mentor');
 
       const { cohort, totals } = await cohortService.getCohort(lead.id, { clanId: clan.id });
@@ -266,24 +271,29 @@ describe('paused mentee remains visible to their mentor', () => {
       expect(totals.mentees).toBe(0);
     });
 
-    it('comes back tagged when asked for, and counts toward nothing', async () => {
+    it('has no opt-in that can put them back on it', async () => {
       await mentorshipPauseService.pause(lead, mentee.id, clan.id, 'exams', 'mentor');
 
-      const { cohort, totals } = await cohortService.getCohort(lead.id, {
+      // An unknown option must not quietly widen the roster. The flag that
+      // used to do this is gone; anything passing it now is a caller that was
+      // never updated, and it must still get the active roster.
+      const { cohort } = await cohortService.getCohort(lead.id, {
         clanId: clan.id, includePaused: true,
       });
 
-      const row = cohort.find((r) => r.id === mentee.id);
-      expect(row).toBeDefined();
-      expect(row.paused).toBe(true);
-      // Still attributed to the clan: an unattributed row shows in every clan.
-      expect((row.clans || []).map((c) => c.id)).toContain(clan.id);
-      // Out of every headline number — that is what pausing is for.
-      expect(totals.mentees).toBe(0);
-      expect(totals.paused).toBe(1);
+      expect(cohort.map((r) => r.id)).not.toContain(mentee.id);
     });
 
-    it('is not duplicated when they are active in another clan', async () => {
+    it('is still listed where they can be brought back from', async () => {
+      await mentorshipPauseService.pause(lead, mentee.id, clan.id, 'exams', 'mentor');
+
+      // Off the review screen must not mean out of reach.
+      const paused = await mentorshipPauseService.listPaused(lead, clan.id);
+
+      expect(paused.map((p) => p.menteeId)).toContain(mentee.id);
+    });
+
+    it('stays on the roster when they are active in another clan', async () => {
       const program = await createProgram({ createdBy: lead.id });
       const second = await models.Clan.create({
         programId: program.id, name: 'Second', leadMentorId: lead.id, createdBy: lead.id,
@@ -292,11 +302,10 @@ describe('paused mentee remains visible to their mentor', () => {
       await clanService.addMember(second.id, { userId: mentee.id, role: 'mentee' });
       await mentorshipPauseService.pause(lead, mentee.id, clan.id, 'exams', 'mentor');
 
-      const { cohort } = await cohortService.getCohort(lead.id, { includePaused: true });
+      const { cohort } = await cohortService.getCohort(lead.id);
 
+      // Paused in one clan is not paused everywhere.
       expect(cohort.filter((r) => r.id === mentee.id)).toHaveLength(1);
-      // Active somewhere is active: a greyed-out second copy would be a lie.
-      expect(cohort.find((r) => r.id === mentee.id).paused).toBe(false);
     });
   });
 

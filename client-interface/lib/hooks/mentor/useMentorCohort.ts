@@ -76,23 +76,14 @@ export interface UseMentorCohortReturn {
 }
 
 const EMPTY_COHORT: CohortMentee[] = [];
-
-/**
- * `includePaused` asks for the mentees who are paused in these clans as well.
- *
- * Off by default, because pausing exists to take somebody out of the numbers.
- * Clan review turns it on: that is the screen where a mentor works through
- * their people one by one, and somebody vanishing from it without a trace is
- * how a paused mentee is forgotten rather than brought back.
- */
-export function useMentorCohort({ includePaused = false }: { includePaused?: boolean } = {}): UseMentorCohortReturn {
+export function useMentorCohort(): UseMentorCohortReturn {
   const { activeClanId } = useClan();
 
   const { data, loading, error, refetch } = useApiQuery<{ cohort: CohortMentee[]; totals: CohortTotals | null }>({
     // Clan is also sent via X-Active-Clan; key it so switching Standee ↔ cohort refetches.
-    queryKey: [...qk.mentor.cohort, activeClanId, includePaused],
+    queryKey: [...qk.mentor.cohort, activeClanId],
     queryFn: async () => {
-      const res = await mentorApi.getCohort({ includePaused });
+      const res = await mentorApi.getCohort();
       return { cohort: res?.data?.cohort ?? [], totals: res?.data?.totals ?? null };
     },
     errorMessage: 'Failed to load your cohort',

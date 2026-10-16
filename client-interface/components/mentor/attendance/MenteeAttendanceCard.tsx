@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Check, X, Minus, HelpCircle, Pause } from 'lucide-react';
+import { Check, X, Minus, HelpCircle } from 'lucide-react';
 import { getInitials } from '@/lib/utils/formatting';
 import { Avatar } from '@/components/shared/Avatar';
 
@@ -11,12 +11,6 @@ export interface AttendanceMentee {
   /** Pre-computed initials from the cohort payload; falls back to deriving them. */
   avatar?: string;
   profilePictureUrl?: string | null;
-  /**
-   * Paused in this clan. They are shown — a mentor cannot bring back somebody
-   * they cannot see — but attendance does not apply to them, so the chip is
-   * muted and carries a pause badge instead of a present/absent one.
-   */
-  paused?: boolean;
 }
 
 interface MenteeAttendanceCardProps {
@@ -50,11 +44,8 @@ const BADGE: Record<NonNullable<Attendance> | 'null', { cls: string; Icon: typeo
 
 export function MenteeAttendanceCard({ mentee, attendance, isActive, onClick }: MenteeAttendanceCardProps) {
   const key = (attendance ?? 'null') as NonNullable<Attendance> | 'null';
-  const paused = !!mentee.paused;
-  const ring = paused ? 'bg-slate-300' : RING[key];
-  const { cls: badgeCls, Icon } = paused
-    ? { cls: 'bg-slate-400 text-white', Icon: Pause }
-    : BADGE[key];
+  const ring = RING[key];
+  const { cls: badgeCls, Icon } = BADGE[key];
   const initials = mentee.avatar || getInitials(mentee.name);
   const firstName = mentee.name.split(' ')[0];
 
@@ -69,7 +60,7 @@ export function MenteeAttendanceCard({ mentee, attendance, isActive, onClick }: 
     <button
       ref={ref}
       onClick={onClick}
-      title={paused ? `${mentee.name} — paused in this clan` : `${mentee.name} — ${attendance ?? 'not marked'}`}
+      title={`${mentee.name} — ${attendance ?? 'not marked'}`}
       aria-pressed={isActive}
       className={`group/card relative flex shrink-0 snap-start flex-col items-center gap-2 rounded-2xl px-1.5 pb-1.5 pt-2 outline-none transition-colors ${
         isActive ? 'w-[92px] bg-brand-50/80 dark:bg-brand-500/10' : 'w-[84px]'
@@ -99,7 +90,6 @@ export function MenteeAttendanceCard({ mentee, attendance, isActive, onClick }: 
               src={mentee.profilePictureUrl}
               initials={initials}
               size="lg"
-              tone={paused ? 'muted' : 'brand'}
             />
           </div>
         </div>
@@ -116,9 +106,7 @@ export function MenteeAttendanceCard({ mentee, attendance, isActive, onClick }: 
         className={`max-w-full truncate text-xs ${
           isActive
             ? 'rounded-full bg-brand-600 px-2 py-0.5 font-semibold text-white'
-            : paused
-              ? 'font-medium text-slate-400'
-              : 'font-medium text-slate-700 group-hover/card:text-slate-900'
+            : 'font-medium text-slate-700 group-hover/card:text-slate-900'
         }`}
       >
         {firstName}

@@ -12,11 +12,7 @@ const { requestedClanId } = require('../middlewares/portalScope');
  * The logged-in mentor's cohort for the Cockpit, with computed fairness signals.
  */
 const getCohort = catchAsync(async (req, res) => {
-  // `includePaused` is opt-in so that only the screen that wants them — clan
-  // review, where a mentor would notice somebody had stopped turning up — gets
-  // them, and every other reader of this endpoint counts what it always did.
-  const includePaused = ['1', 'true'].includes(String(req.query.includePaused || '').toLowerCase());
-  const { cohort, totals } = await cohortService.getCohort(req.user.id, { clanId: requestedClanId(req), includePaused });
+  const { cohort, totals } = await cohortService.getCohort(req.user.id, { clanId: requestedClanId(req) });
   res.status(200).json(successResponse('Cohort retrieved', { cohort, totals }));
 });
 

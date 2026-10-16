@@ -10,7 +10,7 @@ import { toast } from 'sonner';
 import {
   ChevronLeft, ChevronRight, SkipForward, Check, Loader2,
   TrendingUp, TrendingDown, Minus, Flag, Clock, ClipboardCheck, Keyboard, CheckCircle2, ArrowUpRight, Send, Plus, ListTodo, CalendarClock,
-  Trash2, X, History, RotateCcw, CalendarDays, AlertTriangle, StickyNote, Search, Lock, Unlock, PauseCircle, PlayCircle, Sparkles, Star, Users,
+  Trash2, X, History, RotateCcw, CalendarDays, AlertTriangle, StickyNote, Search, Lock, Unlock, PauseCircle, Sparkles, Star, Users,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useMentorCohort, useMentorApprovals, type CohortMentee, type CohortMomentum, type CohortRisk, type ApprovalItem } from '@/lib/hooks/mentor';
@@ -82,21 +82,11 @@ export default function CohortReview() {
   const searchParams = useSearchParams();
   const { user } = useAuth();
   const { clans, activeClanId } = useClan();
-  /**
-   * Paused mentees come with the roster here, and only here.
-   *
-   * Pausing takes somebody out of reports and reminders, which is its job —
-   * but it also took them off this screen, the one place a mentor works
-   * through their people one at a time and would notice that someone had
-   * stopped turning up. They were simply gone, with no trace and no way back.
-   * They are last in the list, greyed in the rail, counted in nothing, and
-   * their card offers Resume instead of Pause.
-   */
-  const { cohort: rosterRaw, loading, refetch: refetchCohort } = useMentorCohort({ includePaused: true });
-  const cohort = useMemo(
-    () => [...rosterRaw].sort((a, b) => Number(!!a.paused) - Number(!!b.paused)),
-    [rosterRaw],
-  );
+  // Paused mentees are not here on purpose. Pausing takes somebody out of
+  // reviews — that is what it is for — and the place to bring one back is the
+  // paused list on My Mentees. What belongs on this screen is the step before:
+  // noticing the person who is still active and has stopped turning up.
+  const { cohort, loading, refetch: refetchCohort } = useMentorCohort();
   const { queue, refetch: refetchQueue } = useMentorApprovals();
   const confirm = useConfirm();
 
@@ -586,9 +576,18 @@ export default function CohortReview() {
   const [pausing, setPausing] = useState(false);
   const pauseCurrent = useCallback(async () => {
     if (!mentee) return;
+    // The confirmation repeats WHY, because that is the half of a suggestion
+    // that makes it a suggestion. A mentor who clicks Pause off the back of a
+    // prompt should see the evidence the prompt was built on before it
+    // happens, not have to trust that something counted correctly.
+    const why = pauseHint
+      ? (pauseHint.neverAttended
+          ? `They have never attended a review — ${pauseHint.missedReviews} have been held since they joined.`
+          : pauseHint.reason || `They have missed the last ${pauseHint.missedReviews} reviews.`)
+      : null;
     const ok = await confirm({
       title: `Pause ${mentee.name}?`,
-      description: `They'll stay in the clan and keep getting reminders to come back, but won't count toward your clan's reports until they re-engage.`,
+      description: `${why ? `${why}\n\n` : ''}They stay in the clan and keep getting reminders to come back, but drop out of your reports and this review until they do.`,
       confirmLabel: 'Pause mentee',
     });
     if (!ok) return;
@@ -603,28 +602,8 @@ export default function CohortReview() {
     } finally {
       setPausing(false);
     }
-  }, [mentee, confirm, effectiveClanId, go, refetchCohort]);
+  }, [mentee, pauseHint, confirm, effectiveClanId, go, refetchCohort]);
 
-  /**
-   * Bring a paused mentee back, from the screen where you noticed they had gone.
-   *
-   * Unlike pausing, this does NOT advance to the next person: a mentor who
-   * just resumed somebody is about to review them.
-   */
-  const [resuming, setResuming] = useState(false);
-  const resumeCurrent = useCallback(async () => {
-    if (!mentee) return;
-    setResuming(true);
-    try {
-      await mentorApi.resumeMentee(mentee.id, effectiveClanId ?? undefined);
-      toast.success(`${mentee.name} is back in the clan`);
-      await refetchCohort();
-    } catch (e) {
-      toast.error(extractApiErrorMessage(e, 'Could not bring this mentee back'));
-    } finally {
-      setResuming(false);
-    }
-  }, [mentee, effectiveClanId, refetchCohort]);
 
   // Refresh the queue + the CURRENT mentee's tasks. Keyed on the live mentee so
   // actions never refetch a stale/previous mentee (the old bug).
@@ -1306,16 +1285,7 @@ export default function CohortReview() {
                       </span>
                     )}
                     <MomentumIcon m={mentee!.momentum} />
-                    {mentee!.paused ? (
-                      // The risk chip is about someone who is taking part. For
-                      // a paused mentee it is noise, and a misleading kind:
-                      // "high risk" on somebody nobody expects to deliver.
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                        <PauseCircle className="h-3 w-3" aria-hidden />Paused
-                      </span>
-                    ) : (
-                      <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-xs font-medium ${risk.cls}`}><span className={`w-1.5 h-1.5 rounded-full ${risk.dot}`} />{risk.label}</span>
-                    )}
+                    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-xs font-medium ${risk.cls}`}><span className={`w-1.5 h-1.5 rounded-full ${risk.dot}`} />{risk.label}</span>
                   </div>
                   <div className="mt-0.5 text-xs text-slate-500">{mentee!.level} · Wk {mentee!.week}/{mentee!.totalWeeks || '-'} · {mentee!.onTimeRate}% on-time</div>
                 </div>
@@ -1357,29 +1327,15 @@ export default function CohortReview() {
                     onContinued={refresh}
                   />
                 )}
-                {/* One slot, two states. Offering "Pause" on somebody who is
-                    already paused was the old behaviour, and it re-paused them. */}
-                {mentee!.paused ? (
-                  <button
-                    onClick={resumeCurrent}
-                    disabled={resuming || historical}
-                    title={historical ? HISTORICAL_TITLE : 'Bring this mentee back into the clan'}
-                    aria-label="Resume this mentee"
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 disabled:opacity-50"
-                  >
-                    <PlayCircle className="w-4 h-4" />
-                  </button>
-                ) : (
-                  <button
-                    onClick={pauseCurrent}
-                    disabled={pausing || historical}
-                    title={historical ? HISTORICAL_TITLE : 'Pause this mentee (stopped attending)'}
-                    aria-label="Pause this mentee"
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-50 disabled:opacity-50"
-                  >
-                    <PauseCircle className="w-4 h-4" />
-                  </button>
-                )}
+                <button
+                  onClick={pauseCurrent}
+                  disabled={pausing || historical}
+                  title={historical ? HISTORICAL_TITLE : 'Pause this mentee (stopped attending)'}
+                  aria-label="Pause this mentee"
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:hover:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  <PauseCircle className="w-4 h-4" />
+                </button>
                 <Link href={`/mentor/mentees/${mentee!.id}`} className="text-xs text-brand-600 hover:text-brand-700 inline-flex items-center gap-0.5 px-2 py-1 rounded-md hover:bg-brand-50">Profile <ArrowUpRight className="w-3.5 h-3.5" /></Link>
               </div>
             </div>
@@ -1388,46 +1344,32 @@ export default function CohortReview() {
                 choices are one click, and saying WHY is what makes it a
                 suggestion rather than a nag.
             */}
-            {mentee!.paused && (
+            {pauseHint && !historical && (
+              // The suggestion sits on the card, next to the button that acts
+              // on it, and says why. Not amber: this is the product noticing
+              // something on the mentor's behalf, not a warning about a
+              // failure, and the rest of this run took that colour out.
               <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/50">
                 <PauseCircle className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
                 <p className="min-w-0 flex-1 text-xs text-slate-600 dark:text-slate-300">
-                  <span className="font-medium text-slate-800 dark:text-slate-100">Paused in this clan.</span>{' '}
-                  They are still a member and still getting nudges to come back — they are
-                  just out of your reports until they do.
-                </p>
-                <button
-                  type="button"
-                  onClick={resumeCurrent}
-                  disabled={resuming || historical}
-                  className="shrink-0 rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-                >
-                  {resuming ? 'Bringing back…' : 'Bring back'}
-                </button>
-              </div>
-            )}
-            {pauseHint && !mentee!.paused && !historical && (
-              <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-500/30 dark:bg-amber-500/10">
-                <PauseCircle className="h-4 w-4 shrink-0 text-amber-600" aria-hidden />
-                <p className="min-w-0 flex-1 text-xs text-amber-800 dark:text-amber-300">
-                  <span className="font-medium">Looks inactive.</span>{' '}
+                  <span className="font-medium text-slate-900 dark:text-slate-100">They have stopped turning up.</span>{' '}
                   {pauseHint.neverAttended
-                    ? 'They have never attended a review.'
-                    : pauseHint.reason || `Missed ${pauseHint.missedReviews} review${pauseHint.missedReviews === 1 ? '' : 's'}.`}
-                  {' '}Pausing keeps your reports clean — they stay in the clan.
+                    ? `Never attended — ${pauseHint.missedReviews} review${pauseHint.missedReviews === 1 ? '' : 's'} held since they joined.`
+                    : pauseHint.reason || `Missed the last ${pauseHint.missedReviews} review${pauseHint.missedReviews === 1 ? '' : 's'}.`}
+                  {' '}Pausing takes them out of your reports; they stay in the clan.
                 </p>
                 <button
                   type="button"
                   onClick={pauseCurrent}
                   disabled={pausing}
-                  className="shrink-0 rounded-lg bg-amber-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+                  className="shrink-0 rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
                 >
                   {pausing ? 'Pausing…' : 'Pause'}
                 </button>
                 <button
                   type="button"
                   onClick={dismissPauseHint}
-                  className="shrink-0 rounded-lg px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100 dark:text-amber-300"
+                  className="shrink-0 rounded-lg px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200/70 dark:text-slate-300 dark:hover:bg-slate-800"
                 >
                   Keep active
                 </button>
@@ -1653,22 +1595,15 @@ export default function CohortReview() {
                 <History className="w-3.5 h-3.5" /> History
               </button>
             </div>
-            {/* Nobody is expected at a review they are paused out of, so
-                marking them present or absent would be recording a fact about
-                an invitation that was never sent. The rail greys them out for
-                the same reason. */}
             <div className="flex gap-2">
               {(['present', 'absent', 'excused'] as Attendance[]).map((s) => (
-                <button key={s} onClick={() => mark(s)} disabled={!editable || mentee!.paused}
-                  title={mentee!.paused ? 'They are paused — bring them back to take attendance' : (historical ? HISTORICAL_TITLE : undefined)}
+                <button key={s} onClick={() => mark(s)} disabled={!editable}
+                  title={historical ? HISTORICAL_TITLE : undefined}
                   className={`flex-1 px-2 py-1.5 rounded-lg border text-xs font-medium capitalize transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${attendance[mentee!.id] === s ? 'border-brand-400 bg-brand-50 text-brand-700' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}>
                   {s}
                 </button>
               ))}
             </div>
-            {mentee!.paused && (
-              <p className="mt-2 text-[11px] text-slate-500">Paused — bring them back to take attendance.</p>
-            )}
             {lastMeeting?.status && (
               <button onClick={() => setAttOpen(true)} className="text-[11px] text-slate-500 mt-2.5 inline-flex items-center gap-1.5 hover:text-slate-700">
                 <span className={`w-1.5 h-1.5 rounded-full ${lastMeeting.status === 'present' ? 'bg-emerald-500' : lastMeeting.status === 'excused' ? 'bg-amber-500' : 'bg-rose-500'}`} />

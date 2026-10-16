@@ -71,10 +71,9 @@ export const mentorApi = {
   },
 
   // The logged-in mentor's cohort for the Cockpit (computed fairness signals).
-  // `includePaused` adds the clan's paused mentees, tagged and uncounted — see
-  // the hook for why that is opt-in.
-  getCohort: ({ includePaused = false }: { includePaused?: boolean } = {}) =>
-    apiClient.get(`/mentor/cohort${includePaused ? '?includePaused=1' : ''}`),
+  // Active members of the clan only — a paused mentee is out of reports and
+  // reviews by definition, and is brought back from the paused list instead.
+  getCohort: () => apiClient.get(`/mentor/cohort`),
 
   // Period-scoped cohort throughput (week / month window).
   getCohortActivity: (period: 'week' | 'month') =>

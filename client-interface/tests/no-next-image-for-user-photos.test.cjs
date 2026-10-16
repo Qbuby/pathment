@@ -60,8 +60,7 @@ test('Avatar still falls back when the photo will not load', () => {
  * with its own diameter (26px, 32px, 36px, 44px, 56px), its own fallback
  * colour, and — in four of the six — no `onError`, so one dead Cloudinary URL
  * showed as a black disc. The sizes were not a design decision; they were six
- * people each picking a number. `Avatar` has five, and a `muted` tone for
- * somebody who has paused, which is what the last fork was really after.
+ * people each picking a number. `Avatar` has five.
  */
 test('no component hand-rolls a profile photo', () => {
   const offenders = files.filter((rel) => {
@@ -72,18 +71,8 @@ test('no component hand-rolls a profile photo', () => {
   });
 
   assert.deepEqual(offenders, [],
-    'Use `Avatar` from components/shared/Avatar (name / src / initials / size / tone / href). '
+    'Use `Avatar` from components/shared/Avatar (name / src / initials / size / href). '
     + 'A hand-rolled one picks its own diameter and usually forgets onError, so a dead photo '
     + 'URL renders as a black disc. Found in:\n  '
     + offenders.join('\n  '));
-});
-
-test('the muted tone is what the paused fork was doing by hand', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'components', 'shared', 'Avatar.tsx'), 'utf8');
-  assert.match(src, /grayscale/, 'a muted photo must desaturate');
-  assert.match(src, /muted \? 'bg-slate-100 text-slate-500/, 'muted initials must drop to slate');
-  // The fork it replaced recoloured both the photo and the fallback; if only
-  // one branch takes the tone, a paused mentee with a photo looks active.
-  assert.match(src, /\$\{photoTone\}/, 'the photo branch must take the tone');
-  assert.match(src, /\$\{fallbackTone\}/, 'the initials branch must take the tone');
 });
