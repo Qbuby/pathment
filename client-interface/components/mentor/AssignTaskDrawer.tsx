@@ -13,7 +13,8 @@ import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { RoadmapStepsDrawer } from '@/components/mentor/RoadmapStepsDrawer';
 import { StepCustomizeModal } from '@/components/mentor/StepCustomizeModal';
 import RichTextEditor from '@/components/shared/RichTextEditor';
-import { TaskScheduleFields, initialTaskSchedule, type TaskScheduleDraft } from './TaskScheduleFields';
+import { initialTaskSchedule, type TaskScheduleDraft } from './TaskScheduleFields';
+import { TaskTimingRow } from './TaskTimingRow';
 import { cleanHtml } from '@/lib/utils/html';
 import { pointsForDifficulty } from '@/lib/config/points';
 import { useFormDraft, clearFormDraft } from '@/lib/hooks/shared/useFormDraft';
@@ -808,7 +809,17 @@ export function AssignTaskDrawer({
                   </div>
                 )}
 
-                {!isCourse && <TaskScheduleFields value={schedule} onChange={setSchedule} />}
+                {/* Two menus where there used to be a three-way mode switch
+                    and, below it, a second "Due" block that only appeared in
+                    one of the three modes. Same two facts, asked once each. */}
+                {!isCourse && (
+                  <TaskTimingRow
+                    due={{ days: dueDays, exact: dueExact }}
+                    onDueChange={(next) => { setDueDays(next.days); setDueExact(next.exact); }}
+                    schedule={schedule}
+                    onScheduleChange={setSchedule}
+                  />
+                )}
 
                 {(
                   <div>
@@ -818,7 +829,10 @@ export function AssignTaskDrawer({
                 )}
 
                 <div className="grid grid-cols-2 gap-4">
-                    {(schedule.mode === 'now' || isCourse) && <div>
+                    {/* A course is enrolled on the provider the moment it is
+                        assigned and cannot repeat, so it keeps a plain
+                        deadline rather than the timing row above. */}
+                    {isCourse && <div>
                       <span className="block text-sm font-medium text-slate-700 mb-1.5">Due</span>
                       <div className="flex flex-wrap gap-1.5">
                         {DUE_PRESETS.map((d) => (

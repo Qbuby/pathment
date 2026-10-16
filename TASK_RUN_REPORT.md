@@ -59,7 +59,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 16 | Top-performers/nominations not scoped to the active (standing) clan — mentor sees other clans' nominations. | ✅ | | Also closed a cross-clan ranking leak. |
 | 17 | Mentor Insights → Reports disagrees with leaderboard/progress score (both correct). Align the criteria. Also: no mentee profile pictures in progress. | ✅ | | Reports read 61 where the score read 79. |
 | 18 | Mentor dashboard: remove yellow, re-prioritise, show announcements compactly. | ⬜ | | |
-| 19 | Task assign: drop "Assign now / Schedule once / Repeat weekly"; use two icon menus (due date, repeat) like Microsoft To Do. No reminder icon. | ⬜ | | Migration 130 already added `assigned_tasks.repeat_rule`. |
+| 19 | Task assign: drop "Assign now / Schedule once / Repeat weekly"; use two icon menus (due date, repeat) like Microsoft To Do. No reminder icon. | ✅ | | Assign drawer only; see the scope note. |
 | 20 | Mentor calendar: pick a **time** on the calendar, and set repeating availability by day + time. | ⬜ | | |
 | 21 | Feature-usage statistics per role (which pages/features are actually used). | ⬜ | | Open-ended programme. |
 | 22 | Admins can create standing clans too. | ✅ | | |
@@ -1018,3 +1018,52 @@ still refused, and a call with no actor at all is still refused.
 201 cohort; a mentor without `clan.create` → **403** before the kind rule is even reached.
 The seeded mentor who *does* hold admin in this workspace correctly succeeds, which is
 how I noticed the demo data had given her that role.
+
+### Issue 19 — two icons instead of three modes
+
+**Root cause.** Assigning asked the timing question twice. A three-way segmented control —
+*Assign now · Schedule once · Repeat weekly* — decided what **kind** of assignment it was,
+and **below it** a separate "Due" block with its own presets and date input decided the
+deadline, but only in one of the three modes. So half the form appeared and disappeared as
+you clicked around it. The mode was a question about the system; the mentor's question is
+"when is this due, and does it happen again".
+
+**Fix.** A task is a one-off, assigned now, unless you say otherwise — which is what the
+report asked for ("by default its once"). One icon sets the deadline, the other sets the
+repeat, and a line underneath reads the two of them back as a sentence:
+
+> **Due in 7 days** · **Repeats every weekday** — *Assigned every weekday, each one due 7
+> days later.*
+
+No reminder icon: the product already notifies, and a third control for it would be a
+setting nobody asked for.
+
+The two menus use the shared `Dropdown`. The due menu offers Today / Tomorrow / In 3 days
+/ In a week / In two weeks / pick a date; the repeat menu offers Does not repeat / Daily /
+Every weekday / Weekly on *today* / pick the days. Setting a repeat carries the deadline
+across as each occurrence's offset, so the two controls cannot contradict each other.
+
+**The underlying contract is unchanged.** `TaskScheduleDraft` and the `/api/tasks/custom`
+payload are exactly what they were — this is a new presentation over the same two facts,
+so nothing on the server moved.
+
+**Files.** `client-interface/components/mentor/TaskTimingRow.tsx` (new),
+`client-interface/components/mentor/AssignTaskDrawer.tsx`.
+
+**Verified in the browser, end to end.** The three old controls are gone ("Assign now",
+"Schedule once", "Repeat weekly" and "When should this happen?" all absent). Choosing
+*Every weekday* and submitting posted
+`{"schedule":{"mode":"weekly","daysOfWeek":[1,2,3,4,5],"dueOffsetDays":7,…}}` to
+`/api/tasks/custom`, the drawer closed, and the recurring slot was written to the mentee's
+schedule. The verification task was removed afterwards. No console errors.
+
+**Scope, stated.** This is the **assign** drawer, which is what the report names. Two
+other screens still use the old `TaskScheduleFields`: the task-edit drawer, where the
+question is genuinely different ("should this existing task have future assignments"), and
+`/mentor/schedules`, which is issue 20's page. **A course keeps a plain deadline** — it is
+enrolled on the provider the moment it is assigned and cannot repeat.
+
+**One capability is gone, deliberately.** "Schedule once" meant *assign this later*, and
+the report asked for those three to be removed. A future deadline is still available
+through the date picker; what no longer exists is holding a task back from the mentee
+until a date. Say the word and I will put it back as a third item in the due menu.
