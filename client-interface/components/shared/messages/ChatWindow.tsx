@@ -1,7 +1,7 @@
 'use client';
 
 import { Fragment, useEffect, useMemo, useRef } from 'react';
-import Image from 'next/image';
+import { Avatar } from '@/components/shared/Avatar';
 import { Archive, ArrowLeft, Loader2, MessageSquare, MoreVertical, ShieldCheck, Trash2, User, UserCheck } from 'lucide-react';
 
 import type { ChatMessage, ConversationSummary } from '@/lib/types/messaging';
@@ -78,6 +78,25 @@ export default function ChatWindow({
   const lastConversationIdRef = useRef<string | null>(null);
   const lastMessageIdRef = useRef<string | null>(null);
   const conversationLoadedRef = useRef<string | null>(null);
+  /**
+   * Hold the view at the bottom until the reader scrolls away from it.
+   *
+   * Opening a chat used to land somewhere up the middle of the thread, and the
+   * reason was a race rather than the scroll itself. `loadMessages` sets the
+   * messages, then AWAITS `markConversationRead`, and only clears the loading
+   * flag afterwards — so for the length of that round trip the component is
+   * holding real messages while still rendering skeletons. The one-shot scroll
+   * fired in that window, moved a container whose height was three skeletons,
+   * and never ran again: the real thread then rendered taller and the reader
+   * was left near the top of it.
+   *
+   * A single scroll cannot be right in any case, because the content keeps
+   * growing after the first paint — avatars, images and web fonts all land
+   * later. So the bottom is held, not jumped to once, and let go the moment
+   * the reader scrolls up, which is the only signal that they want to be
+   * somewhere else.
+   */
+  const pinnedToBottomRef = useRef(true);
 
   // Track conversation switch and reset loaded ref
   useEffect(() => {
@@ -85,35 +104,60 @@ export default function ChatWindow({
       if (lastConversationIdRef.current !== selectedConversation.id) {
         lastConversationIdRef.current = selectedConversation.id;
         conversationLoadedRef.current = null;
+        // A different conversation always opens at its end.
+        pinnedToBottomRef.current = true;
       }
     }
   }, [selectedConversation?.id]);
 
-  // Scroll to bottom or to first unread message when messages populate
+  /**
+   * A freshly opened conversation starts at the bottom. Always.
+   *
+   * It used to centre the "Unread Messages" banner instead, and that is what
+   * put the reader half way up the thread. Only the last fifteen messages are
+   * fetched, so in any chat you have not opened for a while almost all of them
+   * are unread and the banner is the FIRST thing in the window — the
+   * calculation then asks for a negative offset, the browser clamps it to
+   * zero, and the chat opens at the very top of what it loaded. Measured here
+   * on a thread with fourteen unread: `scrollTop` 0, 1121px short of the end.
+   *
+   * The banner still renders where it belongs, which is the part that was
+   * worth having. It just does not decide where you land, because the newest
+   * message is what you opened the conversation to read.
+   */
   useEffect(() => {
-    if (selectedConversation?.id && messages.length > 0) {
-      if (conversationLoadedRef.current !== selectedConversation.id) {
-        conversationLoadedRef.current = selectedConversation.id;
-        
-        const scrollTarget = () => {
-          const unreadBanner = document.getElementById('unread-banner');
-          const container = scrollContainerRef.current;
-          if (unreadBanner && container) {
-            const containerRect = container.getBoundingClientRect();
-            const bannerRect = unreadBanner.getBoundingClientRect();
-            const relativeTop = bannerRect.top - containerRect.top + container.scrollTop;
-            container.scrollTop = relativeTop - (container.clientHeight / 2) + (bannerRect.height / 2);
-          } else if (container) {
-            container.scrollTop = container.scrollHeight;
-          }
-        };
+    // Not while the skeletons are up. `loadMessages` sets the messages, then
+    // AWAITS markConversationRead before clearing the loading flag, so there
+    // is a window holding real messages while rendering three skeletons — and
+    // scrolling to the bottom of those is scrolling to the wrong bottom.
+    if (isLoading) return;
+    if (!selectedConversation?.id || messages.length === 0) return;
+    if (conversationLoadedRef.current === selectedConversation.id) return;
+    conversationLoadedRef.current = selectedConversation.id;
 
-        requestAnimationFrame(() => {
-          requestAnimationFrame(scrollTarget);
-        });
-      }
-    }
-  }, [selectedConversation?.id, messages]);
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    pinnedToBottomRef.current = true;
+    container.scrollTop = container.scrollHeight;
+  }, [selectedConversation?.id, messages, isLoading]);
+
+  /**
+   * Keep it there while the thread finishes growing.
+   *
+   * An image or a late font adds height after the scroll has already been set,
+   * which silently lifts the newest message above the fold. A ResizeObserver
+   * re-pins for as long as the reader has not scrolled away.
+   */
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      if (pinnedToBottomRef.current) container.scrollTop = container.scrollHeight;
+    });
+    observer.observe(container);
+    for (const child of Array.from(container.children)) observer.observe(child);
+    return () => observer.disconnect();
+  }, [selectedConversation?.id, messages.length, isLoading]);
 
   // Scroll to bottom when new messages arrive or are sent by current user
   useEffect(() => {
@@ -127,6 +171,8 @@ export default function ChatWindow({
         lastMessageIdRef.current = latestMessage.id;
 
         if (isSentByMe || isNearBottom) {
+          // Sending always returns you to the end, whatever you were reading.
+          pinnedToBottomRef.current = true;
           requestAnimationFrame(() => {
             if (container) {
               container.scrollTop = container.scrollHeight;
@@ -139,7 +185,14 @@ export default function ChatWindow({
 
   const handleScroll = async (e: React.UIEvent<HTMLDivElement>) => {
     const container = e.currentTarget;
+    // Reading back through the thread releases the pin; returning to the end
+    // takes it again, so a long read is never yanked back by a late image.
+    pinnedToBottomRef.current =
+      container.scrollHeight - container.scrollTop - container.clientHeight < 24;
+
     if (container.scrollTop === 0 && hasMore && !isLoadingMore && onLoadMore) {
+      // Loading older messages must not drag the reader anywhere.
+      pinnedToBottomRef.current = false;
       const prevScrollHeight = container.scrollHeight;
       await onLoadMore();
       requestAnimationFrame(() => {
@@ -172,19 +225,19 @@ export default function ChatWindow({
 
           {selectedConversation ? (
             <div className="flex items-center gap-3 min-w-0">
-              {recipient?.profilePictureUrl ? (
-                <Image
-                  src={recipient.profilePictureUrl}
-                  alt={selectedTitle}
-                  width={40}
-                  height={40}
-                  className="w-10 h-10 rounded-full object-cover shrink-0 border border-border"
-                />
-              ) : (
-                <div className="w-10 h-10 rounded-full bg-brand-500/15 text-brand-600 dark:text-brand-400 flex items-center justify-center font-bold text-sm shrink-0 border border-brand-500/30">
-                  {(recipient?.firstName?.[0] || selectedTitle[0] || 'C').toUpperCase()}
-                </div>
-              )}
+              {/* The shared Avatar, not next/image. `next/image` THROWS during render for
+   any host missing from next.config.js, and a throw in render takes the whole
+   page down with it: the entire Messages screen became "Something went wrong"
+   because one person's photo was hosted somewhere the config had never heard
+   of. Avatar uses a plain <img> and falls back to initials when the URL fails,
+   which is what a broken profile picture deserves. */}
+              <Avatar
+                name={selectedTitle}
+                src={recipient?.profilePictureUrl}
+                initials={(recipient?.firstName?.[0] || selectedTitle[0] || 'C').toUpperCase()}
+                size="md"
+                className="shrink-0 border border-border"
+              />
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <h2 className="text-foreground font-semibold text-base truncate">

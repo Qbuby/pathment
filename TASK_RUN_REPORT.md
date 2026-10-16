@@ -65,7 +65,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 22 | Admins can create standing clans too. | ⬜ | | |
 | 23 | Program/clan filters across the admin panel (people → mentees/mentors, enrollments, clan requests), ideally one global program selector. | ⬜ | | Open-ended programme. |
 | 24 | Admin live-meeting screen redesign (calendar, Meet-like). | ⬜ | | |
-| 25 | Opening a conversation must land scrolled to the newest message. | ⬜ | | |
+| 25 | Opening a conversation must land scrolled to the newest message. | ✅ | | Also fixed a page-level crash on Messages. |
 | 26 | Workspace plan & usage shows wrong usage and wrong current plan. | ⬜ | | Production-scale numbers; see flag 4. |
 | 27 | Admin Review-Lock page: remove yellow, improve accessibility, allow grant/revoke per program or clan as well as org-wide. | ⬜ | | Same feature as #14. |
 | 28 | Remove unnecessary database data (~700 MB). | ⬜ | | Production data — see flag 4. |
@@ -572,3 +572,61 @@ granted to the seeded mentor in the local database for the test):
 - Admin portal, no clan → still 2. The org-wide view is untouched.
 - Browser: MERN Fellows selected → *"Nominations in MERN Fellows"*, 2 rows. Standing clan
   selected → the section is **not rendered at all**, and no failed requests.
+
+### Issue 25 — a chat that opens half way up the thread
+
+**First hypothesis, and it was wrong.** I expected a race: `loadMessages` sets the
+messages, then *awaits* `markConversationRead`, and only clears the loading flag
+afterwards — so for one round trip the component holds real messages while still
+rendering three skeletons, and the one-shot scroll could fire against the skeletons'
+height. That is a real fault and is now guarded, but **measured against the old code it
+did not reproduce**: a 51-message thread opened cleanly at the bottom.
+
+**Actual root cause: the unread banner was deciding where you land.** The open scroll
+centred `#unread-banner` whenever one existed. Only the **last fifteen** messages are
+fetched, so in any chat you have not opened for a while nearly all of them are unread and
+the banner is the *first* thing in the loaded window — the offset comes out negative, the
+browser clamps it to zero, and the chat opens at the very top of what it loaded. That is
+the report's screenshot exactly, scrollbar at the top.
+
+Measured on a thread with 14 unread, same content both times:
+
+| | `scrollTop` | distance from the bottom |
+| --- | --- | --- |
+| Before | 0 | **1121px** |
+| After | 1121 | **0** |
+
+**Fix.** A freshly opened conversation starts at the bottom, always. The banner still
+renders where it belongs — that part was worth having — it just no longer decides the
+scroll position, because the newest message is what you opened the conversation to read.
+The bottom is then *held* rather than jumped to once: a `ResizeObserver` re-pins while
+late avatars and web fonts add height, and lets go the moment the reader scrolls up.
+Sending always returns to the end; loading older messages never drags the reader anywhere.
+
+**Found while reproducing it — a page-level crash.** The Messages screen rendered
+**"Something went wrong"** and nothing else. `next/image` validates `src` against
+`images.remotePatterns` in `next.config.js` and **throws during render** when the host is
+not listed; a throw in render takes the whole page down. Only `res.cloudinary.com` is
+configured, so every other avatar host there has ever been — an OAuth provider's CDN, a
+Gravatar, anything a migration left behind — is one row away from doing this. Three
+messaging components used it for profile photos while `components/shared/Avatar` already
+existed and already handles a failed URL with an initials fallback. All three now use it,
+`next/image` is gone from the client entirely, and a guard test keeps it out — the fault
+only appears for the one user whose photo lives on the wrong host, so it would not be
+noticed again until it shipped.
+
+**Files.** `client-interface/components/shared/messages/ChatWindow.tsx`,
+`components/shared/messages/ConversationList.tsx`,
+`components/shared/messages/UserSearchCombobox.tsx`,
+`tests/no-next-image-for-user-photos.test.cjs`.
+
+**Tests run.** Client guard suite **112 pass / 0 fail** (2 new). `tsc` clean.
+
+**Verified in the browser**, with 40 extra messages seeded locally so the thread overflows:
+opens at the bottom with the newest message in view, the unread banner still renders in
+the thread, and the Messages page loads with **no console errors** where it previously
+rendered the error boundary.
+
+**Trade-off, stated.** Jumping to the first unread message is gone. The report asked for
+the bottom in as many words, and the old behaviour was indistinguishable from a broken
+page whenever the banner sat at the top — which is the common case, not the rare one.
