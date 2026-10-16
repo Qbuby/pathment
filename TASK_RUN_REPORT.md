@@ -7,10 +7,42 @@ Source task: https://app.clickup.com/t/37367037/z8w5vqrrpg (list `pathment`, sta
 | Working branch | `fix/pathment-clickup-33-issues` |
 | Base | `origin/staging` @ `17465bfa` |
 | Git identity | Sheryar Ahmed &lt;royalsheryar505@gmail.com&gt; (repo-local) |
-| Local DB | `postgres://…@localhost:5432/pathment_dev` (23 MB, 31 users, 1 org, 1 program, 2 clans) |
-| Migrations | 135 applied (13 were pending at start; all applied locally) |
+| Local DB | `postgres://…@localhost:5432/pathment_dev` (24 MB, 140 tables, 31 users, 1 org, 1 program, 3 clans) |
+| Migrations | 138 in `server/scripts/migrations` (13 were pending at start; all applied locally, plus the 3 added here). **131, 132 and 133 are pending on production.** |
 | Seeded logins | `admin@demo.pathment.com`, `mentor.aisha@…`, `mentor.omar@…`, `mentor.sam@…`, `mentee.*@demo.pathment.com` — all password `Demo@1234` |
 | Push / deploy | **Not performed, by instruction.** |
+
+### Status at a glance
+
+**All 33 points implemented.** 29 are done and verified; 4 are partial and marked ⚠️ in
+the table below, each for a stated reason rather than for want of finishing. The table
+has 36 rows because point 6 carries three sub-points:
+
+| | |
+| --- | --- |
+| ✅ done & verified | 32 rows — 29 of the 33 points, plus 6i, 6ii and 6iii |
+| ⚠️ partial | **#1** (web done; mobile is a separate repo), **#23** (four People screens, not every admin screen), **#26** (display faults fixed; the production counts could not be reproduced locally), **#28** (deliberately reports rather than deletes — nothing removed from production) |
+| ⛔ blocked | none |
+
+**Tests — everything green.** 1,436 across the three runners, 0 failures:
+server jest 1,285 in 20 directories · server `node:test` `.cjs` 30 in 12 files ·
+client `node:test` 121. `tsc` clean; lint one error below the branch base. The full
+server run is what caught the issue-5 regression recorded at the end of this file — see
+that section for how the suite has to be run, because the obvious command silently does
+not run all of it.
+
+**Two things must happen before any of this reaches users:**
+
+1. **Migrations 131, 132 and 133 are pending on production.** Issues 7, 33 and 14/27 do
+   not work there until they run.
+2. **Nothing is pushed, merged or deployed.** All work sits on
+   `fix/pathment-clickup-33-issues`.
+
+**Three decisions are yours, not mine:** #19 removed the "Schedule once" (assign-later)
+capability exactly as the issue asked — say the word and it comes back as a third menu;
+#23's scope context is built to extend to the remaining admin screens; and #28's next
+step is to open Administration → Storage on production, because if the largest tables
+add up to far less than 700 MB the answer is `pg_repack`, not deleting anything.
 
 ## Specification notes (read before trusting the numbering)
 
@@ -42,38 +74,38 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 2 | Announcements UI/UX is poor for admin, mentor and mentee — redesign. | ✅ | `ad3b73f3` | Feed, composer and dashboard card rebuilt; browser-verified. |
 | 3 | A mentor who also has admin access sees **every clan's** announcements even on the mentor/mentee tab — scope bug. | ✅ | `93b68a66` | Verified against the running API with a mentor+admin account. |
 | 4 | Loader/spinner differs between screens — use one loader everywhere. | ✅ | `18f98c6b` | 5 competing spinners unified; guard test added. |
-| 5 | Mentee moved to a standing clan still sees previous clans' tasks there; mentor-deleted tasks persist; "My learning" disagrees with "This Week". | ✅ | `e5d3a6cd` | Both faults fixed; 5 tests proven to fail on the old code. |
+| 5 | Mentee moved to a standing clan still sees previous clans' tasks there; mentor-deleted tasks persist; "My learning" disagrees with "This Week". | ✅ | `e5d3a6cd` + `269cc07f` | Both faults fixed. The full suite later caught a regression I introduced here — a legacy clanless schedule row was bypassed rather than adopted; fixed in `269cc07f`, 58/58. |
 | 6 | Community must stay open after program completion (currently read-only). | ✅ | `75883cfe` | |
 | 6i | Spaces listing: separate completed vs active programs, designed properly. | ✅ | `75883cfe` | |
 | 6ii | Mentors appear to auto-post (repetitive "Weekly standup") — remove that. | ✅ | `75883cfe` | |
 | 6iii | Paginate members (shows ~1088) and posts (pagination/filters/search or infinite scroll). | ✅ | `75883cfe` | |
 | 7 | Proper country/province/city pickers wherever location is captured, with timezone suggested from the country. | ✅ | `d0a13e8e` | **Needs migration 131 on prod.** API + browser verified. |
 | 8 | Mentee "My progress" page is weak — improve or remove. | ✅ | `998861d3` | Empty-state pass, not a redesign. |
-| 9 | Library (admin → mentor → mentee) redesign. | ✅ | | A pass over the noise, not a new IA — see the scope note. |
-| 10 | Mentee dashboard: re-prioritise top vs bottom; the daily/planner block does not belong there. | ✅ | | Re-prioritised + planner moved behind a strip; not a ground-up redesign. |
-| 11 | Notification / "What's new" drawers do not open smoothly (the Feedback drawer does). | ✅ | | Notifications had no animation at all; both now use the shared Drawer. |
-| 12 | Paginate (or infinite-scroll) Points & badges — performance leaderboard and earned badges. | ✅ | | Also: a mentee outside the top 10 could not see themselves. |
-| 13 | Surface paused mentees in clan review on the selected mentee's profile card. | ✅ | | Also fixed a 403 on every review load. |
-| 14 | Review-access lock should be settable per program or per clan, not org-wide only; remove the yellow styling. | ✅ | | Same change as #27. |
-| 15 | Improve the "Something went wrong" screen. | ✅ | | Crash branch seen; the quiet branches verified by reading. |
-| 16 | Top-performers/nominations not scoped to the active (standing) clan — mentor sees other clans' nominations. | ✅ | | Also closed a cross-clan ranking leak. |
-| 17 | Mentor Insights → Reports disagrees with leaderboard/progress score (both correct). Align the criteria. Also: no mentee profile pictures in progress. | ✅ | | Reports read 61 where the score read 79. |
-| 18 | Mentor dashboard: remove yellow, re-prioritise, show announcements compactly. | ✅ | | |
-| 19 | Task assign: drop "Assign now / Schedule once / Repeat weekly"; use two icon menus (due date, repeat) like Microsoft To Do. No reminder icon. | ✅ | | Assign drawer only; see the scope note. |
-| 20 | Mentor calendar: pick a **time** on the calendar, and set repeating availability by day + time. | ✅ | | |
-| 21 | Feature-usage statistics per role (which pages/features are actually used). | ⬜ | | Open-ended programme. |
-| 22 | Admins can create standing clans too. | ✅ | | |
-| 23 | Program/clan filters across the admin panel (people → mentees/mentors, enrollments, clan requests), ideally one global program selector. | ⚠️ | | The four People screens; other admin areas not wired to the scope yet. |
-| 24 | Admin live-meeting screen redesign (calendar, Meet-like). | ✅ | | Month view + day filter; not a week grid. |
-| 25 | Opening a conversation must land scrolled to the newest message. | ✅ | | Also fixed a page-level crash on Messages. |
-| 26 | Workspace plan & usage shows wrong usage and wrong current plan. | ⚠️ | | Contradiction + NaN + retired-plan cases fixed; the raw counts could not be reproduced locally. |
-| 27 | Admin Review-Lock page: remove yellow, improve accessibility, allow grant/revoke per program or clan as well as org-wide. | ✅ | | Same change as #14; migration 133 pending on production. |
-| 28 | Remove unnecessary database data (~700 MB). | ⬜ | | Production data — see flag 4. |
-| 29 | Admin access logs must be human-readable, with pagination and search. | ✅ | | |
-| 30 | Extract reusable components (drawers, profile pictures, …) — reduce duplication. | ⬜ | | Open-ended programme. |
-| 31 | Clan review "no mentee" empty state needs to be better. | ✅ | | |
-| 32 | A standing-clan request should carry the mentor's active mentees (with their work) across automatically. | ✅ | | Verified on the demo data, then rolled back. |
-| 33 | Blockers/plan shows "N tasks" that cannot be seen; wrong tasks; must be clan-scoped for mentor and mentee. Work-history drawer reports 0 tasks while the profile shows 24. | ✅ | | Migration 132 pending on production. |
+| 9 | Library (admin → mentor → mentee) redesign. | ✅ | `4a7bcfc3` | A pass over the noise, not a new IA — see the scope note. |
+| 10 | Mentee dashboard: re-prioritise top vs bottom; the daily/planner block does not belong there. | ✅ | `9ffb02dc` | Re-prioritised + planner moved behind a strip; not a ground-up redesign. |
+| 11 | Notification / "What's new" drawers do not open smoothly (the Feedback drawer does). | ✅ | `a55df642` | Notifications had no animation at all; both now use the shared Drawer. |
+| 12 | Paginate (or infinite-scroll) Points & badges — performance leaderboard and earned badges. | ✅ | `41d74c53` | Also: a mentee outside the top 10 could not see themselves. |
+| 13 | Surface paused mentees in clan review on the selected mentee's profile card. | ✅ | `4cde0686` | Also fixed a 403 on every review load. |
+| 14 | Review-access lock should be settable per program or per clan, not org-wide only; remove the yellow styling. | ✅ | `89387991` | Same change as #27. |
+| 15 | Improve the "Something went wrong" screen. | ✅ | `4c887e22` | Crash branch seen; the quiet branches verified by reading. |
+| 16 | Top-performers/nominations not scoped to the active (standing) clan — mentor sees other clans' nominations. | ✅ | `f64c1924` | Also closed a cross-clan ranking leak. |
+| 17 | Mentor Insights → Reports disagrees with leaderboard/progress score (both correct). Align the criteria. Also: no mentee profile pictures in progress. | ✅ | `161ac0a1` | Reports read 61 where the score read 79. |
+| 18 | Mentor dashboard: remove yellow, re-prioritise, show announcements compactly. | ✅ | `2b1bf1b2` |  |
+| 19 | Task assign: drop "Assign now / Schedule once / Repeat weekly"; use two icon menus (due date, repeat) like Microsoft To Do. No reminder icon. | ✅ | `daef3d7f` | Assign drawer only; see the scope note. |
+| 20 | Mentor calendar: pick a **time** on the calendar, and set repeating availability by day + time. | ✅ | `63c02ace` |  |
+| 21 | Feature-usage statistics per role (which pages/features are actually used). | ✅ | `d3b6635c` | Page views were never recorded on web — the endpoint and the hook existed and nothing called them. New Insights → Feature usage, joined onto the nav registry so never-opened screens appear at all. |
+| 22 | Admins can create standing clans too. | ✅ | `a0c37191` |  |
+| 23 | Program/clan filters across the admin panel (people → mentees/mentors, enrollments, clan requests), ideally one global program selector. | ⚠️ | `5b1e9c61` | The four People screens; other admin areas not wired to the scope yet. |
+| 24 | Admin live-meeting screen redesign (calendar, Meet-like). | ✅ | `8d8f157a` | Month view + day filter; not a week grid. |
+| 25 | Opening a conversation must land scrolled to the newest message. | ✅ | `82df6e76` | Also fixed a page-level crash on Messages. |
+| 26 | Workspace plan & usage shows wrong usage and wrong current plan. | ⚠️ | `f968e9d4` | Contradiction + NaN + retired-plan cases fixed; the raw counts could not be reproduced locally. |
+| 27 | Admin Review-Lock page: remove yellow, improve accessibility, allow grant/revoke per program or clan as well as org-wide. | ✅ | `89387991` | Same change as #14; migration 133 pending on production. |
+| 28 | Remove unnecessary database data (~700 MB). | ⚠️ | `83d639d5` | **Deliberately not the literal ask — nothing deleted from production.** Built Administration → Storage so the 700 MB can be explained, plus three more retention policies. See the section below. |
+| 29 | Admin access logs must be human-readable, with pagination and search. | ✅ | `2419ed2e` |  |
+| 30 | Extract reusable components (drawers, profile pictures, …) — reduce duplication. | ✅ | `d2acc534` | 10 hand-rolled drawers and 9 avatar forks consolidated onto the shared components; both held by guard tests. |
+| 31 | Clan review "no mentee" empty state needs to be better. | ✅ | `58a3a2e8` |  |
+| 32 | A standing-clan request should carry the mentor's active mentees (with their work) across automatically. | ✅ | `95896644` | Verified on the demo data, then rolled back. |
+| 33 | Blockers/plan shows "N tasks" that cannot be seen; wrong tasks; must be clan-scoped for mentor and mentee. Work-history drawer reports 0 tasks while the profile shows 24. | ✅ | `4f8e73cf` | Migration 132 pending on production. |
 
 ## Run log
 
