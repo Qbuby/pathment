@@ -41,7 +41,15 @@ export type RecordTask =
   });
 
 export interface RecordClan {
-  clanId: string;
+  /**
+   * `null` on the unattributed group — work whose `clan_id` is unset and which
+   * no single clan can be proved to own. It is not a clan, so it has no id;
+   * the alternative was dropping the rows, which is how this panel came to
+   * report 0 of 0 tasks for a mentee with twenty-three.
+   */
+  clanId: string | null;
+  /** Only ever true on that one group. */
+  unattributed?: boolean;
   clanName: string | null;
   clanKind: 'cohort' | 'standing';
   programId: string | null;

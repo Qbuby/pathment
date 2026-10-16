@@ -35,7 +35,24 @@ const logger = require('../utils/logger');
  *
  * Org isolation is automatic (`db/organizationScope.js` injects
  * organization_id), so there is deliberately no org predicate below.
+ *
+ * WORK WITH NO CLAN still counts. `assigned_tasks.clan_id` is nullable and a
+ * great deal of older work carries no clan at all — assigned before clans were
+ * attributed, or to a mentee who had no membership at the time. Reading only
+ * `clan_id IN (their clans)` dropped every one of those rows, so this panel
+ * told a mentor "0 of 0 tasks done" about a mentee whose own profile listed
+ * twenty-three. Two readings of the same work disagreeing is worse than either
+ * being wrong on its own.
+ *
+ * They are gathered into one unattributed group instead — reported, not
+ * guessed at. Migration 132 attributes the rows whose clan is unambiguous;
+ * whatever is left genuinely cannot be placed, and saying so is the honest
+ * answer.
  */
+
+/** Key for the bucket of work that carries no clan. Never leaves this file. */
+const UNATTRIBUTED = '__unattributed__';
+
 class MenteeRecordService {
   /**
    * Every clan this mentee has been in — the union of two sources.
@@ -172,6 +189,32 @@ class MenteeRecordService {
   }
 
   /**
+   * The same tallies, for the work that carries no clan at all.
+   *
+   * Counted with the identical rules as `tallyByMenteeClan` — "unfinished" is
+   * anything not completed and not cancelled — so the unattributed group can
+   * be added to the totals without two definitions of done drifting apart.
+   */
+  async tallyUnattributed(menteeId) {
+    const [tasks, openBlockers] = await Promise.all([
+      models.AssignedTask.findAll({
+        where: { menteeId, clanId: null },
+        attributes: ['status'],
+        raw: true,
+      }),
+      models.Blocker.count({ where: { menteeId, clanId: null, status: { [Op.ne]: 'resolved' } } }),
+    ]);
+
+    const metrics = { tasksAssigned: 0, tasksCompleted: 0, tasksUnfinished: 0, openBlockers };
+    for (const t of tasks) {
+      metrics.tasksAssigned += 1;
+      if (t.status === 'completed') metrics.tasksCompleted += 1;
+      else if (t.status !== 'cancelled') metrics.tasksUnfinished += 1;
+    }
+    return metrics;
+  }
+
+  /**
    * The record. `actor` decides the tiers; the mentee decides the content.
    *
    * `includeTasks: false` returns clans + metrics only — what the clan-review
@@ -185,6 +228,18 @@ class MenteeRecordService {
 
     const clans = await this.listClanHistory(menteeId);
     const sectionErrors = {};
+
+    // Work with no clan is counted whether or not the mentee has ever had a
+    // membership — a mentee with no clan row at all is precisely the case that
+    // produced these tasks, so the early return below must not skip it.
+    let loose = { tasksAssigned: 0, tasksCompleted: 0, tasksUnfinished: 0, openBlockers: 0 };
+    try {
+      loose = await this.tallyUnattributed(menteeId);
+    } catch (error) {
+      sectionErrors.unattributed = error.message;
+      logger.warn(`[menteeRecord] unattributed tally failed for ${menteeId}: ${error.message}`);
+    }
+    const hasLoose = loose.tasksAssigned > 0 || loose.openBlockers > 0;
 
     /**
      * `hasAdminAccess`, not `actsAsAdmin`: this is a per-record read, matching
@@ -204,12 +259,13 @@ class MenteeRecordService {
       mentoredByViewer: mine.has(clan.clanId),
     }));
 
-    if (!withVisibility.length) {
+    if (!withVisibility.length && !hasLoose) {
       return {
         menteeId,
         mentee: mentee.toJSON(),
         viewer: { isAdmin, mentoredClanIds },
         clans: [],
+        certificate: null,
         totals: { clans: 0, programmes: 0, tasksAssigned: 0, tasksCompleted: 0, tasksUnfinished: 0, openBlockers: 0 },
         sectionErrors,
       };
@@ -226,7 +282,9 @@ class MenteeRecordService {
     }
 
     const tasksByClan = includeTasks
-      ? await this._tasksByClan(menteeId, clanIds, withVisibility, actor, { taskLimit, sectionErrors })
+      ? await this._tasksByClan(menteeId, clanIds, withVisibility, actor, {
+        taskLimit, sectionErrors, includeUnattributed: hasLoose, isAdmin,
+      })
       : new Map();
 
     const key = `${menteeId}:`;
@@ -250,6 +308,33 @@ class MenteeRecordService {
       return new Date(b.joinedAt || 0) - new Date(a.joinedAt || 0);
     });
 
+    /**
+     * Work that belongs to no clan, last — it is the least actionable thing
+     * here and must never push a real clan down the list.
+     *
+     * `summary` unless the viewer is an admin: with no clan there is no clan to
+     * mentor, so there is nothing that could grant the detail tier. A task the
+     * viewer SET is still full detail, decided per task in `_tasksByClan`.
+     */
+    if (hasLoose) {
+      out.push({
+        clanId: null,
+        unattributed: true,
+        clanName: null,
+        clanKind: 'cohort',
+        programId: null,
+        programName: null,
+        membershipStatus: null,
+        joinedAt: null,
+        leftAt: null,
+        current: false,
+        visibility: isAdmin ? 'full' : 'summary',
+        mentoredByViewer: false,
+        metrics: loose,
+        ...(includeTasks ? { tasks: tasksByClan.get(UNATTRIBUTED) || [] } : {}),
+      });
+    }
+
     const certificate = tally.latestCertByMentee.get(menteeId) || null;
     return {
       menteeId,
@@ -260,7 +345,9 @@ class MenteeRecordService {
         ? { tier: certificate.tier, certificateNumber: certificate.certificateNumber }
         : null,
       totals: {
-        clans: out.length,
+        // The loose group is not a clan, so it is not counted as one — but its
+        // work is counted, which is the whole point of surfacing it.
+        clans: out.filter((c) => !c.unattributed).length,
         programmes: new Set(out.map((c) => c.programId).filter(Boolean)).size,
         tasksAssigned: out.reduce((n, c) => n + c.metrics.tasksAssigned, 0),
         tasksCompleted: out.reduce((n, c) => n + c.metrics.tasksCompleted, 0),
@@ -278,11 +365,19 @@ class MenteeRecordService {
    * alone serialised. Deciding first and deleting later is how this kind of
    * boundary leaks.
    */
-  async _tasksByClan(menteeId, clanIds, clansWithVisibility, actor, { taskLimit, sectionErrors }) {
+  async _tasksByClan(menteeId, clanIds, clansWithVisibility, actor, {
+    taskLimit, sectionErrors, includeUnattributed = false, isAdmin = false,
+  }) {
     const byClan = new Map(clanIds.map((id) => [id, []]));
+    if (includeUnattributed) byClan.set(UNATTRIBUTED, []);
 
     const rows = await models.AssignedTask.findAll({
-      where: { menteeId, clanId: { [Op.in]: clanIds } },
+      where: {
+        menteeId,
+        ...(includeUnattributed
+          ? { [Op.or]: [{ clanId: { [Op.in]: clanIds } }, { clanId: null }] }
+          : { clanId: { [Op.in]: clanIds } }),
+      },
       attributes: ['id', 'clanId', 'mentorId', 'status', 'dueDate', 'completedAt', 'isLate', 'titleOverride', 'finalRating'],
       include: [{ model: models.RoadmapTask, as: 'roadmapTask', attributes: ['title', 'type'], required: false }],
       order: [['assignedAt', 'DESC']],
@@ -290,13 +385,18 @@ class MenteeRecordService {
     });
 
     const visibilityOf = new Map(clansWithVisibility.map((c) => [c.clanId, c.visibility]));
+    // No clan means no clan to mentor, so only an admin reaches the full tier
+    // that way; tier 3 still admits a task the viewer set themselves.
+    if (includeUnattributed) visibilityOf.set(UNATTRIBUTED, isAdmin ? 'full' : 'summary');
+
+    const bucketOf = (row) => row.clanId || UNATTRIBUTED;
     const shaped = rows.map((row) => {
       const assignedByViewer = row.mentorId === actor.id;
       return {
         row,
         assignedByViewer,
         // Tier 3 overrides the clan's tier, per task.
-        detail: visibilityOf.get(row.clanId) === 'full' || assignedByViewer ? 'full' : 'titleOnly',
+        detail: visibilityOf.get(bucketOf(row)) === 'full' || assignedByViewer ? 'full' : 'titleOnly',
       };
     });
 
@@ -339,7 +439,7 @@ class MenteeRecordService {
         base.finalRating = row.finalRating;
         base.submissions = submissionsByTask.get(row.id) || [];
       }
-      byClan.get(row.clanId)?.push(base);
+      byClan.get(bucketOf(row))?.push(base);
     }
 
     return byClan;

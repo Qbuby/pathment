@@ -832,6 +832,19 @@ class LinearRoadmapService {
     }
 
     const resolvedClanId = await resolveMenteeClanId(menteeId, clanId, { actorId: mentorId });
+    /**
+     * Refuse rather than write work that belongs to no clan.
+     *
+     * `resolveMenteeClanId` returns null when the mentee has no clan at all,
+     * and this used to go on and create the task with `clan_id = null`. Every
+     * clan-scoped read then filtered it out while the mentee's own profile
+     * still counted it, so the work existed in one place and not the other —
+     * the cause migration 132 had to clean up after. `createCustomTask` has
+     * refused this for the same reason; roadmap assignment now matches it.
+     */
+    if (!resolvedClanId) {
+      throw new ValidationError('Place this mentee in a clan before assigning roadmap work to them');
+    }
     await clanLifecycleService.assertClanWritable(resolvedClanId);
 
     const actualClan = resolvedClanId && await models.Clan.findByPk(resolvedClanId);

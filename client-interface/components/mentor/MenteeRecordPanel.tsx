@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { ChevronDown, History, Loader2, Lock, Users2 } from 'lucide-react';
+import { ChevronDown, FileQuestion, History, Loader2, Lock, Users2 } from 'lucide-react';
 import { mentorApi } from '@/lib/services/mentor-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import type { MenteeRecord, RecordClan, RecordTask } from '@/lib/types/mentee-record';
@@ -20,6 +20,9 @@ import { ContinueWorkLauncher } from '@/components/mentor/ContinueWorkLauncher';
  * wherever the mentee went since. Both are decided on the server; nothing here
  * hides anything, because anything hidden here would still have been sent.
  */
+/** Stands in for the missing clan id on the unattributed group. */
+const UNATTRIBUTED = '__unattributed__';
+
 export function MenteeRecordPanel({ menteeId }: { menteeId: string }) {
   const { clans, activeClanId } = useClan();
   const activeClan = resolveActiveMentorClan(clans, activeClanId);
@@ -61,9 +64,9 @@ export function MenteeRecordPanel({ menteeId }: { menteeId: string }) {
     );
   }
 
-  const toggle = (clanId: string) => setOpen((prev) => {
+  const toggle = (key: string) => setOpen((prev) => {
     const next = new Set(prev);
-    if (next.has(clanId)) next.delete(clanId); else next.add(clanId);
+    if (next.has(key)) next.delete(key); else next.add(key);
     return next;
   });
 
@@ -105,14 +108,18 @@ export function MenteeRecordPanel({ menteeId }: { menteeId: string }) {
       ))}
 
       <ul className="space-y-3">
-        {record.clans.map((clan) => (
-          <ClanCard
-            key={clan.clanId}
-            clan={clan}
-            expanded={open.has(clan.clanId)}
-            onToggle={() => toggle(clan.clanId)}
-          />
-        ))}
+        {record.clans.map((clan) => {
+          // The unattributed group has no clan id; it is still one row here.
+          const key = clan.clanId ?? UNATTRIBUTED;
+          return (
+            <ClanCard
+              key={key}
+              clan={clan}
+              expanded={open.has(key)}
+              onToggle={() => toggle(key)}
+            />
+          );
+        })}
       </ul>
     </div>
   );
@@ -130,11 +137,13 @@ function ClanCard({ clan, expanded, onToggle }: { clan: RecordClan; expanded: bo
       >
         <div className="min-w-0">
           <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-foreground">
-            <Users2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-            {clan.clanName || 'Unnamed clan'}
+            {clan.unattributed
+              ? <FileQuestion className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+              : <Users2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />}
+            {clan.unattributed ? 'Not tied to a clan' : (clan.clanName || 'Unnamed clan')}
             {/* A clan they LEFT is the history this panel exists for — label it
                 rather than letting it look like a clan they are still in. */}
-            {!clan.current && (
+            {!clan.current && !clan.unattributed && (
               <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
                 {clan.leftAt ? `left ${new Date(clan.leftAt).toLocaleDateString()}` : 'past'}
               </span>
@@ -151,7 +160,9 @@ function ClanCard({ clan, expanded, onToggle }: { clan: RecordClan; expanded: bo
             )}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {clan.programName || 'No programme'}
+            {clan.unattributed
+              ? 'Assigned before this mentee had a clan, or to one that cannot be told apart'
+              : (clan.programName || 'No programme')}
             {' · '}
             {clan.metrics.tasksCompleted}/{clan.metrics.tasksAssigned} done
             {clan.metrics.tasksUnfinished > 0 && ` · ${clan.metrics.tasksUnfinished} unfinished`}
@@ -169,11 +180,15 @@ function ClanCard({ clan, expanded, onToggle }: { clan: RecordClan; expanded: bo
           {clan.visibility === 'summary' && (
             <p className="mb-3 inline-flex items-center gap-1.5 rounded-lg bg-muted/60 px-2.5 py-1.5 text-[11px] text-muted-foreground">
               <Lock className="h-3 w-3 shrink-0" aria-hidden />
-              Summary only — submissions and feedback stay with this clan’s mentors.
+              {clan.unattributed
+                ? 'Summary only — detail on work with no clan is an admin read.'
+                : 'Summary only — submissions and feedback stay with this clan’s mentors.'}
             </p>
           )}
           {!tasks.length ? (
-            <p className="text-xs text-muted-foreground">No work recorded in this clan.</p>
+            <p className="text-xs text-muted-foreground">
+              {clan.unattributed ? 'No work here.' : 'No work recorded in this clan.'}
+            </p>
           ) : (
             <ul className="space-y-1.5">
               {tasks.map((task) => <TaskRow key={task.id} task={task} />)}

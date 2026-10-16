@@ -48,7 +48,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 6ii | Mentors appear to auto-post (repetitive "Weekly standup") — remove that. | ✅ | `75883cfe` | |
 | 6iii | Paginate members (shows ~1088) and posts (pagination/filters/search or infinite scroll). | ✅ | `75883cfe` | |
 | 7 | Proper country/province/city pickers wherever location is captured, with timezone suggested from the country. | ✅ | `d0a13e8e` | **Needs migration 131 on prod.** API + browser verified. |
-| 8 | Mentee "My progress" page is weak — improve or remove. | ⬜ | | |
+| 8 | Mentee "My progress" page is weak — improve or remove. | ✅ | `998861d3` | Empty-state pass, not a redesign. |
 | 9 | Library (admin → mentor → mentee) redesign. | ⬜ | | |
 | 10 | Mentee dashboard: re-prioritise top vs bottom; the daily/planner block does not belong there. | ⬜ | | |
 | 11 | Notification / "What's new" drawers do not open smoothly (the Feedback drawer does). | ⬜ | | |
@@ -73,7 +73,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 30 | Extract reusable components (drawers, profile pictures, …) — reduce duplication. | ⬜ | | Open-ended programme. |
 | 31 | Clan review "no mentee" empty state needs to be better. | ⬜ | | |
 | 32 | A standing-clan request should carry the mentor's active mentees (with their work) across automatically. | ⬜ | | |
-| 33 | Blockers/plan shows "N tasks" that cannot be seen; wrong tasks; must be clan-scoped for mentor and mentee. Work-history drawer reports 0 tasks while the profile shows 24. | ⬜ | | Same family as #5. |
+| 33 | Blockers/plan shows "N tasks" that cannot be seen; wrong tasks; must be clan-scoped for mentor and mentee. Work-history drawer reports 0 tasks while the profile shows 24. | ✅ | | Migration 132 pending on production. |
 
 ## Run log
 
@@ -334,3 +334,108 @@ reaches the server (50 options → 1) and Lahore selects. Screenshot captured.
 **Scope note.** Applied to the three Settings → Profile forms, which is where the issue
 points ("mostly in profiles"). The public intake form has its own field system
 (`lib/config/intakeFields.ts`) and was **not** converted — flagged as remaining work.
+
+### Issue 8 — the mentee "My progress" page
+
+**Root cause.** The page was not thin by design, it *collapsed*. Every section whose data
+was empty returned `null` instead of rendering, so a mentee who had not started yet saw
+four bare numbers, two empty boxes and a lot of white space with nothing explaining any of
+it. One tile read `0/-`, which is not a value — it is a template that ran out of data.
+
+**Fix.** A pass over the empty and low-data states. The metric tiles say what they count
+("of your work delivered by its due date"); the week figure reads "Not started" with the
+reason instead of `0/-`; the roadmaps section explains itself and points at My learning,
+where the work actually is; and the two empty "what is slowing you down" boxes become one
+line saying nothing is, plus the thing mentees most need told — that logging a roadblock
+helps the fair measure rather than hurting it.
+
+**Files.** `client-interface/app/mentee/progress/page.tsx`.
+
+**Tests run.** `tsc` clean, build compiles, client suite 110 pass / 0 fail.
+
+**Browser-verified** as a seeded mentee with no roadmap, no roadblocks and no delays — the
+exact state in the report screenshot. Screenshot captured.
+
+**Scope note.** This is explicitly a pass over empty states, not a ground-up redesign. The
+issue offered "improve it properly or either remove it"; removing it would take the daily
+log, points and certificates tabs with it.
+
+### Issue 33 — work that belonged to no clan
+
+**Root cause.** `assigned_tasks.clan_id` and `blockers.clan_id` are nullable, and a great
+deal of work carried neither — assigned before clans were attributed, or to a mentee with
+no membership at the time. Every clan-scoped read in the product filters on that column,
+so all of those rows were invisible to all of them, while the mentee's own profile — which
+counts by mentee, not by clan — still listed them. That is the exact disagreement in the
+report: the work-history drawer said *"2 clans · 0 of 0 tasks done"* and *"No work recorded
+in this clan"* twice, about a mentee whose profile tab read **Work (24)**.
+
+Reproduced before changing anything: `mentee.mei` had **23 tasks on her profile** and a
+record of `tasksAssigned: 0`. Across the whole local database, **373 of 397 assigned tasks
+and 3 of 3 blockers had no clan at all.**
+
+**Fix, in three parts.**
+
+1. **The read stops dropping them.** `menteeRecordService` gathers work with no clan into
+   one group — reported, not guessed at — so a count here can no longer disagree with the
+   profile. It is listed last, is never counted as a clan in `totals.clans`, and is
+   `summary` tier for anyone but an admin: no clan means no clan to mentor, so nothing
+   could grant the detail tier. A task the viewer *set* is still full detail, per task.
+2. **Migration 132 attributes what can be attributed, without guessing.** A row moves only
+   when exactly one clan can own it: by enrolment (the task and the membership name the
+   same enrolment), or by sole membership — and then only when that one clan is a
+   **cohort**. A standing clan is deliberately excluded, because a mentee moved into one
+   has older cohort work that does not belong to it, and attributing it there would
+   recreate the leak of issue 5. This mirrors the rule `clanScopedWhere` already applies on
+   read. Locally it placed all 373 tasks and all 3 blockers with **nothing left ambiguous**.
+3. **The write holes are closed.** `linearRoadmapService.assignToMentee` now refuses to
+   create roadmap work for a mentee with no clan, matching what `taskService.createCustomTask`
+   has always done — it used to write `clan_id = null` and move on. `seed-demo.js` never set
+   a clan on any task or blocker, which is why the demo organisation looked broken; it does
+   now.
+
+**Files.** `server/src/services/menteeRecordService.js`,
+`server/src/services/linearRoadmapService.js`,
+`server/scripts/migrations/132_attribute_orphaned_work_to_clans.js`,
+`server/scripts/seed-demo.js`, `server/tests/unit/mentee-record-unattributed.test.js`,
+`server/tests/admin/program-completion-standing.test.js`,
+`client-interface/components/mentor/MenteeRecordPanel.tsx`,
+`client-interface/lib/types/mentee-record.ts`.
+
+**Migration 132 has not been run on production.** It is idempotent (it only touches rows
+where `clan_id IS NULL`), has a `--dry-run` that executes the real statements in a
+transaction it throws away, and is deliberately **not reversible** — undoing it would clear
+`clan_id` on rows indistinguishable from ones legitimately set since.
+
+**Tests run.** 9 new unit tests (`tests/unit/mentee-record-unattributed.test.js`) → 9 pass.
+**8 of the 9 were confirmed failing against the pre-fix service**; the ninth is a
+regression guard that passes either way.
+
+**A stale test was found and corrected.** `tests/admin/program-completion-standing.test.js`
+still asserted that posting in a finished clan's community throws `CLAN_FROZEN` — the rule
+issue 6 deliberately removed. It had been failing silently (see below) and now asserts the
+intended contract: the community stays open on a frozen clan while tasks, submissions,
+progress logs, blockers and daily logs stay shut. 10 pass.
+
+**The test database was two migrations behind**, which is worth recording because it was
+hiding real failures: `pathment_test` had never had migration 131, so `User.create` threw
+on every insert and *every test in several suites* failed at the first line of its setup
+with an empty error message. 131 and 132 are now applied to it.
+
+**Verified end to end.**
+- Service level: `mentee.mei` → `tasksAssigned: 23`, `tasksCompleted: 21`, attributed to
+  MERN Fellows, matching her profile's Work (23).
+- HTTP: `GET /api/mentor/mentee/:id/record` returns the same numbers.
+- Browser, clan review → Work history drawer: **"2 clans · 22 of 24 tasks done · 2
+  unfinished"**, MERN Fellows showing `22/24` — where it previously read `0 of 0`.
+- Browser, the unattributed group: two tasks were temporarily orphaned, and the drawer
+  rendered *"Not tied to a clan · 2/2 done"* with the header total still reading 24. The
+  rows were then restored by re-running migration 132, which also demonstrated its
+  idempotence.
+- The day strip is correctly clan-scoped: the standing clan reports 0 blocks and 0 loose
+  items (it holds no work), the cohort reports the 2 genuinely open ones.
+
+**Found while verifying, fixed under issue 13:** `GET /api/mentor/pause-suggestions`
+returns **403** for a clan the mentor genuinely leads, whenever that clan is finished —
+`_scopeClans` filters on `frozenAt: null`. Clan review requests it on every load, so the
+page has been logging a forbidden error since programmes started being completed.

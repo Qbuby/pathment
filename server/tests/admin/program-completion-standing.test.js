@@ -90,11 +90,22 @@ describe('formal completion and independent standing clans', () => {
       .rejects.toMatchObject({ code: 'CLAN_FROZEN' });
     await expect(require('../../src/services/taskProgressService').log(sara.id, historicalTask.id, { note: 'After close', minutesSpent: 10 }))
       .rejects.toMatchObject({ code: 'CLAN_FROZEN' });
+    /**
+     * The community is the exception, and deliberately so.
+     *
+     * Freezing a clan closes the WORK — nothing may be assigned, submitted,
+     * logged or blocked against a programme that has ended, because all of it
+     * would land in a closed report. The people are not the work. A cohort
+     * that finishes together is exactly when its members have most to say to
+     * each other, and locking the only room they share the week they graduate
+     * is how a community dies. So posting and commenting stay open on a frozen
+     * clan while everything below stays shut.
+     */
     await expect(community.createPost(sara, { scopeType: 'clan', scopeId: original.id, body: 'After close' }))
-      .rejects.toMatchObject({ code: 'CLAN_FROZEN' });
+      .resolves.toBeTruthy();
     await expect(community.listComments(sara, historicalPost.id)).resolves.toEqual([]);
     await expect(community.addComment(sara, historicalPost.id, { body: 'After close' }))
-      .rejects.toMatchObject({ code: 'CLAN_FROZEN' });
+      .resolves.toBeTruthy();
     await expect(require('../../src/services/frictionService').createBlocker({ menteeId: sara.id, clanId: original.id, title: 'After close' }, sara.id, sara))
       .rejects.toMatchObject({ code: 'CLAN_FROZEN' });
     await expect(require('../../src/services/dailyLogService').upsert(sara.id, { clanId: original.id, dateKey: '2026-10-04', note: 'After close' }))

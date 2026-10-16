@@ -770,6 +770,10 @@ async function seedData() {
         menteeId: m.id,
         mentorId: mentor.id,
         enrollmentId: enrollment.id,
+        // Every clan-scoped read in the product filters on this. Seeding work
+        // without it is what made the demo org's work history read 0 of 0
+        // against profiles listing twenty-odd tasks (migration 132).
+        clanId: clan.id,
         status: t.status,
         assignedAt: daysAgo(Math.max(2, 62 - t.idx * 2)),
         dueDate,
@@ -838,6 +842,7 @@ async function seedData() {
         menteeId: m.id,
         mentorId: mentor.id,
         enrollmentId: enrollment.id,
+        clanId: clan.id,
         status: "revision_needed",
         assignedAt: daysAgo(9),
         dueDate: daysAhead(3),
@@ -879,6 +884,7 @@ async function seedData() {
         menteeId: m.id,
         mentorId: mentor.id,
         enrollmentId: enrollment.id,
+        clanId: clan.id,
         status: "in_progress",
         assignedAt: daysAgo(11),
         dueDate: daysAhead(1),
@@ -970,15 +976,15 @@ async function seedData() {
   const sara = mentees["mentee.sara"].user;
 
   await models.Blocker.create({
-    menteeId: noor.id, createdBy: noor.id, title: "Stuck on JWT refresh-token flow",
+    menteeId: noor.id, createdBy: noor.id, clanId: feClan.id, title: "Stuck on JWT refresh-token flow",
     category: "technical", severity: "medium", status: "open", openedAt: daysAgo(3),
   });
   await models.Blocker.create({
-    menteeId: ivan.id, createdBy: ivan.id, title: "Exam week — limited availability",
+    menteeId: ivan.id, createdBy: ivan.id, clanId: feClan.id, title: "Exam week — limited availability",
     category: "personal", severity: "medium", status: "open", openedAt: daysAgo(5),
   });
   await models.Blocker.create({
-    menteeId: sara.id, createdBy: aisha.id, title: "No response — needs outreach",
+    menteeId: sara.id, createdBy: aisha.id, clanId: feClan.id, title: "No response — needs outreach",
     category: "personal", severity: "high", status: "open", openedAt: daysAgo(6),
   });
 
@@ -1797,7 +1803,7 @@ async function seedData() {
       async function assignQuiz(target, { taken }) {
         const task = await models.AssignedTask.create({
           roadmapTaskId: quizStep.id, menteeId: target.user.id, mentorId: target.mentor.id,
-          enrollmentId: target.enrollmentId, isCustomTask: true,
+          enrollmentId: target.enrollmentId, clanId: target.clan.id, isCustomTask: true,
           status: taken ? "completed" : "assigned",
           assignedAt: daysAgo(6), dueDate: daysAhead(taken ? -1 : 4),
           startedAt: taken ? daysAgo(2) : null,
@@ -2052,7 +2058,7 @@ async function seedData() {
       async function assignInterview(target, { sat }) {
         const task = await models.AssignedTask.create({
           roadmapTaskId: interviewStep.id, menteeId: target.user.id, mentorId: target.mentor.id,
-          enrollmentId: target.enrollmentId, isCustomTask: true,
+          enrollmentId: target.enrollmentId, clanId: target.clan.id, isCustomTask: true,
           status: sat ? "submitted" : "assigned",
           assignedAt: daysAgo(5), dueDate: daysAhead(sat ? -1 : 6),
           startedAt: sat ? daysAgo(1) : null,
