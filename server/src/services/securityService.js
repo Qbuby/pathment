@@ -48,6 +48,74 @@ const AUDIT_LABELS = {
   PROGRAM_ENROLLED: 'Program enrollment',
 };
 
+/**
+ * Turning a request line into something a person can read.
+ *
+ * `auditTrail` records every state-changing request as `POST /api/...`, which
+ * is the right thing to store and the wrong thing to show: the access log read
+ * as a web-server log, full of lines like
+ * `Post /api/messaging/conversations/8d1e58c5-…/read`. An admin is a person,
+ * not a log parser.
+ *
+ * Each entry below matches a path and says what the person DID. Order matters
+ * — the first match wins — and anything unmatched falls back to a tidied
+ * resource name rather than the raw line, so a new endpoint degrades to
+ * "Updated messaging" instead of leaking its URL.
+ */
+const REQUEST_PHRASES = [
+  { re: /^\/api\/activity\/session/, verb: () => 'Was active in the app', noise: true },
+  { re: /^\/api\/messaging\/conversations\/[^/]+\/read$/, verb: () => 'Opened a conversation', noise: true },
+  { re: /^\/api\/notifications\/.*read/, verb: () => 'Read a notification', noise: true },
+  { re: /^\/api\/auth\/refresh/, verb: () => 'Renewed their session', noise: true },
+  { re: /^\/api\/auth\/login/, verb: () => 'Signed in' },
+  { re: /^\/api\/auth\/logout/, verb: () => 'Signed out' },
+  { re: /^\/api\/messaging/, verb: (m) => (m === 'POST' ? 'Sent a message' : 'Changed a conversation') },
+  { re: /^\/api\/tasks/, verb: (m) => (m === 'POST' ? 'Assigned a task' : m === 'DELETE' ? 'Removed a task' : 'Changed a task') },
+  { re: /^\/api\/clans/, verb: (m) => (m === 'POST' ? 'Created or joined a clan' : m === 'DELETE' ? 'Removed somebody from a clan' : 'Changed a clan') },
+  { re: /^\/api\/programs/, verb: (m) => (m === 'POST' ? 'Created a programme' : m === 'DELETE' ? 'Deleted a programme' : 'Changed a programme') },
+  { re: /^\/api\/admin\/review-lock/, verb: () => 'Changed the review lock' },
+  { re: /^\/api\/admin/, verb: () => 'Changed an admin setting' },
+  { re: /^\/api\/organizations/, verb: () => 'Changed the workspace' },
+  { re: /^\/api\/certificates/, verb: () => 'Worked on certificates' },
+  { re: /^\/api\/community/, verb: (m) => (m === 'POST' ? 'Posted in the community' : 'Changed a community post') },
+  { re: /^\/api\/meetings/, verb: () => 'Changed their calendar' },
+  { re: /^\/api\/profile|^\/api\/users\/me/, verb: () => 'Updated their profile' },
+];
+
+/**
+ * The action patterns that are background activity, for filtering in SQL.
+ *
+ * Kept beside `REQUEST_PHRASES` on purpose: a phrase marked `noise: true`
+ * there must have a pattern here, or the screen would hide a row the query
+ * still returned (or the reverse) and the counts would not add up.
+ */
+const NOISE_PATTERNS = [
+  '%/api/activity/session%',
+  '%/api/messaging/conversations/%/read',
+  '%/api/notifications/%read%',
+  '%/api/auth/refresh%',
+];
+
+/** `POST /api/x/y` → a sentence, a section, and whether it is background noise. */
+function describeRequest(action) {
+  const match = String(action || '').match(/^(GET|POST|PUT|PATCH|DELETE)\s+(\/\S*)$/i);
+  if (!match) return null;
+  const method = match[1].toUpperCase();
+  const path = match[2];
+  const hit = REQUEST_PHRASES.find((p) => p.re.test(path));
+  const resource = path.split('/').filter(Boolean)[1] || 'the workspace';
+  return {
+    label: hit ? hit.verb(method) : `${method === 'DELETE' ? 'Removed' : method === 'POST' ? 'Added' : 'Updated'} ${String(resource).replace(/-/g, ' ')}`,
+    /**
+     * Heartbeats, read receipts and token refreshes are the app working, not
+     * the person acting. They are still recorded — an audit trail with holes
+     * in it is not an audit trail — but they are marked so the screen can
+     * keep them out of the way by default.
+     */
+    noise: Boolean(hit?.noise),
+  };
+}
+
 class SecurityService {
   /**
    * Get user's active sessions
@@ -103,11 +171,47 @@ class SecurityService {
   /**
    * Get user's audit logs
    */
+  /**
+   * One person's audit trail, searchable and without the background chatter.
+   *
+   * `includeNoise` is off by default: session heartbeats, read receipts and
+   * token refreshes are the application working rather than the person
+   * acting, and they outnumbered everything else by enough that the screen
+   * was unusable. They are still stored and still one toggle away.
+   *
+   * The noise filter runs in SQL on the ACTION, not after paging, so page two
+   * is not half empty.
+   */
   async getAuditLogs(userId, options = {}) {
-    const { limit = 50, offset = 0 } = options;
+    const { limit = 50, offset = 0, search = '', includeNoise = false } = options;
+
+    const where = { userId };
+    const and = [];
+    if (!includeNoise) {
+      /**
+       * Every pattern has to miss, which is an AND of NOT ILIKE.
+       * `NOT ILIKE ANY(array)` reads like "none of these" and is not: it is
+       * true as soon as the row differs from ONE pattern, so it matched
+       * practically everything and filtered nothing.
+       */
+      for (const pattern of NOISE_PATTERNS) {
+        and.push({ action: { [Op.notILike]: pattern } });
+      }
+    }
+    const term = String(search || '').trim();
+    if (term) {
+      and.push({
+        [Op.or]: [
+          { action: { [Op.iLike]: `%${term}%` } },
+          { entityType: { [Op.iLike]: `%${term}%` } },
+          { ipAddress: { [Op.iLike]: `%${term}%` } },
+        ],
+      });
+    }
+    if (and.length) where[Op.and] = and;
 
     const logs = await models.AuditLog.findAndCountAll({
-      where: { userId },
+      where,
       order: [['createdAt', 'DESC']],
       limit,
       offset,
@@ -138,7 +242,10 @@ class SecurityService {
   _formatAuditLog(l) {
     const nv = l.newValues || {};
     const ov = l.oldValues || {};
-    const label = AUDIT_LABELS[l.action] || titleCase(l.action);
+    // A raw request line is turned into a sentence; a semantic action keeps
+    // the label it was given.
+    const described = AUDIT_LABELS[l.action] ? null : describeRequest(l.action);
+    const label = AUDIT_LABELS[l.action] || described?.label || titleCase(l.action);
 
     let summary = null;
     switch (l.action) {
@@ -176,11 +283,17 @@ class SecurityService {
         summary = nv.name || nv.email || null;
     }
 
+    /** 2xx/3xx is fine; anything else is worth seeing at a glance. */
+    const status = Number(nv.status) || null;
     return {
       id: l.id,
       action: l.action,
       label,
       summary,
+      /** Background activity rather than something the person chose to do. */
+      noise: Boolean(described?.noise),
+      status,
+      failed: Boolean(status && status >= 400),
       target: titleCase(l.entityType || ''),
       ipAddress: l.ipAddress || null,
       userAgent: l.userAgent || null,

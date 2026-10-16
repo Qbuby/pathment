@@ -23,6 +23,12 @@ export interface AuditLog {
   userAgent?: string | null;
   /** Friendly device, e.g. "Chrome on Mac". */
   device?: string | null;
+  /** Background activity (heartbeats, read receipts) rather than a deliberate act. */
+  noise?: boolean;
+  /** HTTP status, where the row came from a request. */
+  status?: number | null;
+  /** The request did not succeed — worth seeing at a glance. */
+  failed?: boolean;
   createdAt: string;
 }
 
@@ -75,10 +81,20 @@ class SecurityService {
   /**
    * Get audit logs for current user
    */
-  async getAuditLogs(limit: number = 50, offset: number = 0): Promise<AuditLogsResponse> {
+  /**
+   * `includeNoise` brings back session heartbeats, read receipts and token
+   * refreshes. They are always recorded — an audit trail with holes is not
+   * one — but they outnumber real actions by enough to drown the screen, so
+   * they are off unless asked for.
+   */
+  async getAuditLogs(
+    limit: number = 50,
+    offset: number = 0,
+    opts: { search?: string; includeNoise?: boolean } = {},
+  ): Promise<AuditLogsResponse> {
     const response = await axiosInstance.get<{ data: AuditLogsResponse }>(
       '/auth/audit-logs',
-      { params: { limit, offset } }
+      { params: { limit, offset, search: opts.search || undefined, includeNoise: opts.includeNoise ? 1 : undefined } }
     );
     return response.data.data || { total: 0, logs: [] };
   }

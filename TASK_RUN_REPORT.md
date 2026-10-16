@@ -69,7 +69,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 26 | Workspace plan & usage shows wrong usage and wrong current plan. | ⚠️ | | Contradiction + NaN + retired-plan cases fixed; the raw counts could not be reproduced locally. |
 | 27 | Admin Review-Lock page: remove yellow, improve accessibility, allow grant/revoke per program or clan as well as org-wide. | ✅ | | Same change as #14; migration 133 pending on production. |
 | 28 | Remove unnecessary database data (~700 MB). | ⬜ | | Production data — see flag 4. |
-| 29 | Admin access logs must be human-readable, with pagination and search. | ⬜ | | Currently raw `Post /api/...` rows. |
+| 29 | Admin access logs must be human-readable, with pagination and search. | ✅ | | |
 | 30 | Extract reusable components (drawers, profile pictures, …) — reduce duplication. | ⬜ | | Open-ended programme. |
 | 31 | Clan review "no mentee" empty state needs to be better. | ✅ | | |
 | 32 | A standing-clan request should carry the mentor's active mentees (with their work) across automatically. | ✅ | | Verified on the demo data, then rolled back. |
@@ -1184,3 +1184,45 @@ unchanged — they were the part that was already right.
 
 **Verified in the browser** by emptying the standing clan, loading clan review and
 screenshotting the result, then putting the roster back. No console errors.
+
+### Issue 29 — an access log written for a log parser
+
+**Root cause — four separate reasons the screen could not answer a question.**
+
+1. **It printed request lines.** `auditTrail` records every state-changing request as
+   `POST /api/…`, which is the right thing to *store* and the wrong thing to *show*. The
+   screen read as a web-server log: `Post /api/messaging/conversations/8d1e58c5-…/read`.
+2. **Background chatter outnumbered everything else.** Session heartbeats, read receipts
+   and token refreshes — the application working, not the person acting. In the demo
+   account they are **86 of 151 rows**.
+3. **No search.** Fifty newest rows, and no way to ask about last Tuesday.
+4. **No pagination.** A 384-pixel inner scroll box, inside a page that already scrolls.
+
+**Fix.** A request line becomes a sentence — *"Opened a conversation"*, *"Assigned a
+task"*, *"Changed the review lock"* — matched by path, with an unmatched endpoint
+degrading to *"Updated messaging"* rather than leaking its URL. Background rows are
+**marked and hidden by default**, with one checkbox to bring them back: they are still
+recorded, because an audit trail with holes in it is not an audit trail.
+
+Search runs on the server across the action, the area and the IP, debounced. Paging is the
+shared `TablePagination`. And a request that **failed** now says so, with its status — the
+single most useful thing in an access log, and it was invisible.
+
+**One bug worth recording.** My first noise filter was
+`action: { [Op.notILike]: { [Op.any]: PATTERNS } }`. That reads like "none of these" and
+is not: `NOT ILIKE ANY(array)` is true as soon as the row differs from *one* pattern, so
+it matched practically everything and filtered nothing — the totals were identical with
+the toggle on and off, which is how I caught it. It is an AND of `NOT ILIKE` now.
+
+**Files.** `server/src/services/securityService.js`,
+`server/src/controllers/authController.js`;
+`client-interface/components/shared/SecurityTab.tsx`,
+`client-interface/lib/services/security-api.ts`.
+
+**Tests run.** `tsc` clean; client guard suite 112 pass.
+
+**Verified over the API and in the browser.** Default read: **65** real events; with
+background included: **151**. Searching `clan` narrows to **27** and returns *"Created or
+joined a clan"*, *"Review lock enabled"* — not URLs. The page shows the sentence, the
+context (clan name · IP · device), the timestamp, a **failed · 400** badge where the
+request failed, and *"Showing 1 - 20 of 27"* with a pager. No console errors.

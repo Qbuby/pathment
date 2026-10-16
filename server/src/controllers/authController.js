@@ -327,10 +327,12 @@ class AuthController {
    * GET /api/auth/audit-logs
    */
   getAuditLogs = catchAsync(async (req, res) => {
-    const { limit = 50, offset = 0 } = req.query;
+    const { limit = 50, offset = 0, search = '', includeNoise } = req.query;
     const result = await securityService.getAuditLogs(req.user.id, {
-      limit: parseInt(limit),
-      offset: parseInt(offset)
+      limit: Math.min(200, Math.max(1, parseInt(limit, 10) || 50)),
+      offset: Math.max(0, parseInt(offset, 10) || 0),
+      search: String(search || '').slice(0, 120),
+      includeNoise: ['1', 'true'].includes(String(includeNoise || '').toLowerCase()),
     });
 
     res.status(200).json(
