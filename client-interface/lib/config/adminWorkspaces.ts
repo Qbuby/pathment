@@ -151,6 +151,11 @@ export const adminWorkspaces: { label: string; tabs: AdminWorkspaceTab[] }[] = [
         permission: "analytics.view",
       },
       {
+        href: "/admin/feature-usage",
+        label: "Feature usage",
+        permission: "analytics.view",
+      },
+      {
         href: "/admin/follow-ups",
         label: "Follow-ups",
         permission: "analytics.view",

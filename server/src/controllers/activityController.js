@@ -3,6 +3,7 @@ const { Op } = require('sequelize');
 const { catchAsync } = require('../middlewares/errorHandler');
 const { successResponse } = require('../utils/responses');
 const { requestedClanId } = require('../middlewares/portalScope');
+const featureUsageService = require('../services/featureUsageService');
 
 const HEARTBEAT_INTERVAL_MINUTES = 5;
 const IDLE_THRESHOLD_MINUTES = 10;
@@ -365,6 +366,23 @@ const getAdminOverview = catchAsync(async (req, res) => {
   );
 });
 
+/**
+ * GET /activity/admin/feature-usage?days=30
+ *
+ * What is being opened, by whom, and when last — the counts only. The list of
+ * pages that EXIST lives in the client's navigation config, so the report
+ * joins these onto it; a screen nobody opens writes no row here and would
+ * otherwise be invisible, which is exactly the screen worth finding.
+ */
+const getFeatureUsage = catchAsync(async (req, res) => {
+  const organizationId = req.user.organizationId || req.organizationId;
+  const data = await featureUsageService.overview({
+    organizationId,
+    days: req.query.days,
+  });
+  res.status(200).json(successResponse('Feature usage retrieved', data));
+});
+
 // ─── Utility ──────────────────────────────────────────────────────────────────
 
 function computeStreak(sessions) {
@@ -396,4 +414,5 @@ module.exports = {
   getMySummary,
   getMenteeSummary,
   getAdminOverview,
+  getFeatureUsage,
 };

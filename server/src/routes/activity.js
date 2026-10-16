@@ -14,6 +14,7 @@ const {
   getMySummary,
   getMenteeSummary,
   getAdminOverview,
+  getFeatureUsage,
 } = require('../controllers/activityController');
 
 // ─── Beacon-compatible heartbeat (must be BEFORE router.use(authenticate)) ───
@@ -66,5 +67,9 @@ router.get('/mentee/:id/summary', requireMenteeAccess('id'), getMenteeSummary);
 
 // Admin-only aggregate overview
 router.get('/admin/overview', requirePermissionMinScope(PERMISSIONS.ANALYTICS_VIEW), getAdminOverview);
+
+// Which screens are actually being opened, by role. Same permission as the
+// rest of Insights: this is reporting, not a change to anybody's access.
+router.get('/admin/feature-usage', requirePermissionMinScope(PERMISSIONS.ANALYTICS_VIEW), getFeatureUsage);
 
 module.exports = router;

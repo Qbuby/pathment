@@ -1432,3 +1432,131 @@ their titles, no console errors. Screenshot captured.
 **Scope, stated.** This is a pass over what made the page noisy, not a new information
 architecture. The report says "can be redesigned properly" with no specifics and no
 screenshot; if there is a particular layout you want, say which part and I will build it.
+
+### Issue 30 — reusable components
+
+Two things were being re-typed rather than reused, and the report named both.
+
+**Drawers.** Eight screens had grown their own right-edge slide-over — ten of them in
+all, counting the three on the rewards page. Each was the same twenty lines of markup
+(fixed wrapper, backdrop, panel, header with an X, scrolling body, footer rail), and
+each was missing the parts you do not notice while typing them:
+
+| | hand-rolled | `components/shared/Drawer` |
+|---|---|---|
+| animates out | no | yes |
+| Escape closes | no | yes |
+| Tab stays inside | no | yes |
+| page behind locked | no | yes |
+| focus returns to the opener | no | yes |
+
+A sheet you cannot close with the keyboard is a sheet a keyboard user is stuck in. All
+ten now use the shared component: admin cohorts, the cohort application sheet, admin
+clans, three on admin rewards, admin schedules, mentor roadmaps, `OneOnOneDrawer` and
+`RoadmapEditorDrawer`.
+
+**Two are deliberately left alone**, and the test names them with the reason:
+`AssignToClansDrawer` (a wide preview table with sticky settings and summary bands) and
+`AssignTaskDrawer` (sticky source tabs, its own portal, and a draft that must survive a
+dismiss). The shared Drawer puts its children in one scrolling box; forcing these
+through it would change how they scroll, which is worse than the duplication.
+
+**Avatars.** Nine components had their own `photo ? <img> : initials` block, at five
+different diameters — 26, 32, 36, 44 and 56 pixels. Those were not five design
+decisions; they were five people each picking a number. Four of the nine had no
+`onError`, so one dead Cloudinary URL rendered as a black disc. They now use
+`components/shared/Avatar` at its own five sizes.
+
+One fork existed only to grey out a paused mentee, so `Avatar` gained a **`muted` tone**
+that desaturates the photo and drops the initials to slate. That state is on every
+surface that lists people; keeping a whole component to recolour one fallback was the
+expensive way to have it.
+
+**Guarded.** `tests/one-drawer.test.cjs` and a new case in
+`tests/no-next-image-for-user-photos.test.cjs` fail with the offending file names.
+Confirmed red on the branch base (naming exactly the eight drawer files). Nobody wrote
+these by choice — they wrote them because re-typing the markup was quicker than finding
+the component, so the tests do the finding.
+
+**Also fixed in passing.** Schedule blocks saved before ids were stored shared a React
+key, which warned once per card on the admin schedules page.
+
+**Tests run.** `tsc` clean. Lint one error below where it started. 116 client tests pass.
+
+**Verified in the browser.** The five converted sheets reachable from a list page open
+as the shared panel (`[data-drawer-motion]`, 0.25s transition, `role=dialog`
+`aria-modal=true`), with `body` scroll locked, focus inside the panel and Escape
+closing — on admin cohorts, admin clans, admin schedules, admin rewards and mentor
+roadmaps. The two restructured sheets render correctly: the cohort application sheet
+shows its contact line as header meta and correctly omits the footer for an applicant
+already decided; the 1:1 sheet keeps its header, sliders and Cancel / Save 1:1 footer.
+Photos come back at the shared diameters with no black discs. No console errors on any
+of them.
+
+### Issue 21 — what people actually use
+
+**The gap.** Both halves of this existed and were never connected. The server had
+`POST /activity/page-view`; the client hook exposed `trackPageView`; **nothing on the
+web ever called it.** Every row in the page-view log had come from the mobile app. So
+the question "is anybody using this screen?" had no data behind it at all.
+
+**Three parts.**
+
+1. **Record it.** `ActivityTrackerMount` — already mounted once in each of the three
+   role layouts — now records the page on every route change.
+
+2. **Key it by shape, not URL.** The rows that did exist showed why this matters:
+   `/mentee/step/<uuid>` appeared as separate features, one use each. A screen every
+   mentee opens daily would read as a hundred screens used once. `lib/utils/page-key.ts`
+   strips the workspace slug, the query and the hash, and collapses id-like segments, so
+   `/w/dev-weekends/mentee/step/ab22ddfd-…` keys as `/mentee/step/:id`. The same folding
+   runs again in SQL, so rows written before any of this existed are folded too — and
+   the client and server assert **the same list of cases**, because if the two drift the
+   report's join silently drops rows.
+
+3. **Report it.** `/admin/feature-usage`, a new tab under Insights.
+
+**Two decisions worth stating.**
+
+*People, not views.* Views reward a tab left open and refreshed; the number that answers
+"should we keep this" is how many different humans went there. People is the headline
+and the sort order.
+
+*Every screen, not every row.* A page nobody opens writes no rows, so a report built
+from the log alone can never show you an empty room — which is the room the report asks
+about ("so we can remove the stuff as well"). The counts are joined onto
+`getFlatNavItems(role)`, the registry of every page each role can reach, and the zeroes
+fall out of the join as a **"Not opened once"** list per role. Anything recorded that
+the menu does not list gets its own section rather than being dropped, because "what is
+this path?" is usually the interesting question.
+
+The denominator is shown next to every count: three people on an admin screen when there
+are three admins is everybody; three on a mentee screen when there are six hundred
+mentees is nobody, and both say "3". The bars are scaled against the role's population
+for the same reason — scaled against the busiest screen (the first version) every bar
+was full on a quiet week and the chart only agreed with itself.
+
+The page also states when tracking actually started, and says so explicitly when the
+window reaches back further than the record does, so a screen is never reported as
+unused when the truth is that we have no data for those days. That comparison is made on
+the server, against one clock.
+
+**Files.** `server/src/services/featureUsageService.js` (new),
+`server/src/controllers/activityController.js`, `server/src/routes/activity.js`
+(`GET /activity/admin/feature-usage`, same `analytics.view` permission as the rest of
+Insights), `client-interface/lib/utils/page-key.ts` (new),
+`client-interface/components/shared/ActivityTrackerMount.tsx`,
+`client-interface/app/admin/feature-usage/page.tsx` (new), plus the api method, type,
+query key and the workspace tab.
+
+**Tests run.** 8 new server tests (`tests/analytics/feature-usage.test.js`) covering the
+folding, client/server key parity, people-vs-views, the window boundary, the
+denominators, the tracking-start honesty flag and the empty case — all pass. 5 new client
+tests (`tests/page-key.test.cjs`); 121 client tests pass in total. `tsc` clean, lint
+level with baseline.
+
+**Verified in the browser.** Walked four admin screens, then opened the report: it had
+recorded them. "1 of 1 admin opened anything · 4 of 32 screens used" with Clans,
+Overview, Feature usage and Rewards listed by people/views/last-used, and 28 screens
+under "Not opened once"; mentor and mentee sections the same shape with their own
+denominators. No console errors.
