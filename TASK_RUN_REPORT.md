@@ -2000,3 +2000,80 @@ git. `one-drawer.test.cjs` asserted the literal `overflow = "hidden"` line insid
 `Drawer.tsx`; it now asserts the lock instead of the implementation of it.
 
 Client suite 129 tests, typecheck clean, production build clean.
+
+---
+
+## Follow-up — the bootstrap loader looked like nothing else
+
+`app/page.tsx` — the screen you see while the app works out which workspace to open —
+drew its spinner inside a 14×14 white `rounded-2xl` card with a ring and a shadow.
+Every other page-level loader in the product is a plain centred spinner, so this one
+read as a different application for the second it was on screen.
+
+`one-loader.test.cjs` did not catch it because it guards the wrong things for this
+case: it bans hand-rolled CSS rings, icons other than `Loader2` standing in for
+"loading", and off-brand colours. A correctly coloured `Loader2` in decorative framing
+passes all three. The guard was written against spinners that looked wrong; this one
+looked right and was *mounted* wrong.
+
+That page and the login page's full-screen state — the same journey, one at `h-6`
+inside a card and the other at `h-8` bare — now both use `LoadingSpinner variant="page"`,
+so the two states you bounce between while signing in are identical.
+
+Deliberately left alone: 137 page-level spinners across 111 other files still use
+`Loader2` directly. They are already plain and consistent with each other, so
+converting them is churn with no visible result. The 299 in-button spinners are
+correct as they are — the shared component's own documentation says a button uses
+`Spinner` at `size="xs"`.
+
+---
+
+## Follow-up — a mentee could log days that had already gone
+
+Reported as "the mentee can edit the previous date's progress". The task drawer's
+textarea was never the hole: `taskProgressService.log` derives the day from the
+mentee's own timezone and has never accepted one from the caller. Two other things
+were.
+
+**The daily log took the date from the request body and wrote it verbatim.**
+`dailyLogService.upsert` validated that `dateKey` looked like a date and then stored
+it, whatever it was — last Tuesday, or next Thursday — and passed it to
+`updateStreak` on the way through. The mentee page offered this as a feature: a strip
+of the last ten days, any of them selectable, under the words "Missed a day? Tap it
+and backfill." So the streak, the "logged 3 of 6 days" line a mentor reads during
+review, and the gaps that are the entire point of keeping a log could all be composed
+after the fact, on the morning of the review.
+
+**Removing a task-progress note stayed open for 48 hours.** Long enough to delete the
+day before last. The reasoning written into it — long enough to fix a typo, short
+enough to stay a log — is sound, but a record is only worth reading if nobody can
+tidy it before the person reading it arrives.
+
+The day is the server's to decide now, from the mentee's stored timezone, exactly as
+the task-progress path already did. A `dateKey` in the body is **ignored rather than
+rejected**, deliberately: the client's idea of today comes from the browser clock and
+the server's from the stored zone, and near midnight those legitimately disagree.
+Rejecting would block a real check-in over a difference of opinion about what time it
+is; ignoring cannot be wrong, because the entry lands on the mentee's actual today
+either way. Removal is today-only. Today itself stays fully editable — writing again
+replaces it — so a typo is fixable all day, and then the day is what happened.
+
+On the client, the day strip still shows the last ten days to read, but a past day
+disables the checkboxes, the reflection and Save through the same flag that already
+handles a frozen cohort, with a line saying why rather than a mysteriously grey form.
+The bin on a progress row appears only on today. `saveDailyLog` no longer takes a
+date at all, so nothing in the client pretends to choose one.
+
+`tests/mentee/daily-log-today-only.test.js` covers a backdated post, a future-dated
+one, the upsert, and a six-day invented history that must come out as one row and a
+streak of 1. All four fail against the previous service, checked by restoring it.
+`task-progress.test.js` now pins that yesterday is closed, not only the distant past.
+Two streak tests built their multi-day fixtures *through* this hole; they seed the
+rows directly now, which is what fixture work should have been doing anyway.
+
+Server `tests/mentee`: 19 suites, 177 tests. Client 129 tests, typecheck clean,
+production build clean.
+
+One loose end outside this repo: if the mobile app posts a `dateKey` it is now
+ignored rather than honoured — the right outcome, since it was the same vector, but
+that app's own day-strip needs the same treatment.

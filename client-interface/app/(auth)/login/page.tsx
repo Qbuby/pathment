@@ -6,7 +6,8 @@ import Link from 'next/link';
 import { useAuth } from '@/lib/context/AuthContext';
 import { TwoFactorCodeInput } from '@/components/shared/TwoFactorCodeInput';
 import { extractApiErrorMessage, getRateLimit, formatRetryAfter, getErrorCode } from '@/lib/utils/api-error';
-import { Mail, Lock, ArrowRight, ArrowLeft, AlertCircle, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Mail, Lock, ArrowRight, ArrowLeft, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { toast } from 'sonner';
 import { workspaceLandingPath, workspacePath, workspaceSlugFromPathname } from '@/lib/services/workspace-scope';
 import { tokenStore } from '@/lib/services/token-store';
@@ -170,16 +171,17 @@ export default function LoginPage() {
   // Show loading while checking auth
   if (isLoading || redirecting || spendingLink || (user && !requiresTwoFactor)) {
     return (
-      <div role="status" className="flex min-h-64 flex-col items-center justify-center gap-3 text-slate-600">
-        <Loader2 className="h-8 w-8 animate-spin text-brand-600" aria-hidden="true" />
-        <span>
-          {spendingLink && !redirecting && !user
+      <LoadingSpinner
+        variant="page"
+        className="min-h-64"
+        message={
+          spendingLink && !redirecting && !user
             ? 'Signing you in from your email link…'
             : redirecting || user
             ? 'Opening your workspace…'
-            : 'Checking your account…'}
-        </span>
-      </div>
+            : 'Checking your account…'
+        }
+      />
     );
   }
 

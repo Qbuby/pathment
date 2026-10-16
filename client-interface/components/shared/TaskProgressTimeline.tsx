@@ -205,7 +205,7 @@ export function TaskProgressTimeline({
                 key={day.dateKey}
                 day={day}
                 isLast={isLast && j === days.length - 1}
-                canEdit={canWrite}
+                canEdit={canWrite && day.isToday}
                 busy={busyDay === day.dateKey}
                 onRemove={() => remove(day.dateKey)}
               />
@@ -302,6 +302,8 @@ function DayRow({ day, isLast, canEdit, busy, onRemove }: {
             {dayLabel(day.dateKey)}
             {day.isToday && <span className="ml-1.5 text-brand-600">today</span>}
           </p>
+          {/* Only today. A past day is a record, not a draft — the server
+              refuses it too, so this is the affordance matching the rule. */}
           {canEdit && filled && (
             <button
               onClick={onRemove}

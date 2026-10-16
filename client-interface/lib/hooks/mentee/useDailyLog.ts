@@ -19,7 +19,7 @@ export interface UseDailyLogReturn {
   loading: boolean;
   error: string | null;
   refetch: () => Promise<void>;
-  save: (data: { dateKey: string; tasksDone: string[]; slotsDone?: string[]; note?: string }) => Promise<void>;
+  save: (data: { tasksDone: string[]; slotsDone?: string[]; note?: string }) => Promise<void>;
 }
 
 const EMPTY: DailyLogEntry[] = [];
@@ -33,7 +33,7 @@ export function useDailyLog(): UseDailyLogReturn {
     errorMessage: 'Failed to load your daily log',
   });
 
-  const save = useCallback(async (payload: { dateKey: string; tasksDone: string[]; slotsDone?: string[]; note?: string }) => {
+  const save = useCallback(async (payload: { tasksDone: string[]; slotsDone?: string[]; note?: string }) => {
     await menteeApi.saveDailyLog(payload);
     await refetch();
   }, [refetch]);

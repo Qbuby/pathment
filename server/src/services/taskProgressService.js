@@ -4,8 +4,6 @@ const { todayInZone } = require('../utils/timezone');
 const authzService = require('./authzService');
 const clanLifecycleService = require('./clanLifecycleService');
 
-/** How long after its day an entry stays editable. */
-const EDIT_WINDOW_HOURS = 48;
 const MAX_NOTE_LENGTH = 2000;
 
 /**
@@ -200,11 +198,14 @@ class TaskProgressService {
   }
 
   /**
-   * Remove one entry, within the edit window.
+   * Remove today's entry.
    *
-   * Frozen after 48 hours on purpose: long enough to fix a typo or backfill
-   * yesterday, short enough that it stays a log rather than a document somebody
-   * tidies up before review. The honesty is the value.
+   * This used to stay open for 48 hours, on the reasoning that it is long
+   * enough to fix a typo and short enough to stay a log. In practice it meant
+   * a mentee could delete the day before last the morning of a review, and the
+   * record a mentor reads is only worth reading if nobody can tidy it first.
+   * Today is still freely editable — writing again replaces it — so a typo is
+   * fixable all day. Once the day is over it is what happened.
    */
   async remove(menteeId, assignedTaskId, dateKey) {
     const task = await this._ownedTask(menteeId, assignedTaskId);
@@ -213,8 +214,8 @@ class TaskProgressService {
     if (!entry) throw new NotFoundError('No progress logged for that day');
 
     const today = await this._todayFor(menteeId);
-    if (this._daysBetween(entry.dateKey, today) * 24 > EDIT_WINDOW_HOURS) {
-      throw new ValidationError('That day is locked. Progress can only be changed for about two days.');
+    if (entry.dateKey !== today) {
+      throw new ValidationError('That day is closed. You can only change today\u2019s note.');
     }
     await entry.destroy();
     return { removed: true, dateKey };

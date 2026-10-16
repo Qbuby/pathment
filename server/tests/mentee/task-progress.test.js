@@ -141,18 +141,38 @@ describe('task progress log', () => {
     await expect(svc.listForMentor(otherMentor, task.id)).rejects.toThrow(/do not mentor/i);
   });
 
-  // ── the edit window ───────────────────────────────────────────────────────
-  it('lets a mentee remove a recent day', async () => {
+  // ── today is editable, yesterday is history ───────────────────────────────
+  it('lets a mentee remove today', async () => {
     await svc.log(mentee.id, task.id, { note: 'oops' });
     await expect(svc.remove(mentee.id, task.id, todayKey())).resolves.toMatchObject({ removed: true });
     await expect(models.TaskProgressEntry.count({ where: { assignedTaskId: task.id } })).resolves.toBe(0);
   });
 
-  it('freezes a day older than the edit window', async () => {
+  /**
+   * This used to stay open for 48 hours, which meant a mentee could delete the
+   * day before last on the morning of a review. A record a mentor reads is
+   * only worth reading if nobody can tidy it first.
+   */
+  it('closes yesterday, not only the distant past', async () => {
+    const yesterday = shift(todayKey(), -1);
+    await models.TaskProgressEntry.create({
+      assignedTaskId: task.id, menteeId: mentee.id, dateKey: yesterday, note: 'what I did',
+    });
+    await expect(svc.remove(mentee.id, task.id, yesterday)).rejects.toThrow(/closed/i);
+    await expect(models.TaskProgressEntry.count({ where: { assignedTaskId: task.id } })).resolves.toBe(1);
+  });
+
+  it('freezes a day well in the past', async () => {
     const old = shift(todayKey(), -5);
     await models.TaskProgressEntry.create({
       assignedTaskId: task.id, menteeId: mentee.id, dateKey: old, note: 'ancient history',
     });
-    await expect(svc.remove(mentee.id, task.id, old)).rejects.toThrow(/locked/i);
+    await expect(svc.remove(mentee.id, task.id, old)).rejects.toThrow(/closed/i);
+  });
+
+  /** The write path never took a date, and now neither does the daily log. */
+  it('writes today whatever else is going on', async () => {
+    const entry = await svc.log(mentee.id, task.id, { note: 'today only' });
+    expect(entry.dateKey).toBe(todayKey());
   });
 });

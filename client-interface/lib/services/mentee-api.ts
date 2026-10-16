@@ -54,7 +54,9 @@ export const menteeApi = {
 
   // Daily check-in log.
   getDailyLog: () => apiClient.get('/mentee/daily-log'),
-  saveDailyLog: (data: { dateKey: string; tasksDone: string[]; slotsDone?: string[]; note?: string }) =>
+  // No date: the server decides which day this is, from the mentee's own
+  // timezone. A client-supplied one used to be stored verbatim, streak and all.
+  saveDailyLog: (data: { tasksDone: string[]; slotsDone?: string[]; note?: string }) =>
     apiClient.post('/mentee/daily-log', data),
 
   // ── Day-by-day progress on ONE task ──────────────────────────────────────
