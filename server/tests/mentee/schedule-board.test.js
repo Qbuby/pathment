@@ -337,6 +337,34 @@ describe('the day planner', () => {
       await schedule.update({ clanId: null });
     });
 
+    /**
+     * A legacy row must be ADOPTED, never bypassed.
+     *
+     * The failure this guards is quieter than a thrown error and worse: the
+     * two paths that create a block (`addSlot`, `applyTemplate`) do not refuse
+     * when the lookup misses the row — they make a new one. So a mentee with a
+     * clanless row got a SECOND row stamped with the clan, their existing
+     * blocks stayed behind in the orphaned one, and the planner showed a day
+     * that had quietly lost everything on it. Nothing threw, so nothing said
+     * so.
+     */
+    it('adds to the clanless row instead of starting a second one', async () => {
+      const before = await models.MenteeSchedule.count({ where: { menteeId: mentee.id } });
+      expect(before).toBe(1);
+
+      await board.addSlot(mentee.id, { label: 'Evening review', time: '18:00' }, mentor, clan.id);
+
+      const after = await models.MenteeSchedule.count({ where: { menteeId: mentee.id } });
+      expect(after).toBe(1);
+
+      // ...and the new block is on the row that already had the others.
+      const row = await models.MenteeSchedule.findOne({ where: { menteeId: mentee.id } });
+      expect(row.clanId).toBeNull();
+      const labels = (row.schedule || []).map((slot) => slot.label);
+      expect(labels).toContain('Evening review');
+      expect(labels).toContain('Deep work');
+    });
+
     it('still lets the clan’s mentor lock a block', async () => {
       const b = await board.board(mentee.id, { clanId: clan.id }, mentor);
       expect(slotOf(b, OPEN).rights.canLock).toBe(true);

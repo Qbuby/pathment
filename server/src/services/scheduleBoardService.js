@@ -177,8 +177,23 @@ class ScheduleBoardService {
    * schedules were per-clan carry no clan at all, and are adopted only when
    * they cannot belong anywhere else — a single membership, into a cohort clan.
    */
-  async _scheduleRow(menteeId, clanId, membershipCount = 0) {
-    const where = clanScopedWhere({ menteeId }, clanId, membershipCount);
+  async _scheduleRow(menteeId, clanId, membershipCount) {
+    // Resolve the count when the caller has not already paid for it.
+    //
+    // This argument used to default to 0, which quietly means "this mentee is
+    // in more than one clan" and so switches clanScopedWhere to the strict
+    // branch that cannot see a legacy clanless row. Only `board` passed it, so
+    // every OTHER path was reading the strict way: the planner rendered a
+    // legacy row and then refused to let anybody change it, and the two
+    // block-creating paths below did something worse than refuse — not finding
+    // the row, they made a SECOND one, splitting a mentee's day between an
+    // orphaned clanless row and a new clan-stamped one.
+    //
+    // A default that is wrong in the common case is not a default. The count
+    // is resolved here when it is not supplied, so omitting it costs one
+    // indexed query rather than correctness.
+    const count = membershipCount ?? (await listMenteeClans(menteeId)).length;
+    const where = clanScopedWhere({ menteeId }, clanId, count);
     return models.MenteeSchedule.findOne({ where, order: [['assignedAt', 'DESC']] });
   }
 
