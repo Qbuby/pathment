@@ -1560,3 +1560,82 @@ recorded them. "1 of 1 admin opened anything · 4 of 32 screens used" with Clans
 Overview, Feature usage and Rewards listed by people/views/last-used, and 28 screens
 under "Not opened once"; mentor and mentee sections the same shape with their own
 denominators. No console errors.
+
+### Issue 28 — the 700 MB
+
+**What I did not do.** I have not deleted anything from production, and nothing I built
+can. My brief says not to modify production, and a sweep that removes rows nobody has
+looked at first is exactly the change that is impossible to undo.
+
+**What was actually wrong.** Nobody could answer the question. There was no report of
+what the 700 MB *is*, so the only available move was to guess, and the guess is always
+"it must be rows we can delete". On this schema that is very likely wrong, and here are
+the numbers from the local dev database to show why:
+
+```
+total 24.5 MB · data 2.1 MB · indexes 8.3 MB · 140 tables · 4,191 rows
+```
+
+**Indexes are 71% of the table space on a database holding four thousand rows.** Every
+index costs pages whether or not anything is in it, and deleting rows barely touches
+them. On top of that, a deleted row's space goes back to *the table*, not to the disk —
+the figure a host reports only drops after a `VACUUM FULL` or `pg_repack`, which take an
+exclusive lock and are an operator's decision, not a button in an admin screen. So a
+workspace can delete a great deal and watch the number not move.
+
+**What I built instead.** A new **Administration → Storage** page that answers the
+question:
+
+- Database size, index share, live rows and **dead rows awaiting vacuum**.
+- The largest tables, each with its data and index size shown as two bars side by side —
+  because *which of the two is big* is the whole question and one bar hides it.
+- What the standing retention policies would remove **right now**, itemised, with a
+  sentence per policy saying what it takes and why that is safe.
+- A sweep button that runs exactly the policies the daily worker already runs, nothing
+  else, behind a confirmation that states the row count and the VACUUM caveat in
+  advance.
+
+**Three new retention policies**, on top of the three that existed:
+
+| policy | takes | explicitly does not take |
+|---|---|---|
+| `readNotifications` | read, over 90 days old | **unread, however old** — that is somebody's inbox |
+| `oldPageViews` | `page_view` events over a year old | other event types of the same age |
+| `deliveredEmails` | `sent`, over 180 days | **failed and dead-lettered mail** — the evidence for a missing email |
+
+**Nothing a sweep can reach is anybody's work.** There is a test that asserts the list of
+tables the policies may touch, so a future policy over `assigned_tasks`,
+`task_submissions`, `messages`, `enrollments` or `certificates` fails loudly before it
+ever runs against real data. Another holds the audit policy to successful pings only — a
+4xx or 5xx heartbeat is a security signal, not noise.
+
+**Also fixed.** The shared `ConfirmDialog` — the single confirm behind every destructive
+action in the product — had no `role`, no `aria-modal` and no label, so it announced
+itself to a screen reader as an unlabelled div. It is an `alertdialog` with a labelled
+title and description now.
+
+**Files.** `server/src/services/dataRetentionService.js` (size report + three policies),
+`server/src/controllers/storageController.js` (new), `server/src/routes/admin.js`
+(`GET /admin/storage`, `POST /admin/storage/sweep`, both `system.settings`),
+`client-interface/app/admin/storage/page.tsx` (new),
+`client-interface/components/admin/ui/ConfirmDialog.tsx`, plus the api method, query key
+and workspace tab.
+
+**Tests run.** 3 tests in `tests/migrations/data-retention.test.cjs` (extended: it spins
+up a throwaway Postgres and checks each policy's boundary — unread kept, recent kept,
+non-page-view events kept — plus the two new guards). 121 client tests pass. `tsc` clean,
+lint level with baseline.
+
+**Verified end to end on the local dev database** (`pathment_dev`, confirmed by
+`SELECT current_database()` before writing anything). I inserted five synthetic
+page-view rows dated 400 days ago; the page then read **"Run sweep (5)"**; the
+confirmation stated the count and the VACUUM caveat; the sweep removed exactly 5 and the
+button went to "Nothing due". Counts after: `analytics_events` down by 5, and
+`notifications` 129, `assigned_tasks` 397, `task_submissions` 346, `messages` 48 all
+unchanged.
+
+**What this does not tell you, and what to do next.** I cannot see production, so I
+cannot say where its 700 MB is — only give you the screen that will. Open
+Administration → Storage on prod and the largest-tables list answers it in one look. If
+the tables there add up to far less than 700 MB, it is bloat, and the fix is a
+`pg_repack` in a maintenance window rather than deleting anything.

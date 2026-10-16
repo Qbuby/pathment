@@ -5,6 +5,7 @@ const promotionController = require('../controllers/promotionController');
 const reviewLockController = require('../controllers/reviewLockController');
 const reviewRecordsController = require('../controllers/reviewRecordsController');
 const adminMeetingController = require('../controllers/adminMeetingController');
+const storageController = require('../controllers/storageController');
 const { validateBody, validateQuery } = require('../middlewares/validate');
 const { adminSchemas } = require('../validations/adminValidation');
 const { authenticate, authorize } = require('../middlewares/auth');
@@ -83,6 +84,23 @@ router.put(
   requirePermission(PERMISSIONS.ACCESS_MANAGE),
   validateBody(adminSchemas.updatePermissions),
   adminController.updatePermissions
+);
+
+// ── Storage ─────────────────────────────────────────────────────────────────
+// What the database size is made of, and what the standing retention policies
+// would remove right now. The sweep runs exactly what the daily worker runs —
+// there is no endpoint here that deletes anything a policy does not cover.
+router.get(
+  '/storage',
+  authenticate,
+  requirePermission(PERMISSIONS.SYSTEM_SETTINGS),
+  storageController.overview
+);
+router.post(
+  '/storage/sweep',
+  authenticate,
+  requirePermission(PERMISSIONS.SYSTEM_SETTINGS),
+  storageController.sweep
 );
 
 // Recalculate mentor mentee counts (utility endpoint)

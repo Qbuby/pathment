@@ -180,6 +180,11 @@ export const adminWorkspaces: { label: string; tabs: AdminWorkspaceTab[] }[] = [
         label: "What's new",
         permission: "system.settings",
       },
+      {
+        href: "/admin/storage",
+        label: "Storage",
+        permission: "system.settings",
+      },
     ],
   },
 ];

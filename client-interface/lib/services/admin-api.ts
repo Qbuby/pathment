@@ -42,6 +42,17 @@ export const adminApi = {
     disable2FA: (id: string) =>
       apiClient.post(`/admin/users/${id}/disable-2fa`, {}),
   },
+  /**
+   * What the database size is made of, and the standing retention policies.
+   *
+   * There is no "delete these rows" call here on purpose: the sweep runs the
+   * same policies the daily worker runs, and nothing else is deletable from
+   * a screen.
+   */
+  storage: {
+    overview: () => apiClient.get('/admin/storage'),
+    sweep: () => apiClient.post('/admin/storage/sweep', {}),
+  },
   /** Co-mentor promotion pipeline — admin review of mentor nominations. */
   promotions: {
     list: () => apiClient.get('/admin/promotions'),
