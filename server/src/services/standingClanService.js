@@ -251,8 +251,77 @@ class StandingClanService {
       await request.update({ status: decision, reviewedBy: actor.id, reviewedAt: new Date(), decisionNote: String(note || '').trim() || null, createdClanId: clan?.id || null }, { transaction });
       return request;
     });
-    await this._notifyMentorDecision(saved);
+
+    /**
+     * The clan opens with the people who were in it.
+     *
+     * Approval used to produce a standing clan containing the mentor team and
+     * nobody else, so the first thing a mentor had to do with their
+     * continuation was retype a roster the system already knew — every active
+     * mentee of the clan they had just asked to continue. Carrying them over
+     * is the default now; removing somebody afterwards is one click, and
+     * choosing twenty people by hand is not.
+     *
+     * AFTER the transaction, for the reason `addMenteesToStandingClan`
+     * already documents: it opens its own transaction and re-reads
+     * authorization, which would block on the clan row this one has not
+     * committed. And it must never fail the approval — the decision is
+     * recorded, the clan exists, and a roster that could not be copied is a
+     * smaller problem than an approval that half-happened.
+     */
+    const adoption = saved.status === 'approved' && saved.createdClanId
+      ? await this._adoptSourceRoster(saved.createdClanId, saved.sourceClanId, actor)
+      : null;
+
+    await this._notifyMentorDecision(saved, adoption);
+    // Not persisted — a report of what just happened, for the admin's screen.
+    if (adoption) saved.setDataValue('roster', adoption);
     return saved;
+  }
+
+  /**
+   * Move the source clan's active mentees into its continuation.
+   *
+   * Active only. A paused mentee stopped turning up during the programme, and
+   * deciding whether a continuation is the way to bring them back is a
+   * judgement for their mentor, who can add them by name. A removed one left.
+   *
+   * Their work is NOT re-pointed at the new clan — `priorRecord` explains why
+   * that would be wrong — the ordinary join carry runs instead, bringing
+   * forward unfinished work whose mentor came too. It is the same path as the
+   * manual "add mentees" button, so there is one definition of what joining a
+   * standing clan does.
+   *
+   * One mentee at a time and never throwing: the batch method is all-or-
+   * nothing by design, which is right when a mentor picked the names and wrong
+   * here, where a single suspended account would otherwise cost the other
+   * nineteen their place.
+   */
+  async _adoptSourceRoster(clanId, sourceClanId, actor) {
+    if (!sourceClanId) return { moved: 0, skipped: [], sourceClanId: null };
+    const result = { moved: 0, skipped: [], sourceClanId };
+    try {
+      const members = await models.ClanMembership.findAll({
+        where: { clanId: sourceClanId, role: 'mentee', status: 'active' },
+        attributes: ['userId'],
+        raw: true,
+      });
+      for (const { userId } of members) {
+        try {
+          await this.addMenteesToStandingClan(clanId, [userId], actor);
+          result.moved += 1;
+        } catch (error) {
+          result.skipped.push({ menteeId: userId, reason: error.message });
+        }
+      }
+      logger.info('[standingClan] carried the roster into the continuation', {
+        clanId, sourceClanId, moved: result.moved, skipped: result.skipped.length,
+      });
+    } catch (error) {
+      result.error = error.message;
+      logger.warn(`[standingClan] could not carry the roster into ${clanId}: ${error.message}`);
+    }
+    return result;
   }
 
   /**
@@ -895,9 +964,15 @@ class StandingClanService {
     };
   }
 
-  async _notifyMentorDecision(request) {
+  async _notifyMentorDecision(request, adoption = null) {
     const approved = request.status === 'approved';
     const reason = request.decisionNote ? ` Reason: ${request.decisionNote}` : '';
+    // Tell them who is already in it, so "open clan team to choose mentees"
+    // does not send them to pick people who are standing there.
+    const moved = adoption?.moved || 0;
+    const roster = moved
+      ? ` ${moved} mentee${moved === 1 ? '' : 's'} came across with it.`
+      : '';
     try {
       await notificationOrchestrator.dispatch({
         eventKey: NOTIFICATION_EVENTS.STANDING_CLAN_REQUEST_DECIDED,
@@ -905,7 +980,7 @@ class StandingClanService {
         payload: {
           title: approved ? 'Standing clan approved' : 'Standing clan request rejected',
           message: approved
-            ? `Your standing clan "${request.name}" was approved. Open Clan team to choose mentees.`
+            ? `Your standing clan "${request.name}" was approved.${roster || ' Open Clan team to choose mentees.'}`
             : `Your standing clan request "${request.name}" was not approved.${reason}`,
           actionUrl: approved && request.createdClanId ? '/mentor/clan-team' : '/mentor/dashboard',
           actionLabel: approved ? 'Open clan team' : 'View cockpit',

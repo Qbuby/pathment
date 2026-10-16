@@ -325,7 +325,9 @@ export function StandingClanRequests({
           <div className="rounded-2xl border border-brand-100 bg-brand-50/70 p-4 dark:border-brand-900 dark:bg-brand-950/30">
             <p className="text-sm font-semibold text-foreground">A fresh space, not a reopened program</p>
             <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-              Completed work remains preserved. The approved standing clan starts with an empty roster.
+              The completed programme and everything in it stays exactly as it is. Once an admin
+              approves, your clan&rsquo;s active mentees come across with you and their unfinished
+              work follows — you can remove anyone afterwards.
             </p>
           </div>
           <div>

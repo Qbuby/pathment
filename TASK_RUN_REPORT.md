@@ -72,7 +72,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 29 | Admin access logs must be human-readable, with pagination and search. | ⬜ | | Currently raw `Post /api/...` rows. |
 | 30 | Extract reusable components (drawers, profile pictures, …) — reduce duplication. | ⬜ | | Open-ended programme. |
 | 31 | Clan review "no mentee" empty state needs to be better. | ⬜ | | |
-| 32 | A standing-clan request should carry the mentor's active mentees (with their work) across automatically. | ⬜ | | |
+| 32 | A standing-clan request should carry the mentor's active mentees (with their work) across automatically. | ✅ | | Verified on the demo data, then rolled back. |
 | 33 | Blockers/plan shows "N tasks" that cannot be seen; wrong tasks; must be clan-scoped for mentor and mentee. Work-history drawer reports 0 tasks while the profile shows 24. | ✅ | | Migration 132 pending on production. |
 
 ## Run log
@@ -630,3 +630,61 @@ rendered the error boundary.
 **Trade-off, stated.** Jumping to the first unread message is gone. The report asked for
 the bottom in as many words, and the old behaviour was indistinguishable from a broken
 page whenever the banner sat at the top — which is the common case, not the rare one.
+
+### Issue 32 — an approved standing clan arrived empty
+
+**Root cause.** `standingClanService.decide` carried the source clan's **mentor team** into
+the new standing clan and nobody else. So the first thing a mentor did with the
+continuation they had just been granted was retype a roster the system already knew —
+every active mentee of the clan they had asked to continue. The request drawer even said
+so out loud: *"The approved standing clan starts with an empty roster."*
+
+**Fix.** Approval now carries the source clan's **active** mentees across, as the default,
+and the mentor removes anyone they do not want afterwards — which is one click, where
+choosing twenty people by hand is not.
+
+Four things are deliberate about how:
+
+- **Active only.** A paused mentee stopped turning up during the programme, and whether a
+  continuation is the way to bring them back is a judgement for their mentor, who can add
+  them by name. A removed one left.
+- **Their work is not moved.** Re-pointing those rows would empty the completed
+  programme's record and break the certificate awarded on it, which reads them live — the
+  reason `priorRecord` gives for keeping history where it happened. The ordinary join
+  carry runs instead, bringing forward unfinished work whose mentor came too. It is the
+  same path as the manual "add mentees" button, so there is one definition of what joining
+  a standing clan does.
+- **After the transaction**, for the reason `addMenteesToStandingClan` already documents:
+  it opens its own transaction and re-reads authorization, which would block on the clan
+  row the decision has not committed yet.
+- **One mentee at a time, never throwing.** The batch method is all-or-nothing by design,
+  which is right when a mentor picked the names and wrong here, where a single suspended
+  account would cost the other nineteen their place. The report asked for no errors: the
+  decision is recorded and the clan exists whatever happens to the roster, and what could
+  not be carried is counted and logged.
+
+The mentor's approval notification now says how many came across instead of telling them
+to go and choose, and the request drawer's copy says what actually happens.
+
+**Files.** `server/src/services/standingClanService.js`,
+`server/tests/admin/program-completion-standing.test.js`;
+`client-interface/components/shared/StandingClanRequests.tsx`.
+
+**Tests run.** 5 new cases → `tests/admin/program-completion-standing.test.js` **15 pass /
+0 fail**; `tests/mentor/clan-standing.test.js` + `tests/clans` **51 pass / 0 fail**. The
+new cases cover the move, that finished work stays in the clan it was done in, that a
+paused mentee is left behind, that **a mentee who cannot be carried does not fail the
+approval or cost the others their place**, and that a request with no source clan adds
+nobody.
+
+**A stale assertion was updated.** The same file asserted the approved clan starts empty —
+that is the behaviour this issue asks to change — and its test name said "one fresh empty
+clan". It now asserts the roster arrives, and still checks the thing it was really about:
+cross-programme mentees added without transfers or enrollments.
+
+**Verified against the demo database** end to end, then rolled back: programme closed →
+request → approved → **19 active mentees carried, 0 skipped**, mentor team carried as lead
++ co-mentor, **297 tasks still in the source clan**, 17 continued into the new one. The
+verification clan was then removed and the programme reopened; task counts and the active
+roster are back to exactly what they were (397 tasks, 19 active mentees, no clan frozen,
+no orphaned progress rows).
