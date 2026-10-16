@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ReviewHistoryCalendar } from '@/components/mentor/ReviewHistoryCalendar';
 import { toast } from 'sonner';
 import { Loader2, Video, Plus, Play, Square, Trash2, Users, CalendarClock, Radio } from 'lucide-react';
 import { PageHeader } from '@/components/admin/ui';
@@ -136,11 +137,45 @@ export default function AdminMeetings() {
   const upcoming = meetings.filter((m) => m.status === 'scheduled' || m.status === 'live');
   const past = meetings.filter((m) => m.status === 'ended');
 
+  /** 'YYYY-MM-DD' in the viewer's zone — an ISO instant is a day off west of UTC. */
+  const dayOf = (iso?: string | null) => (iso ? new Date(iso).toLocaleDateString('en-CA') : '');
+  const todayKey = () => new Date().toLocaleDateString('en-CA');
+  // Every day that already holds something, so the month can mark them.
+  const meetingDates = meetings.map((m) => dayOf(m.scheduledAt)).filter(Boolean);
+  const onSelectedDay = date ? meetings.filter((m) => dayOf(m.scheduledAt) === date) : [];
+
   return (
     <div className="space-y-6">
       <PageHeader title="Live meetings" subtitle="Host an org broadcast — pick who's invited, and they get a calendar invite plus a live join banner" />
 
-      {/* Create */}
+      {/*
+          The month, and the form, side by side.
+          This was a tall stack of full-width inputs with the list of meetings
+          somewhere below it — a form for entering a date, on a page whose
+          subject is a calendar. The month now sits beside it: days that
+          already hold a meeting are marked, clicking one fills the date and
+          narrows the list underneath to that day, so "what else is on that
+          Tuesday" is answered before you book over it.
+      */}
+      <div className="grid gap-5 lg:grid-cols-[minmax(260px,0.75fr)_1fr]">
+        <div className="space-y-2 rounded-2xl border border-slate-200 bg-card p-5">
+          <ReviewHistoryCalendar
+            label="Meeting calendar"
+            unit="meeting"
+            hint="Select a day to schedule on it"
+            initialDate={todayKey()}
+            dates={meetingDates}
+            selected={date || null}
+            onSelect={(next) => setDate(next || '')}
+            selectableDays="all"
+          />
+          <p className="text-xs text-muted-foreground">
+            {date
+              ? `${onSelectedDay.length} meeting${onSelectedDay.length === 1 ? '' : 's'} on ${new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}.`
+              : 'Pick a day to schedule on it and see what is already booked.'}
+          </p>
+        </div>
+
       <div className="bg-card rounded-2xl border border-slate-200 p-5 space-y-4">
         <h3 className="text-sm font-semibold text-slate-900 inline-flex items-center gap-1.5"><Plus className="w-4 h-4" />Schedule a meeting</h3>
         <div className="grid sm:grid-cols-2 gap-3">
@@ -181,13 +216,18 @@ export default function AdminMeetings() {
           </button>
         </div>
       </div>
+      </div>
 
       {/* Lists */}
       {loading ? (
         <div className="flex items-center justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-brand-600" /></div>
       ) : (
         <>
-          <MeetingList title="Upcoming & live" rows={upcoming} empty="No upcoming meetings." busyId={busyId}
+          <MeetingList
+            title={date ? `On ${new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}` : 'Upcoming & live'}
+            rows={date ? onSelectedDay : upcoming}
+            empty={date ? 'Nothing booked on this day yet.' : 'No upcoming meetings.'}
+            busyId={busyId}
             renderActions={(m) => (
               <>
                 {m.status === 'live' ? (

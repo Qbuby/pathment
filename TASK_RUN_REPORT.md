@@ -64,7 +64,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 21 | Feature-usage statistics per role (which pages/features are actually used). | ⬜ | | Open-ended programme. |
 | 22 | Admins can create standing clans too. | ✅ | | |
 | 23 | Program/clan filters across the admin panel (people → mentees/mentors, enrollments, clan requests), ideally one global program selector. | ⚠️ | | The four People screens; other admin areas not wired to the scope yet. |
-| 24 | Admin live-meeting screen redesign (calendar, Meet-like). | ⬜ | | |
+| 24 | Admin live-meeting screen redesign (calendar, Meet-like). | ✅ | | Month view + day filter; not a week grid. |
 | 25 | Opening a conversation must land scrolled to the newest message. | ✅ | | Also fixed a page-level crash on Messages. |
 | 26 | Workspace plan & usage shows wrong usage and wrong current plan. | ⚠️ | | Contradiction + NaN + retired-plan cases fixed; the raw counts could not be reproduced locally. |
 | 27 | Admin Review-Lock page: remove yellow, improve accessibility, allow grant/revoke per program or clan as well as org-wide. | ✅ | | Same change as #14; migration 133 pending on production. |
@@ -1329,3 +1329,35 @@ Mentees narrowed it to *"Showing 1 - 6 of 6"*, the choice persisted to localStor
 programme wise"* and a "create programme" button when there are none. The scope context is
 built to carry exactly that, and the Learning / Recognition / Insights screens are not
 wired to it yet — the four People screens the report names are.
+
+### Issue 24 — a meetings page with no calendar on it
+
+**What was wrong.** The page's subject is a calendar and it did not have one: a tall stack
+of full-width inputs — title, description, audience, clan, date, time, duration — with the
+list of meetings somewhere below it. Scheduling meant typing a date with no idea what was
+already on that day.
+
+**Fix.** The month sits beside the form. Days that already hold a meeting are marked;
+clicking one fills the date **and** narrows the list underneath to that day, so *"what
+else is on that Tuesday"* is answered before you book over it. The form is now a column
+beside it rather than a page of its own.
+
+It reuses `ReviewHistoryCalendar`, the same component the mentor schedule uses — which
+needed one small change: its helper line was hard-coded to talk about *availability*,
+true on the mentor schedule and wrong on a meetings page. It takes a `hint` now and keeps
+its old wording by default.
+
+**Files.** `client-interface/app/admin/meetings/page.tsx`,
+`client-interface/components/mentor/ReviewHistoryCalendar.tsx`.
+
+**Tests run.** `tsc` clean; client guard suite 112 pass.
+
+**Verified in the browser:** the month renders beside the form, clicking the 28th filled
+the date field, the helper read *"0 meetings on Wednesday, October 28"* and the list below
+retitled itself to *"On October 28"* with *"Nothing booked on this day yet."* No console
+errors. Screenshot captured.
+
+**Not done.** The report says "like Google Meet". A week/day grid with meetings drawn as
+blocks, and drag-to-create, is the next step and a much larger piece than this — what is
+here answers the specific complaint (no calendar, can't see the day you are booking into)
+without pretending to be that.
