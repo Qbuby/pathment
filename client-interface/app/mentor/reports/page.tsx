@@ -7,11 +7,12 @@ import {
   FileText, Loader2, Copy, Check, AlertTriangle, Star, TrendingUp, TrendingDown,
   Minus, ClipboardCheck, Flag, ArrowUpRight, Activity, Gauge, Sparkles, Printer, RefreshCw,
 } from 'lucide-react';
-import { useMentorCohort, type CohortMentee } from '@/lib/hooks/mentor';
+import { useMentorCohort, useClanPerformance, type CohortMentee } from '@/lib/hooks/mentor';
 import { mentorApi } from '@/lib/services/mentor-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { useAuth } from '@/lib/context/AuthContext';
-import { useClan, resolveActiveMentorClan } from '@/lib/context/ClanContext';
+import { useClan, resolveActiveMentorClan, ALL_CLANS } from '@/lib/context/ClanContext';
+import { Avatar as SharedAvatar } from '@/components/shared/Avatar';
 
 interface PeriodActivity {
   period: 'week' | 'month';
@@ -40,28 +41,31 @@ function nextStep(m: CohortMentee): string {
   return 'Check in';
 }
 
-// Literal class strings (no runtime concatenation) so Tailwind keeps them.
-// The accent scales (emerald/brand/amber/red) don't invert in dark mode like
-// slate does, so each band carries explicit dark: tints + lighter accent text —
-// otherwise the light -50 background stays light while the text flips to light.
+/**
+ * The score's own bands, not a fourth set of thresholds.
+ *
+ * This page used to invent both the number and the words for it: a health
+ * score of `progress*0.4 + onTime*0.3 + onTrackShare*0.3`, computed in the
+ * browser, banded at 78/58/40. The leaderboard and the progress-score table
+ * had already been moved onto the server's single score precisely because
+ * three competing formulas meant one mentee had three different numbers
+ * depending on which tab you opened — and Reports was the one left behind.
+ * The cut-offs below are the server's (`performanceService` bands), so the
+ * label on this page cannot drift from the label on the other two.
+ *
+ * Literal class strings (no runtime concatenation) so Tailwind keeps them.
+ * The accent scales don't invert in dark mode like slate does, so each band
+ * carries explicit dark: tints — otherwise the light -50 background stays
+ * light while the text flips to light.
+ */
 const HEALTH_BANDS = [
-  { min: 78, label: 'Healthy', tone: 'text-emerald-700 dark:text-emerald-300', stroke: 'stroke-emerald-500', soft: 'bg-emerald-50 border-emerald-200 dark:bg-emerald-500/10 dark:border-emerald-500/30' },
-  { min: 58, label: 'Steady', tone: 'text-brand-700 dark:text-brand-300', stroke: 'stroke-brand-500', soft: 'bg-brand-50 border-brand-200 dark:bg-brand-500/10 dark:border-brand-500/30' },
-  { min: 40, label: 'Needs attention', tone: 'text-amber-700 dark:text-amber-300', stroke: 'stroke-amber-500', soft: 'bg-amber-50 border-amber-200 dark:bg-amber-500/10 dark:border-amber-500/30' },
-  { min: 0, label: 'At risk', tone: 'text-red-700 dark:text-red-300', stroke: 'stroke-red-500', soft: 'bg-red-50 border-red-200 dark:bg-red-500/10 dark:border-red-500/30' },
+  { min: 90, label: 'Exceptional', tone: 'text-emerald-700 dark:text-emerald-300', stroke: 'stroke-emerald-500', soft: 'bg-emerald-50 border-emerald-200 dark:bg-emerald-500/10 dark:border-emerald-500/30' },
+  { min: 80, label: 'Excellent', tone: 'text-emerald-700 dark:text-emerald-300', stroke: 'stroke-emerald-500', soft: 'bg-emerald-50 border-emerald-200 dark:bg-emerald-500/10 dark:border-emerald-500/30' },
+  { min: 70, label: 'Strong', tone: 'text-brand-700 dark:text-brand-300', stroke: 'stroke-brand-500', soft: 'bg-brand-50 border-brand-200 dark:bg-brand-500/10 dark:border-brand-500/30' },
+  { min: 60, label: 'Developing', tone: 'text-amber-700 dark:text-amber-300', stroke: 'stroke-amber-500', soft: 'bg-amber-50 border-amber-200 dark:bg-amber-500/10 dark:border-amber-500/30' },
+  { min: 0, label: 'Needs attention', tone: 'text-red-700 dark:text-red-300', stroke: 'stroke-red-500', soft: 'bg-red-50 border-red-200 dark:bg-red-500/10 dark:border-red-500/30' },
 ] as const;
 const bandFor = (score: number) => HEALTH_BANDS.find((b) => score >= b.min)!;
-
-function Avatar({ m }: { m: CohortMentee }) {
-  return m.profilePictureUrl ? (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={m.profilePictureUrl} alt={m.name} className="w-9 h-9 rounded-full object-cover shrink-0" />
-  ) : (
-    <div className="w-9 h-9 bg-brand-100 rounded-full flex items-center justify-center shrink-0">
-      <span className="text-brand-700 text-xs font-semibold">{m.avatar}</span>
-    </div>
-  );
-}
 
 function MomentumPill({ momentum }: { momentum: CohortMentee['momentum'] }) {
   const cfg = {
@@ -78,6 +82,16 @@ export default function MentorReports() {
   const { user } = useAuth();
   const { clans, activeClanId } = useClan();
   const clan = resolveActiveMentorClan(clans, activeClanId);
+  /**
+   * The same read the leaderboard and the progress-score table use.
+   *
+   * A score only means something against the people somebody trains with, so
+   * it is per clan — "All clans" falls back to the first, exactly as
+   * `/mentor/scores` does, and the clan is named on the card so it is never
+   * ambiguous which one the number belongs to.
+   */
+  const scoreClanId = activeClanId !== ALL_CLANS ? activeClanId : (clans[0]?.id ?? null);
+  const { performance } = useClanPerformance(scoreClanId);
   const historical = Boolean(clan?.frozenAt);
   const HISTORICAL_TITLE = 'Completed programs are read-only';
   const [period, setPeriod] = useState<'week' | 'month'>('week');
@@ -98,6 +112,8 @@ export default function MentorReports() {
       .finally(() => { if (!cancelled) setActivityLoading(false); });
     return () => { cancelled = true; };
   }, [period]);
+
+  const ranked = useMemo(() => performance?.ranked ?? [], [performance]);
 
   const report = useMemo(() => {
     if (!cohort.length) return null;
@@ -120,14 +136,27 @@ export default function MentorReports() {
     const pending = totals?.pendingApprovals ?? cohort.reduce((n, m) => n + m.pendingApprovals, 0);
     const openBlockers = totals?.openBlockers ?? cohort.reduce((n, m) => n + m.openBlockers, 0);
 
-    // Health: progress + on-time delivery + share of the cohort on track.
-    const onTrackShare = onTrack.length / size;
-    const health = Math.round(avgProgress * 0.4 + avgOnTime * 0.3 + onTrackShare * 100 * 0.3);
+    /**
+     * Cohort health IS the clan's average progress score.
+     *
+     * It used to be `progress*0.4 + onTime*0.3 + onTrackShare*0.3`, worked out
+     * here in the browser — a fourth definition of "doing well" that agreed
+     * with nothing. The number on the Leaderboard and the Progress scores tabs
+     * is the server's one score, and this is now the mean of those same
+     * scores: the identical figure the progress table prints as "Clan
+     * average". Where the score has not placed anybody yet, there is no
+     * average to show rather than a made-up one.
+     */
+    const scored = ranked.map((m) => m.score);
+    const health = scored.length ? Math.round(avg(scored)) : null;
 
-    // Highlights ranked by real momentum: progress made, on time, well-rated.
-    const highlights = [...cohort]
-      .sort((a, b) => (b.absoluteProgress + b.onTimeRate) - (a.absoluteProgress + a.onTimeRate))
-      .slice(0, 3);
+    /**
+     * Top performers are the top of that same ranking.
+     *
+     * They were sorted by `absoluteProgress + onTimeRate`, so this page could
+     * — and did — name a different three people from the podium one tab away.
+     */
+    const highlights = ranked.slice(0, 3);
 
     const actions: string[] = [];
     if (pending > 0) actions.push(`Clear ${pending} pending review${pending > 1 ? 's' : ''} in your approvals queue.`);
@@ -136,9 +165,9 @@ export default function MentorReports() {
     if (slipping > 0) actions.push(`Re-engage ${slipping} mentee${slipping > 1 ? 's' : ''} whose momentum is slipping.`);
     if (!actions.length) actions.push('Cohort is healthy - keep the steady cadence and celebrate the wins.');
 
-    const band = bandFor(health);
+    const band = health === null ? null : bandFor(health);
     const overview =
-      `Your ${size}-mentee cohort is ${band.label.toLowerCase()} this ${period}: ` +
+      `Your ${size}-mentee cohort ${band ? `scores ${band.label.toLowerCase()}` : 'has no score yet'} this ${period}: ` +
       `${avgProgress}% average progress, ${avgOnTime}% on-time delivery` +
       `${avgRating ? `, ${avgRating}★ average work quality` : ''}. ` +
       `${onTrack.length} on track, ${watch.length} to watch, ${high.length} at risk.`;
@@ -147,7 +176,7 @@ export default function MentorReports() {
       size, avgProgress, avgOnTime, avgRating, onTrack, watch, high, atRisk,
       rising, steady, slipping, pending, openBlockers, health, band, highlights, actions, overview,
     };
-  }, [cohort, totals, period]);
+  }, [cohort, totals, period, ranked]);
 
   const copy = async () => {
     if (!report) return;
@@ -162,13 +191,17 @@ export default function MentorReports() {
         `  ${activity.tasksCompleted} tasks completed (${activity.onTimeRate}% on time) · ${activity.activeMentees}/${activity.totalMentees} active · ${activity.blockersOpened} new blockers, ${activity.blockersResolved} resolved`,
         '',
       ] : []),
-      `Health score: ${report.health}/100 (${report.band.label})`,
+      report.band === null
+        ? 'Progress score: not enough reviewed work to place this clan yet'
+        : `Progress score: ${report.health}/100 (${report.band.label}) — the clan average`,
       `Avg progress: ${report.avgProgress}%   On-time: ${report.avgOnTime}%${report.avgRating ? `   Quality: ${report.avgRating}★` : ''}`,
       `Momentum: ${report.rising} rising · ${report.steady} steady · ${report.slipping} slipping`,
       `Open work: ${report.pending} pending review${report.pending === 1 ? '' : 's'}, ${report.openBlockers} roadblock${report.openBlockers === 1 ? '' : 's'}`,
       '',
       'TOP PERFORMERS',
-      ...report.highlights.map((m) => `  • ${m.name} - ${pct(m.absoluteProgress)} progress, ${pct(m.onTimeRate)} on time${m.avgRating > 0 ? `, ${m.avgRating}★` : ''}`),
+      ...(report.highlights.length
+        ? report.highlights.map((m) => `  • #${m.rank} ${m.name} - ${m.score}/100 (${m.band})`)
+        : ['  • Nobody is ranked yet.']),
       '',
       'NEEDS ATTENTION',
       ...(report.atRisk.length
@@ -299,28 +332,34 @@ export default function MentorReports() {
           )}
 
           {/* Executive summary - health + distribution */}
-          <div className={`rounded-2xl border p-6 ${report.band.soft}`}>
+          <div className={`rounded-2xl border p-6 ${report.band ? report.band.soft : 'bg-card border-slate-200'}`}>
             <div className="flex flex-col sm:flex-row sm:items-center gap-5">
-              {/* Health score */}
+              {/* The clan's average progress score — the same number the
+                  Progress scores tab prints as "Clan average", and the same
+                  score the Leaderboard ranks by. */}
               <div className="flex items-center gap-4 shrink-0">
                 <div className="relative w-20 h-20">
                   <svg viewBox="0 0 36 36" className="w-20 h-20 -rotate-90">
                     <circle cx="18" cy="18" r="15.9155" fill="none" className="stroke-white/70" strokeWidth="3" />
                     <circle cx="18" cy="18" r="15.9155" fill="none" strokeWidth="3" strokeLinecap="round"
-                      className={report.band.stroke}
-                      strokeDasharray={`${report.health}, 100`} />
+                      className={report.band ? report.band.stroke : 'stroke-slate-300'}
+                      strokeDasharray={`${report.health ?? 0}, 100`} />
                   </svg>
                   <div className="absolute inset-0 flex flex-col items-center justify-center">
-                    <span className="text-xl font-bold text-slate-900 tabular-nums leading-none">{report.health}</span>
+                    <span className="text-xl font-bold text-slate-900 tabular-nums leading-none">{report.health ?? '—'}</span>
                     <span className="text-[10px] text-slate-400">/ 100</span>
                   </div>
                 </div>
                 <div>
                   <div className="flex items-center gap-1.5">
-                    <Gauge className={`w-4 h-4 ${report.band.tone}`} />
-                    <span className={`text-sm font-semibold ${report.band.tone}`}>{report.band.label}</span>
+                    <Gauge className={`w-4 h-4 ${report.band ? report.band.tone : 'text-slate-400'}`} />
+                    <span className={`text-sm font-semibold ${report.band ? report.band.tone : 'text-slate-500'}`}>
+                      {report.band ? report.band.label : 'Not scored yet'}
+                    </span>
                   </div>
-                  <p className="text-xs text-slate-500 mt-0.5">Cohort health</p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Progress score{clan?.name ? ` · ${clan.name}` : ''}
+                  </p>
                 </div>
               </div>
 
@@ -438,26 +477,43 @@ export default function MentorReports() {
 
           {/* Top performers */}
           <div className="bg-card rounded-2xl border border-slate-200 p-6">
-            <h2 className="text-slate-900 mb-4 flex items-center gap-2"><Star className="w-4 h-4 text-amber-500" />Top performers</h2>
-            <div className="space-y-1">
-              {report.highlights.map((m, i) => (
-                <Link key={m.id} href={`/mentor/mentees/${m.id}`}
-                  className="flex items-center gap-3 -mx-2 px-2 py-2 rounded-xl hover:bg-slate-50 transition-colors group">
-                  <span className="w-5 text-sm font-semibold text-slate-300 tabular-nums">{i + 1}</span>
-                  <Avatar m={m} />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-slate-900 truncate">{m.name}</p>
-                    <p className="text-xs text-slate-400 truncate">{m.program}</p>
-                  </div>
-                  <div className="hidden sm:flex items-center gap-4 text-xs text-slate-500 shrink-0">
-                    <span>{pct(m.absoluteProgress)} done</span>
-                    <span>{pct(m.onTimeRate)} on time</span>
-                    {m.avgRating > 0 && <span className="inline-flex items-center gap-0.5 text-amber-600"><Star className="w-3 h-3 fill-amber-400 text-amber-400" />{m.avgRating}</span>}
-                  </div>
-                  <ArrowUpRight className="w-4 h-4 text-slate-300 group-hover:text-brand-500 transition-colors shrink-0" />
-                </Link>
-              ))}
-            </div>
+            <h2 className="text-slate-900 mb-4 flex items-center gap-2">
+              <Star className="w-4 h-4 text-amber-500" />Top performers
+              <span className="text-xs font-normal text-slate-400">by progress score</span>
+            </h2>
+            {/* The top of the SAME ranking the Leaderboard shows. These were
+                sorted by progress + on-time here, so this card could name a
+                different three people from the podium one tab away. */}
+            {report.highlights.length === 0 ? (
+              <p className="text-sm text-slate-500">
+                Nobody is ranked yet — the score places a mentee once there is enough reviewed work behind them.
+              </p>
+            ) : (
+              <div className="space-y-1">
+                {report.highlights.map((m) => (
+                  <Link key={m.id} href={`/mentor/mentees/${m.id}`}
+                    className="flex items-center gap-3 -mx-2 px-2 py-2 rounded-xl hover:bg-slate-50 transition-colors group">
+                    <span className="w-5 text-sm font-semibold text-slate-300 tabular-nums">{m.rank}</span>
+                    <SharedAvatar name={m.name} src={m.profilePictureUrl} initials={m.avatar} size="sm" className="shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-slate-900 truncate">{m.name}</p>
+                      <p className="text-xs text-slate-400 truncate">{m.band}</p>
+                    </div>
+                    <div className="hidden sm:flex items-center gap-4 text-xs text-slate-500 shrink-0">
+                      <span>{m.evidence.tasksCompleted} done</span>
+                      <span>{pct(m.evidence.onTimeRate)} on time</span>
+                      {!!m.evidence.avgRating && (
+                        <span className="inline-flex items-center gap-0.5 text-amber-600">
+                          <Star className="w-3 h-3 fill-amber-400 text-amber-400" />{m.evidence.avgRating}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-sm font-semibold text-slate-900 tabular-nums shrink-0">{m.score}</span>
+                    <ArrowUpRight className="w-4 h-4 text-slate-300 group-hover:text-brand-500 transition-colors shrink-0" />
+                  </Link>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Needs attention */}
@@ -472,7 +528,7 @@ export default function MentorReports() {
                 {report.atRisk.map((m) => (
                   <Link key={m.id} href={`/mentor/mentees/${m.id}`}
                     className="flex items-start gap-3 -mx-2 px-2 py-2.5 rounded-xl hover:bg-slate-50 transition-colors group">
-                    <Avatar m={m} />
+                    <SharedAvatar name={m.name} src={m.profilePictureUrl} initials={m.avatar} size="md" className="shrink-0" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <p className="text-sm font-medium text-slate-900 truncate">{m.name}</p>

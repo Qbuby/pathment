@@ -6,6 +6,7 @@ import { ArrowUpRight, Gauge, Loader2, Search } from 'lucide-react';
 import { useClanPerformance } from '@/lib/hooks/mentor';
 import { useClan, ALL_CLANS } from '@/lib/context/ClanContext';
 import { SelectMenu } from '@/components/shared/SelectMenu';
+import { Avatar } from '@/components/shared/Avatar';
 import { usePagination } from '@/lib/hooks/shared/usePagination';
 import { TablePagination } from '@/components/shared/TablePagination';
 
@@ -167,9 +168,11 @@ export default function MentorScores() {
                     <span className="w-6 text-center text-sm font-semibold text-slate-400 tabular-nums">
                       {m.rank}
                     </span>
-                    <div className="w-9 h-9 bg-brand-100 rounded-full flex items-center justify-center shrink-0">
-                      <span className="text-brand-700 text-xs font-medium">{m.avatar}</span>
-                    </div>
+                    {/* The photo, not just the initials. `/performance`
+                        returns `profilePictureUrl` for every mentee and this
+                        page threw it away, so the one Insights tab that lists
+                        the whole clan was the one with no faces in it. */}
+                    <Avatar name={m.name} src={m.profilePictureUrl} initials={m.avatar} size="md" className="shrink-0" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <p className="text-sm font-medium text-slate-900 truncate">{m.name}</p>
@@ -210,13 +213,13 @@ export default function MentorScores() {
               </p>
               <div className="space-y-1.5">
                 {notRanked.map((m) => (
-                  <p key={m.id} className="text-sm text-slate-600">
+                  <div key={m.id} className="flex items-center gap-2.5 text-sm text-slate-600">
+                    <Avatar name={m.name} src={m.profilePictureUrl} initials={m.avatar} size="xs" className="shrink-0" />
                     <span className="text-slate-800">{m.name}</span>
-                    <span className="text-slate-400">
-                      {' '}
+                    <span className="min-w-0 truncate text-slate-400">
                       — {m.notRankedBecause ?? 'not enough reviewed work yet'}
                     </span>
-                  </p>
+                  </div>
                 ))}
               </div>
             </div>

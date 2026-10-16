@@ -57,7 +57,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 14 | Review-access lock should be settable per program or per clan, not org-wide only; remove the yellow styling. | ⬜ | | Same feature as #27, seen from the mentor side. |
 | 15 | Improve the "Something went wrong" screen. | ⬜ | | The screenshot also evidences a real crash on Recognition → Top performers with "All clans". |
 | 16 | Top-performers/nominations not scoped to the active (standing) clan — mentor sees other clans' nominations. | ✅ | | Also closed a cross-clan ranking leak. |
-| 17 | Mentor Insights → Reports disagrees with leaderboard/progress score (both correct). Align the criteria. Also: no mentee profile pictures in progress. | ⬜ | | |
+| 17 | Mentor Insights → Reports disagrees with leaderboard/progress score (both correct). Align the criteria. Also: no mentee profile pictures in progress. | ✅ | | Reports read 61 where the score read 79. |
 | 18 | Mentor dashboard: remove yellow, re-prioritise, show announcements compactly. | ⬜ | | |
 | 19 | Task assign: drop "Assign now / Schedule once / Repeat weekly"; use two icon menus (due date, repeat) like Microsoft To Do. No reminder icon. | ⬜ | | Migration 130 already added `assigned_tasks.repeat_rule`. |
 | 20 | Mentor calendar: pick a **time** on the calendar, and set repeating availability by day + time. | ⬜ | | |
@@ -688,3 +688,67 @@ request → approved → **19 active mentees carried, 0 skipped**, mentor team c
 verification clan was then removed and the programme reopened; task counts and the active
 roster are back to exactly what they were (397 tasks, 19 active mentees, no clan frozen,
 no orphaned progress rows).
+
+### Issue 17 — Insights → Reports disagreed with the other two tabs
+
+**Root cause.** Insights has three tabs. Leaderboard and Progress scores were both moved
+onto the server's single progress score some time ago — their own comments record why:
+each page used to carry its own weighting, so one mentee had a different number depending
+on which page you opened. **Reports was the one left behind.** It still computed, in the
+browser:
+
+- a *health score* of `avgProgress × 0.4 + avgOnTime × 0.3 + onTrackShare × 0.3`, banded
+  at thresholds (78 / 58 / 40) that exist nowhere else in the product;
+- a *Top performers* order sorted by `absoluteProgress + onTimeRate`.
+
+Neither is the score. Measured on the demo clan:
+
+| | Reports said | Progress scores / Leaderboard said |
+| --- | --- | --- |
+| Clan headline | **61** — "Steady" | **79** — "Strong" |
+
+Eighteen points apart, with a label from a different vocabulary, on two tabs of the same
+menu.
+
+**Fix.** Reports reads `useClanPerformance` — the same hook, for the same clan, as the
+other two tabs.
+
+- The headline is now the clan's **average progress score**: the identical number the
+  Progress scores tab prints as "Clan average". When the score has not placed anybody yet
+  it says so rather than inventing an average.
+- The bands are the server's (`Exceptional / Excellent / Strong / Developing / Needs
+  attention`), so a label here cannot drift from the label there.
+- **Top performers is the top of the same ranking**, shown with each mentee's rank, band
+  and score, instead of a private sort.
+- The clan is named under the dial, because a score only means something against the
+  people somebody trains with.
+
+What deliberately did **not** change: the throughput block (tasks completed, on-time rate,
+blockers opened and resolved over the week or month) and the "Needs attention" list. Those
+are period facts and the server's own risk field, not competing composites — the issue is
+about the score, and widening it would be redesigning a page that was asked to be made
+consistent.
+
+**The profile pictures.** `/mentor/scores` — the Progress scores tab, the one Insights
+view that lists the whole clan — rendered initials in a coloured circle and nothing else,
+although `/performance` returns `profilePictureUrl` for every mentee and the Leaderboard
+has always shown it. It now uses the shared `Avatar`, in both the ranked table and the
+"Not scored yet" list. Reports' own private avatar component went the same way, so the
+page no longer carries a second copy of something `components/shared/Avatar` already does.
+
+**Files.** `client-interface/app/mentor/reports/page.tsx`,
+`client-interface/app/mentor/scores/page.tsx`.
+
+**Tests run.** Client guard suite **112 pass / 0 fail**; `tsc` clean.
+
+**Verified in the browser** on the demo clan:
+- Reports now reads **79 / 100**, matching the Progress scores "Clan average" of **79**.
+  The old formula produced **61** on the same data.
+- Reports' Top performers reads **1 Maya Patel 95 · 2 Lina Haddad 92 · 3 Mei Lin 92**,
+  which is exactly the server ranking the Leaderboard shows.
+- Progress scores renders **18 photographs** where it previously rendered none.
+
+**Honest note on the podium.** On this dataset the old sort happened to name the same
+three people in the same order — the demo mentees are cleanly separated, so both orderings
+agree. The *formula* was different, which is what was fixed; I did not observe the two
+orders diverging, only the two headline numbers.
