@@ -18,14 +18,48 @@ import { stripHtml } from "@/lib/utils/html";
 export function AnnouncementsCard({
   href,
   limit = 3,
+  compact = false,
 }: {
   href: string;
   limit?: number;
   mentor?: boolean;
+  /**
+   * One line instead of a card.
+   *
+   * A dashboard's job is to point at what to do next, and announcements are
+   * context — worth seeing, not worth a block of the page. The compact form
+   * shows the newest one and how many there are, in a single strip that can
+   * sit at the top without pushing the work below the fold.
+   */
+  compact?: boolean;
 }) {
   const { announcements, loading } = useAnnouncements();
   if (loading || announcements.length === 0) return null;
   const items = announcements.slice(0, limit);
+
+  if (compact) {
+    const [newest] = announcements;
+    const more = announcements.length - 1;
+    return (
+      <Link
+        href={href}
+        className="group flex items-center gap-3 rounded-2xl border border-border bg-card px-4 py-2.5 transition-colors hover:border-brand-300"
+      >
+        <Megaphone className="h-4 w-4 shrink-0 text-brand-600 dark:text-brand-300" aria-hidden />
+        {newest.pinned && <Pin className="h-3 w-3 shrink-0 text-brand-600 dark:text-brand-300" aria-hidden />}
+        <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+          <span className="font-medium">{newest.title}</span>
+          <span className="text-muted-foreground"> — {stripHtml(newest.body)}</span>
+        </span>
+        {more > 0 && (
+          <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground">
+            +{more}
+          </span>
+        )}
+        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden />
+      </Link>
+    );
+  }
 
   return (
     <section className="rounded-3xl border border-border bg-card">

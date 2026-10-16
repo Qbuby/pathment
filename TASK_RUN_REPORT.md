@@ -58,7 +58,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 15 | Improve the "Something went wrong" screen. | ✅ | | Crash branch seen; the quiet branches verified by reading. |
 | 16 | Top-performers/nominations not scoped to the active (standing) clan — mentor sees other clans' nominations. | ✅ | | Also closed a cross-clan ranking leak. |
 | 17 | Mentor Insights → Reports disagrees with leaderboard/progress score (both correct). Align the criteria. Also: no mentee profile pictures in progress. | ✅ | | Reports read 61 where the score read 79. |
-| 18 | Mentor dashboard: remove yellow, re-prioritise, show announcements compactly. | ⬜ | | |
+| 18 | Mentor dashboard: remove yellow, re-prioritise, show announcements compactly. | ✅ | | |
 | 19 | Task assign: drop "Assign now / Schedule once / Repeat weekly"; use two icon menus (due date, repeat) like Microsoft To Do. No reminder icon. | ✅ | | Assign drawer only; see the scope note. |
 | 20 | Mentor calendar: pick a **time** on the calendar, and set repeating availability by day + time. | ✅ | | |
 | 21 | Feature-usage statistics per role (which pages/features are actually used). | ⬜ | | Open-ended programme. |
@@ -1226,3 +1226,34 @@ background included: **151**. Searching `clan` narrows to **27** and returns *"C
 joined a clan"*, *"Review lock enabled"* — not URLs. The page shows the sentence, the
 context (clan name · IP · device), the timestamp, a **failed · 400** badge where the
 request failed, and *"Showing 1 - 20 of 27"* with a pager. No console errors.
+
+### Issue 18 — mentor dashboard: the yellow, the order, the announcements
+
+Three asks in one report, and each had a concrete cause.
+
+**The yellow.** The "N mentees have no tasks yet" bar was amber on amber. That colour is
+the product's "something is wrong"; a mentee with no work yet is a **prompt**, not a
+fault. It is brand-toned now. Four of the stat cards also carried an amber/emerald
+`color` in their config — **dead configuration**: the card markup never read it, it uses
+`bg-muted` and `text-brand-600`. Removed rather than left to mislead the next reader.
+**No element on the page carries an amber or yellow class** (checked in the browser).
+
+**The order.** The no-tasks nudge sat **below both main panels**, so the one piece of
+unambiguous work on the screen was the last thing you reached. It now sits directly under
+the numbers it belongs with. Top to bottom the page reads: what is happening →
+what needs doing → everything else.
+
+**The announcements.** They were a full card near the bottom. `AnnouncementsCard` gained a
+`compact` form — a single strip with the newest announcement, a `+N` for the rest and a
+link — and the mentor dashboard uses it **at the top**, which is what the report asked
+for: visible, without taking a block of the page. The full card is unchanged everywhere
+else that wants it.
+
+**Files.** `client-interface/app/mentor/dashboard/page.tsx`,
+`client-interface/components/shared/AnnouncementsCard.tsx`.
+
+**Tests run.** `tsc` clean.
+
+**Verified in the browser:** the page reads *greeting → actions → announcement strip
+("+2") → stats → nudge → panels*, and **0 elements** carry an amber or yellow class. No
+console errors.

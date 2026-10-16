@@ -112,6 +112,19 @@ export default function MentorCockpit() {
         />
       )}
 
+      {/*
+          Order of the page, top to bottom: what is happening, what needs
+          doing, then everything else.
+
+          Announcements were a full card near the bottom and are a single
+          strip at the top now — worth seeing, not worth a block of the page,
+          which is exactly what the report asked for. The no-tasks nudge was
+          BELOW the two main panels, so the one piece of unambiguous work on
+          the screen was the last thing you reached; it sits under the numbers
+          it belongs with.
+      */}
+      <AnnouncementsCard compact mentor href="/mentor/announcements" />
+
       <div className="mentor-cockpit-stats grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           {
@@ -119,28 +132,24 @@ export default function MentorCockpit() {
             value: approvalCount,
             icon: ClipboardCheck,
             href: '/mentor/approvals',
-            color: 'text-brand-600 bg-brand-50',
           },
           {
             label: 'Needs attention',
             value: totals ? list.length : undefined,
             icon: AlertTriangle,
             href: '/mentor/mentees?filter=attention',
-            color: 'text-amber-600 bg-amber-50',
           },
           {
             label: 'Open roadblocks',
             value: totals?.openBlockers,
             icon: Flag,
             href: '/mentor/mentees?filter=blockers',
-            color: 'text-amber-600 bg-amber-50',
           },
           {
             label: 'Cohort on-time',
             value: totals ? `${totals.onTimeRate}%` : undefined,
             icon: Users,
             href: '/mentor/reports',
-            color: 'text-emerald-600 bg-emerald-50',
           },
         ].map((stat, index) => (
           <Link
@@ -172,6 +181,27 @@ export default function MentorCockpit() {
           </Link>
         ))}
       </div>
+
+      {/* A mentee with no work at all is the clearest call to action a mentor
+          gets, so it sits with the numbers rather than under everything.
+          The amber is gone: this is a prompt, not a warning, and the product
+          reserves that colour for something being wrong. */}
+      {noTaskCount > 0 && (
+        <Link
+          href="/mentor/mentees?filter=no_tasks"
+          className="flex items-center justify-between gap-3 rounded-2xl border border-brand-200 bg-brand-50/60 px-4 py-3 transition-colors hover:border-brand-300 dark:border-brand-500/30 dark:bg-brand-500/10"
+        >
+          <span className="inline-flex items-center gap-2 text-sm text-brand-900 dark:text-brand-100">
+            <Inbox className="w-4 h-4 shrink-0 text-brand-600 dark:text-brand-300" />
+            <strong className="font-semibold">{noTaskCount}</strong> mentee
+            {noTaskCount === 1 ? ' has' : 's have'} no tasks yet — assign work
+            to get them started.
+          </span>
+          <span className="inline-flex shrink-0 items-center gap-1 text-sm font-medium text-brand-700 dark:text-brand-300">
+            Assign <ArrowRight className="w-4 h-4" />
+          </span>
+        </Link>
+      )}
 
       <div className="grid gap-5 xl:grid-cols-[1.4fr_1fr]">
         <section className="rounded-3xl border border-border bg-card p-6">
@@ -278,27 +308,6 @@ export default function MentorCockpit() {
           ))}
         </section>
       </div>
-
-      {/* No-tasks nudge — links into the filtered Mentees view to assign work */}
-      {noTaskCount > 0 && (
-        <Link
-          href="/mentor/mentees?filter=no_tasks"
-          className="flex items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 hover:border-amber-300 transition-colors"
-        >
-          <span className="text-sm text-amber-800 inline-flex items-center gap-2">
-            <Inbox className="w-4 h-4 shrink-0" />
-            <strong className="font-semibold">{noTaskCount}</strong> mentee
-            {noTaskCount === 1 ? ' has' : 's have'} no tasks yet — assign work
-            to get them started.
-          </span>
-          <span className="text-sm font-medium text-amber-800 inline-flex items-center gap-1 shrink-0">
-            Assign <ArrowRight className="w-4 h-4" />
-          </span>
-        </Link>
-      )}
-
-      {/* Latest announcements */}
-      <AnnouncementsCard mentor href="/mentor/announcements" />
 
       {/* Your anonymous mentee feedback (gated until enough responses) */}
       <MentorFeedbackCard />
