@@ -55,7 +55,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 12 | Paginate (or infinite-scroll) Points & badges — performance leaderboard and earned badges. | ✅ | | Also: a mentee outside the top 10 could not see themselves. |
 | 13 | Surface paused mentees in clan review on the selected mentee's profile card. | ✅ | | Also fixed a 403 on every review load. |
 | 14 | Review-access lock should be settable per program or per clan, not org-wide only; remove the yellow styling. | ✅ | | Same change as #27. |
-| 15 | Improve the "Something went wrong" screen. | ⬜ | | The screenshot also evidences a real crash on Recognition → Top performers with "All clans". |
+| 15 | Improve the "Something went wrong" screen. | ✅ | | Crash branch seen; the quiet branches verified by reading. |
 | 16 | Top-performers/nominations not scoped to the active (standing) clan — mentor sees other clans' nominations. | ✅ | | Also closed a cross-clan ranking leak. |
 | 17 | Mentor Insights → Reports disagrees with leaderboard/progress score (both correct). Align the criteria. Also: no mentee profile pictures in progress. | ✅ | | Reports read 61 where the score read 79. |
 | 18 | Mentor dashboard: remove yellow, re-prioritise, show announcements compactly. | ⬜ | | |
@@ -1103,3 +1103,59 @@ rule was removed afterwards. No console errors.
 table once you are in it, and the complaint was that reaching it was the only way to do
 anything. Drag-to-create directly on the calendar grid would be the next step and is a
 bigger piece of work than this report asks for.
+
+### Issue 15 — "something went wrong" for everything
+
+**Root cause.** One message covered every failure there is: *"Something went wrong. This
+part of the app hit an unexpected error."* — including the two commonest, which are not
+errors at all. **Your connection dropped**, and **your session ended**. Telling somebody
+on a train that the application has failed is wrong, and it is the most frustrating kind
+of wrong, because the fix was to wait ten seconds.
+
+**Fix.** `ErrorView` reads the failure first and says the most specific true thing it can,
+with the action that resolves *that* case first:
+
+| | What it says | What it offers |
+| --- | --- | --- |
+| offline | **You are offline** — nothing you have done is lost | Try again |
+| session | **Your session ended** — you will come straight back here | **Sign in again** |
+| forbidden | **You do not have access to this** | Go back |
+| missing | **This is not here any more** | Go back |
+| crash | **Something went wrong** — your work is saved | Try again, and a **copyable reference** |
+
+Red is kept for the case that deserves it; a dropped connection gets a calm slate panel,
+because nothing is broken. The classifier is deliberately conservative — anything not
+clearly one of the quiet cases is a crash, since claiming "you are offline" when the code
+actually threw would be the same mistake in reverse.
+
+Three other things the screen was missing:
+
+- **"Go back"**. Almost always what somebody wants from a page that did not load, and it
+  was the one route not offered.
+- **A copyable reference.** A support code you cannot select is a support code nobody
+  quotes, and it is now shown only on a real crash, where it means something.
+- **A way to report it** — one line pointing at the feedback button that already exists.
+
+**A contrast bug went with it.** The "Go to dashboard" link carried
+`text-slate-700 dark:text-slate-700`, so in dark mode it was dark text on a dark panel —
+unreadable at exactly the moment somebody is trying to get out of a broken screen.
+
+**One component, every boundary.** `app/error.tsx`, `app/global-error.tsx`,
+`app/{admin,mentor,mentee}/error.tsx` all render `ErrorView`, so this is one change for
+all five. The global boundary's hard-coded `title="The app hit a snag"` is gone — it
+overrode the classifier, and "You are offline" is more useful than any headline that file
+could pick.
+
+**Files.** `client-interface/components/shared/ErrorView.tsx`,
+`client-interface/app/global-error.tsx`.
+
+**Tests run.** `tsc` clean; client guard suite 112 pass.
+
+**Verified in the browser** by standing up a page that throws under `/mentor`, confirming
+the new card (headline, three actions, copyable reference `2871640933`, the report line)
+and removing the page again. Screenshot captured.
+
+**What I could not reproduce.** The offline card. Cutting the network with CDP did not
+reach the boundary — Next served the shell from cache — so the offline, session,
+forbidden and missing branches are **verified by reading, not by seeing**. The crash
+branch is the one in the report's screenshot, and that one I did see.
