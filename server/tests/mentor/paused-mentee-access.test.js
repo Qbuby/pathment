@@ -77,11 +77,19 @@ describe('paused mentee remains visible to their mentor', () => {
       expect(resource.programId).toBeTruthy();
     });
 
-    it('prefers an ACTIVE placement when the mentee holds both', async () => {
-      // clanService.addMember refuses a second mentee placement (one clan at a
-      // time), so this row is written directly — which is exactly how it occurs
-      // in practice: legacy data and migrations, not the happy path. Without the
-      // explicit order, findOne would return either row at the database's whim.
+    it('names NO clan when the mentee holds two and the caller named none', async () => {
+      /**
+       * This used to assert that an active placement was preferred over a
+       * paused one. `scopeOfMentee` deliberately stopped choosing: picking for
+       * the caller means authorising against a clan they did not ask about,
+       * and a standing clan and a cohort clan grant different things. The same
+       * rule `resolveMenteeClanId` follows — refuse rather than guess — and
+       * `preferredClanId` is how a caller who knows says so.
+       *
+       * clanService.addMember refuses a second mentee placement (one clan at a
+       * time), so this row is written directly — which is how it occurs in
+       * practice: legacy data and migrations, not the happy path.
+       */
       const program = await createProgram({ createdBy: lead.id });
       const second = await models.Clan.create({
         programId: program.id, name: 'Second', leadMentorId: lead.id, createdBy: lead.id,
@@ -91,8 +99,10 @@ describe('paused mentee remains visible to their mentor', () => {
       });
       await setStatus(mentee.id, clan.id, 'paused');
 
-      const resource = await authzService.scopeOfMentee(mentee.id);
-      expect(resource.clanId).toBe(second.id);
+      expect((await authzService.scopeOfMentee(mentee.id)).clanId).toBeUndefined();
+      // Naming one resolves it, paused or not.
+      expect((await authzService.scopeOfMentee(mentee.id, second.id)).clanId).toBe(second.id);
+      expect((await authzService.scopeOfMentee(mentee.id, clan.id)).clanId).toBe(clan.id);
     });
 
     it('drops the clan for invited/removed', async () => {
@@ -235,6 +245,92 @@ describe('paused mentee remains visible to their mentor', () => {
         .get(`/api/activity/mentee/${solo.id}/summary?days=7`)
         .set('Authorization', authHeader(lead));
       expect(res.status).not.toBe(403);
+    });
+  });
+
+  describe('a paused mentee is reachable from clan review', () => {
+    const cohortService = require('../../src/services/cohortService');
+
+    /**
+     * Pausing takes somebody out of the numbers, which is its job. It also
+     * took them off clan review — the one screen where a mentor goes through
+     * their people one at a time and would notice someone had stopped turning
+     * up. They were simply gone, with no trace and no way back.
+     */
+    it('is left out of the roster by default', async () => {
+      await mentorshipPauseService.pause(lead, mentee.id, clan.id, 'exams', 'mentor');
+
+      const { cohort, totals } = await cohortService.getCohort(lead.id, { clanId: clan.id });
+
+      expect(cohort.map((r) => r.id)).not.toContain(mentee.id);
+      expect(totals.mentees).toBe(0);
+    });
+
+    it('comes back tagged when asked for, and counts toward nothing', async () => {
+      await mentorshipPauseService.pause(lead, mentee.id, clan.id, 'exams', 'mentor');
+
+      const { cohort, totals } = await cohortService.getCohort(lead.id, {
+        clanId: clan.id, includePaused: true,
+      });
+
+      const row = cohort.find((r) => r.id === mentee.id);
+      expect(row).toBeDefined();
+      expect(row.paused).toBe(true);
+      // Still attributed to the clan: an unattributed row shows in every clan.
+      expect((row.clans || []).map((c) => c.id)).toContain(clan.id);
+      // Out of every headline number — that is what pausing is for.
+      expect(totals.mentees).toBe(0);
+      expect(totals.paused).toBe(1);
+    });
+
+    it('is not duplicated when they are active in another clan', async () => {
+      const program = await createProgram({ createdBy: lead.id });
+      const second = await models.Clan.create({
+        programId: program.id, name: 'Second', leadMentorId: lead.id, createdBy: lead.id,
+      });
+      await clanService.addMember(second.id, { userId: lead.id, role: 'lead_mentor' });
+      await clanService.addMember(second.id, { userId: mentee.id, role: 'mentee' });
+      await mentorshipPauseService.pause(lead, mentee.id, clan.id, 'exams', 'mentor');
+
+      const { cohort } = await cohortService.getCohort(lead.id, { includePaused: true });
+
+      expect(cohort.filter((r) => r.id === mentee.id)).toHaveLength(1);
+      // Active somewhere is active: a greyed-out second copy would be a lie.
+      expect(cohort.find((r) => r.id === mentee.id).paused).toBe(false);
+    });
+  });
+
+  describe('pause reads on a clan whose programme has finished', () => {
+    /**
+     * Authority and applicability are different questions, and conflating them
+     * told a mentor "You do not oversee this clan" about a clan they lead, for
+     * the sole reason that it had finished. Clan review asks for suggestions on
+     * every load, so the page logged a 403 each time it opened.
+     */
+    const freeze = () => models.Clan.update({ frozenAt: new Date() }, { where: { id: clan.id } });
+
+    it('returns no suggestions rather than refusing the read', async () => {
+      await freeze();
+      await expect(mentorshipPauseService.listSuggestions(lead, clan.id)).resolves.toEqual([]);
+    });
+
+    it('still refuses a clan the mentor does not run', async () => {
+      const program = await createProgram({ createdBy: outsider.id });
+      const theirs = await models.Clan.create({
+        programId: program.id, name: 'Not mine', leadMentorId: outsider.id, createdBy: outsider.id,
+      });
+      await clanService.addMember(theirs.id, { userId: outsider.id, role: 'lead_mentor' });
+
+      await expect(mentorshipPauseService.listSuggestions(lead, theirs.id)).rejects.toThrow(/oversee/i);
+    });
+
+    it('still shows who is paused there — they are still paused', async () => {
+      await mentorshipPauseService.pause(lead, mentee.id, clan.id, 'exams', 'mentor');
+      await freeze();
+
+      const paused = await mentorshipPauseService.listPaused(lead, clan.id);
+
+      expect(paused.map((p) => p.menteeId)).toEqual([mentee.id]);
     });
   });
 });

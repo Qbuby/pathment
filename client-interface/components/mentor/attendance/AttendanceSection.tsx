@@ -41,10 +41,21 @@ export function AttendanceSection({
   const [currentFilter, setCurrentFilter] = useState<AttendanceFilter>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
 
+  /**
+   * Paused mentees are in the rail but not in attendance.
+   *
+   * They are here so a mentor can still reach them — somebody who has stopped
+   * turning up is exactly who you want to be able to click on during a review
+   * — but marking them present or absent is meaningless, so they count toward
+   * nothing and the sheet does not list them.
+   */
+  const attending = useMemo(() => cohort.filter((m) => !m.paused), [cohort]);
+  const pausedCount = cohort.length - attending.length;
+
   // Headline tallies so the mentor sees the split without counting chips.
   const counts = useMemo(() => {
     const c = { present: 0, absent: 0, excused: 0, marked: 0 };
-    cohort.forEach((m) => {
+    attending.forEach((m) => {
       const a = attendance[m.id];
       if (a === 'present') c.present++;
       else if (a === 'absent') c.absent++;
@@ -52,18 +63,20 @@ export function AttendanceSection({
       if (a) c.marked++;
     });
     return c;
-  }, [cohort, attendance]);
+  }, [attending, attendance]);
 
   const filteredMentees = useMemo(() => {
     if (currentFilter !== 'all') {
-      return cohort.filter((m) => attendance[m.id] === currentFilter);
+      return attending.filter((m) => attendance[m.id] === currentFilter);
     }
+    // Paused last, always — they are context, not the queue.
     return [...cohort].sort((a, b) => {
+      if (!!a.paused !== !!b.paused) return a.paused ? 1 : -1;
       const wa = SORT_WEIGHT[attendance[a.id] ?? 'null'];
       const wb = SORT_WEIGHT[attendance[b.id] ?? 'null'];
       return wa - wb;
     });
-  }, [cohort, attendance, currentFilter]);
+  }, [cohort, attending, attendance, currentFilter]);
 
   return (
     <div className="space-y-3 mb-6">
@@ -74,9 +87,12 @@ export function AttendanceSection({
             <AttendanceFilters currentFilter={currentFilter} onFilterChange={setCurrentFilter} />
           </div>
           <span className="text-xs text-slate-500 truncate">
-            {counts.marked}/{cohort.length} marked
+            {counts.marked}/{attending.length} marked
             {counts.marked > 0 && (
               <span className="text-slate-400 hidden sm:inline"> · {counts.present} P · {counts.absent} A · {counts.excused} E</span>
+            )}
+            {pausedCount > 0 && (
+              <span className="text-slate-400"> · {pausedCount} paused</span>
             )}
           </span>
         </div>
@@ -114,12 +130,13 @@ export function AttendanceSection({
         )}
       </div>
 
-      {/* The sheet always manages the WHOLE cohort, not the filtered rail, so
-          "Mark all present" can't silently skip mentees hidden by a filter. */}
+      {/* The sheet always manages the whole ATTENDING cohort, not the filtered
+          rail, so "Mark all present" can't silently skip mentees hidden by a
+          filter — and can't mark somebody who is paused. */}
       <AttendanceModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        mentees={cohort}
+        mentees={attending}
         initialAttendance={attendance}
         onSave={onSaveAttendance}
         isSaving={isSaving}

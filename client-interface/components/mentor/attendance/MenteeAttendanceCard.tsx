@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, X, Minus, HelpCircle } from 'lucide-react';
+import { Check, X, Minus, HelpCircle, Pause } from 'lucide-react';
 import { getInitials } from '@/lib/utils/formatting';
 
 type Attendance = 'present' | 'absent' | 'excused' | null;
@@ -10,6 +10,12 @@ export interface AttendanceMentee {
   /** Pre-computed initials from the cohort payload; falls back to deriving them. */
   avatar?: string;
   profilePictureUrl?: string | null;
+  /**
+   * Paused in this clan. They are shown — a mentor cannot bring back somebody
+   * they cannot see — but attendance does not apply to them, so the chip is
+   * muted and carries a pause badge instead of a present/absent one.
+   */
+  paused?: boolean;
 }
 
 interface MenteeAttendanceCardProps {
@@ -43,8 +49,11 @@ const BADGE: Record<NonNullable<Attendance> | 'null', { cls: string; Icon: typeo
 
 export function MenteeAttendanceCard({ mentee, attendance, isActive, onClick }: MenteeAttendanceCardProps) {
   const key = (attendance ?? 'null') as NonNullable<Attendance> | 'null';
-  const ring = RING[key];
-  const { cls: badgeCls, Icon } = BADGE[key];
+  const paused = !!mentee.paused;
+  const ring = paused ? 'bg-slate-300' : RING[key];
+  const { cls: badgeCls, Icon } = paused
+    ? { cls: 'bg-slate-400 text-white', Icon: Pause }
+    : BADGE[key];
   const initials = mentee.avatar || getInitials(mentee.name);
   const firstName = mentee.name.split(' ')[0];
 
@@ -65,7 +74,7 @@ export function MenteeAttendanceCard({ mentee, attendance, isActive, onClick }: 
     <button
       ref={ref}
       onClick={onClick}
-      title={`${mentee.name} — ${attendance ?? 'not marked'}`}
+      title={paused ? `${mentee.name} — paused in this clan` : `${mentee.name} — ${attendance ?? 'not marked'}`}
       aria-pressed={isActive}
       className={`group/card relative flex shrink-0 snap-start flex-col items-center gap-2 rounded-2xl px-1.5 pb-1.5 pt-2 outline-none transition-colors ${
         isActive ? 'w-[92px] bg-brand-50/80 dark:bg-brand-500/10' : 'w-[84px]'
@@ -96,10 +105,12 @@ export function MenteeAttendanceCard({ mentee, attendance, isActive, onClick }: 
                 src={mentee.profilePictureUrl as string}
                 alt={mentee.name}
                 onError={() => setImgFailed(true)}
-                className="w-14 h-14 rounded-full object-cover bg-brand-50"
+                className={`w-14 h-14 rounded-full object-cover bg-brand-50 ${paused ? 'grayscale opacity-60' : ''}`}
               />
             ) : (
-              <div className="w-14 h-14 rounded-full bg-brand-50 flex items-center justify-center text-brand-700 font-semibold text-base">
+              <div className={`w-14 h-14 rounded-full flex items-center justify-center font-semibold text-base ${
+                paused ? 'bg-slate-100 text-slate-500' : 'bg-brand-50 text-brand-700'
+              }`}>
                 {initials}
               </div>
             )}
@@ -118,7 +129,9 @@ export function MenteeAttendanceCard({ mentee, attendance, isActive, onClick }: 
         className={`max-w-full truncate text-xs ${
           isActive
             ? 'rounded-full bg-brand-600 px-2 py-0.5 font-semibold text-white'
-            : 'font-medium text-slate-700 group-hover/card:text-slate-900'
+            : paused
+              ? 'font-medium text-slate-400'
+              : 'font-medium text-slate-700 group-hover/card:text-slate-900'
         }`}
       >
         {firstName}

@@ -95,6 +95,25 @@ class CohortService {
     return [...new Set(memberships.map((m) => m.userId))];
   }
 
+  /**
+   * Mentees PAUSED in the clans this mentor runs.
+   *
+   * Deliberately its own read rather than a widening of `resolveMenteeIds`:
+   * that one feeds approvals, reports, reminders and the leaderboard, and a
+   * paused mentee belongs in none of them.
+   */
+  async pausedMenteeIdsFor(mentorId, clanId = null) {
+    const authzService = require('./authzService');
+    const mentored = await authzService.mentoredClanIds(mentorId);
+    const clanIds = clanId ? mentored.filter((id) => id === clanId) : mentored;
+    if (!clanIds.length) return [];
+    const rows = await models.ClanMembership.findAll({
+      where: { clanId: { [Op.in]: clanIds }, role: 'mentee', status: 'paused' },
+      attributes: ['userId'], raw: true,
+    });
+    return [...new Set(rows.map((r) => r.userId))];
+  }
+
   /** Join date per mentee within ONE clan → Map(menteeId → Date). */
   async menteeJoinDatesForClan(clanId) {
     const map = new Map();
@@ -1028,8 +1047,25 @@ class CohortService {
     };
   }
 
-  async getCohort(mentorId, { clanId = null } = {}) {
-    const menteeIds = await this.resolveMenteeIds(mentorId, clanId ? { clanIds: [clanId] } : {});
+  /**
+   * The mentor's roster.
+   *
+   * `includePaused` adds the mentees who are paused in these clans, tagged
+   * and kept out of every total. Pausing is supposed to take somebody out of
+   * reports and reminders, and it does — but it also took them off the clan
+   * review screen entirely, which is the one place a mentor would notice
+   * they had gone and bring them back. They are opt-in rather than always
+   * present so that the cockpit, approvals and the leaderboard, which all
+   * read this, keep counting exactly who they counted before.
+   */
+  async getCohort(mentorId, { clanId = null, includePaused = false } = {}) {
+    const activeIds = await this.resolveMenteeIds(mentorId, clanId ? { clanIds: [clanId] } : {});
+    const pausedIds = includePaused ? await this.pausedMenteeIdsFor(mentorId, clanId) : [];
+    const active = new Set(activeIds);
+    // A mentee paused in one clan and active in another is active: they are on
+    // the roster already, and a second, greyed-out copy of them would be a lie.
+    const paused = new Set(pausedIds.filter((id) => !active.has(id)));
+    const menteeIds = [...activeIds, ...paused];
     if (!menteeIds.length) return { cohort: [], totals: { mentees: 0, pendingApprovals: 0, openBlockers: 0, atRisk: 0, onTimeRate: 0 } };
 
     const scope = await this.workScopeForClan(clanId);
@@ -1041,7 +1077,16 @@ class CohortService {
         let menteeMemberships = [];
         if (scopedClanIds.length) {
           menteeMemberships = await models.ClanMembership.findAll({
-            where: { clanId: { [Op.in]: scopedClanIds }, status: 'active', role: 'mentee' },
+            where: {
+              clanId: { [Op.in]: scopedClanIds },
+              role: 'mentee',
+              // A paused row has to be read here too when paused mentees are
+              // asked for. Without it they come back attributed to no clan,
+              // and the client's rule for an unattributable row is to show it
+              // in EVERY clan — one person paused in one clan appearing in all
+              // of them.
+              status: includePaused ? { [Op.in]: ['active', 'paused'] } : 'active',
+            },
             attributes: ['userId', 'clanId'],
           });
         }
@@ -1088,14 +1133,21 @@ class CohortService {
       r.daysSinceJoined = joined ? Math.floor((Date.now() - new Date(joined).getTime()) / 86400000) : null;
     });
 
+    cohort.forEach((r) => { r.paused = paused.has(r.id); });
+
+    // Every headline number is about the people still taking part. A paused
+    // mentee dragging the clan's on-time rate down is precisely what pausing
+    // exists to prevent.
+    const counted = cohort.filter((r) => !r.paused);
     const totals = {
-      mentees: cohort.length,
-      pendingApprovals: cohort.reduce((n, m) => n + m.pendingApprovals, 0),
-      openBlockers: cohort.reduce((n, m) => n + m.openBlockers, 0),
-      atRisk: cohort.filter((m) => m.risk !== 'low').length,
-      onTimeRate: cohort.length
-        ? Math.round(cohort.reduce((n, m) => n + m.onTimeRate, 0) / cohort.length)
-        : 0
+      mentees: counted.length,
+      pendingApprovals: counted.reduce((n, m) => n + m.pendingApprovals, 0),
+      openBlockers: counted.reduce((n, m) => n + m.openBlockers, 0),
+      atRisk: counted.filter((m) => m.risk !== 'low').length,
+      onTimeRate: counted.length
+        ? Math.round(counted.reduce((n, m) => n + m.onTimeRate, 0) / counted.length)
+        : 0,
+      ...(includePaused ? { paused: cohort.length - counted.length } : {}),
     };
 
     return { cohort, totals };
