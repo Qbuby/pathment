@@ -20,6 +20,12 @@ export interface Plan {
   annualPriceCents: number;
   currency: string;
   limits: Record<string, number>;
+  /**
+   * What the plan itself promises, before anything was changed for one
+   * workspace. Present on the subscribed plan only; `limits` above is what is
+   * actually enforced here.
+   */
+  publishedLimits?: Record<string, number>;
   features: Record<string, boolean>;
 }
 
@@ -29,7 +35,12 @@ export interface OrganizationOverview {
   organization: OrganizationSummary;
   organizations: OrganizationSummary[];
   membership: { role: string; status: string };
-  subscription: { status: string; billingInterval: string; currentPeriodEnd?: string | null; plan: Plan; requestedPlan?: Plan | null; requestedAt?: string | null };
+  subscription: {
+    status: string; billingInterval: string; currentPeriodEnd?: string | null;
+    plan: Plan; requestedPlan?: Plan | null; requestedAt?: string | null;
+    /** Limit keys whose enforced value differs from what the plan publishes. */
+    overriddenLimits?: string[];
+  };
   usage: { members: number; programs: number; clans: number };
 }
 

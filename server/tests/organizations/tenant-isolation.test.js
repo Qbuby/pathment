@@ -264,6 +264,52 @@ describe('organization tenancy', () => {
     });
   });
 
+  describe('a workspace whose limits were set for it directly', () => {
+    /**
+     * The settings page reads the EFFECTIVE limits for its usage bars and the
+     * plan's own published limits for the plan cards. Both are correct, and
+     * together they read as a contradiction: an overridden workspace saw
+     * "1089 / Unlimited" above a card promising 1500 members, with nothing on
+     * the page reconciling them. The service now says which keys differ, so
+     * the page can name the override instead of looking broken.
+     *
+     * `organizationScope` injects the tenant, so these reads run inside the
+     * workspace's own request context like every other caller does.
+     */
+    const orgService = require('../../src/services/organizationService');
+    const inWorkspace = (fn) => runWithRequestContext({ organizationId: secondary.id, userId: admin.id }, fn);
+    const setOverrides = (overrides) => models.OrganizationSubscription.update(
+      { overrides }, { where: { organizationId: secondary.id } },
+    );
+
+    afterEach(() => setOverrides({}));
+
+    it('says nothing is overridden when nothing is', () => inWorkspace(async () => {
+      const subscription = await orgService.subscription(secondary.id);
+      expect(subscription.overriddenLimits).toEqual([]);
+      expect(subscription.plan.publishedLimits).toEqual(subscription.plan.limits);
+    }));
+
+    it('names exactly the keys that differ from the plan', () => inWorkspace(async () => {
+      await setOverrides({ limits: { members: -1 } });
+      const subscription = await orgService.subscription(secondary.id);
+
+      expect(subscription.overriddenLimits).toEqual(['members']);
+      // What is enforced, and what the plan promises, both travel.
+      expect(subscription.plan.limits.members).toBe(-1);
+      expect(subscription.plan.publishedLimits.members).not.toBe(-1);
+      // Untouched keys are not reported as custom.
+      expect(subscription.plan.limits.clans).toBe(subscription.plan.publishedLimits.clans);
+    }));
+
+    it('does not report a key whose override equals the published value', () => inWorkspace(async () => {
+      const before = await orgService.subscription(secondary.id);
+      await setOverrides({ limits: { clans: before.plan.publishedLimits.clans } });
+
+      expect((await orgService.subscription(secondary.id)).overriddenLimits).toEqual([]);
+    }));
+  });
+
   it('lets organization admins request a plan without activating it prematurely', async () => {
     const response = await request(app)
       .post('/api/organizations/current/plan-request')

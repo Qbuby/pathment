@@ -201,10 +201,36 @@ class OrganizationService {
     });
     if (!subscription) throw new NotFoundError('Organization subscription not found');
     const plan = subscription.plan?.toJSON() || {};
+    const published = plan.limits || {};
+    const limits = { ...published, ...(subscription.overrides?.limits || {}) };
+
+    /**
+     * Say WHICH limits this workspace has had changed for it.
+     *
+     * The settings page reads the effective limits for the usage bars and the
+     * plan's own published limits for the plan cards, which is correct and
+     * reads as a contradiction: an overridden workspace saw "1089 / Unlimited"
+     * above a Growth card promising 1500 members, with nothing on the page
+     * explaining how both could be true. An admin can only conclude the
+     * numbers are broken.
+     *
+     * A key appears here only when the effective value actually differs from
+     * what the plan publishes, so a workspace with no overrides sends an empty
+     * list and nothing changes for it.
+     */
+    const overriddenLimits = Object.keys(limits)
+      .filter((key) => String(limits[key]) !== String(published[key]));
+
     return {
       ...subscription.toJSON(),
-      plan: { ...plan, limits: { ...(plan.limits || {}), ...(subscription.overrides?.limits || {}) },
-        features: { ...(plan.features || {}), ...(subscription.overrides?.features || {}) } },
+      plan: {
+        ...plan,
+        limits,
+        features: { ...(plan.features || {}), ...(subscription.overrides?.features || {}) },
+        /** What the plan itself promises, before anything was changed for this workspace. */
+        publishedLimits: published,
+      },
+      overriddenLimits,
     };
   }
 

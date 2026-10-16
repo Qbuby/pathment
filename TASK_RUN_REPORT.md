@@ -66,7 +66,7 @@ Legend: ⬜ not started · 🟦 in progress · ✅ done & verified · ⚠️ par
 | 23 | Program/clan filters across the admin panel (people → mentees/mentors, enrollments, clan requests), ideally one global program selector. | ⬜ | | Open-ended programme. |
 | 24 | Admin live-meeting screen redesign (calendar, Meet-like). | ⬜ | | |
 | 25 | Opening a conversation must land scrolled to the newest message. | ✅ | | Also fixed a page-level crash on Messages. |
-| 26 | Workspace plan & usage shows wrong usage and wrong current plan. | ⬜ | | Production-scale numbers; see flag 4. |
+| 26 | Workspace plan & usage shows wrong usage and wrong current plan. | ⚠️ | | Contradiction + NaN + retired-plan cases fixed; the raw counts could not be reproduced locally. |
 | 27 | Admin Review-Lock page: remove yellow, improve accessibility, allow grant/revoke per program or clan as well as org-wide. | ⬜ | | Same feature as #14. |
 | 28 | Remove unnecessary database data (~700 MB). | ⬜ | | Production data — see flag 4. |
 | 29 | Admin access logs must be human-readable, with pagination and search. | ⬜ | | Currently raw `Post /api/...` rows. |
@@ -752,3 +752,67 @@ page no longer carries a second copy of something `components/shared/Avatar` alr
 three people in the same order — the demo mentees are cleanly separated, so both orderings
 agree. The *formula* was different, which is what was fixed; I did not observe the two
 orders diverging, only the two headline numbers.
+
+### Issue 26 — Plan &amp; usage contradicting itself
+
+**What the screenshot shows.** Usage reads **1089 / Unlimited**, **1 / Unlimited**,
+**46 / Unlimited** — directly above a Growth card, marked *Current*, promising **1500
+members, 15 programs, 60 clans**. Both halves of the page describe the same plan and give
+different answers, so the only conclusion available to an admin is that the numbers are
+wrong.
+
+**Root cause.** Both halves are reading different things and neither says so. The usage
+bars use `subscription.plan.limits`, which is the plan's limits **with this workspace's
+overrides merged over them**. The plan cards use the plan row as published. When a
+workspace has been given custom limits — which is what "Unlimited" against a Growth plan
+means — the page states both numbers and reconciles neither.
+
+Reproduced locally by setting `overrides.limits` to unlimited on the demo workspace: the
+page rendered exactly the screenshot, "31 / Unlimited" above a card saying 1500.
+
+**Fix.** The service now reports `overriddenLimits` — the keys whose enforced value
+actually differs from what the plan publishes — and `publishedLimits` alongside the
+effective ones. A workspace with no overrides sends an empty list and nothing about it
+changes. On the page:
+
+- an overridden usage card says **"Custom limit for this workspace · Growth publishes
+  1500"**;
+- a one-line notice explains that the figures above are the enforced ones;
+- the **current plan's card shows what is actually enforced**, marked *custom here*, so
+  the two halves of the page can no longer state different numbers for the same thing.
+
+**Two more defects found in the same component.**
+
+- A limit the plan does not define rendered as **`31 / NaN`**. `Number(undefined)` is NaN
+  and NaN fails every comparison, so the `< 0` unlimited check silently fell through. An
+  absent limit now means no limit.
+- **"the selected plan is shown wrong":** the plan cards list only `active: true` plans,
+  while the subscription has no such filter. A workspace sitting on a plan that has since
+  been retired read *"Current plan: X"* above three cards, **none of them marked Current
+  and none of them X**. Its own card is now added when the published list does not contain
+  it — with its limits trimmed exactly as `/plans` trims every other plan, so a retired
+  plan's card cannot become the one place the unpublished entitlements (storage, AI quota)
+  are advertised.
+
+**Files.** `server/src/services/organizationService.js`,
+`server/tests/organizations/tenant-isolation.test.js`;
+`client-interface/components/settings/PlansSettingsTab.tsx`,
+`client-interface/lib/services/organizations-api.ts`.
+
+**Tests run.** 3 new cases → `tests/organizations/tenant-isolation.test.js` **20 pass / 0
+fail**. `tsc` clean, client guard suite 112 pass.
+
+**Verified in the browser**, all three states, and the workspace put back afterwards:
+- no overrides → **31 / 1500**, no notice, card unchanged;
+- overridden → **31 / Unlimited · "Custom limit for this workspace · Growth publishes
+  1500"**, the notice present, the Growth card showing the enforced numbers;
+- plan retired → the Growth card still appears, still marked **Current**, with only the
+  three published limits on it.
+
+**What I could not verify.** The member and clan counts themselves (1089, 46) come from
+`OrganizationMembership.count({ status: 'active' })` and a count of clans through their
+programme. Those are straightforward counts and I found nothing wrong with either, but
+this workspace has 31 members and 3 clans, so a 1089-member miscount is not reproducible
+here. **If the counts are still wrong after this, the remaining problem is in what those
+two queries count, not in how the page shows it** — tell me what the number should be and
+I will chase it.
