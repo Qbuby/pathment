@@ -82,20 +82,15 @@ class PlatformProvisioningService {
           }
 
           // The User.afterCreate hook already creates a membership in this
-          // context; make the row an OWNER either way (and attach existing
-          // accounts that had no row here).
+          // context (as an active admin), so defaults alone never apply. Keep
+          // it ACTIVE while the rest of the workspace rows are written - the
+          // tenant reference checks require the related user to be an active
+          // member - and flip a brand-new owner to 'invited' at the very end.
           await models.OrganizationMembership.findOrCreate({
             where: { organizationId: organization.id, userId: owner.id },
-            defaults: {
-              role: 'owner', status: existingOwner ? 'active' : 'invited',
-              joinedAt: existingOwner ? now : null, invitedBy: actor.id,
-            },
+            defaults: { role: 'owner', status: 'active' },
             transaction, ...SKIP,
           });
-          await models.OrganizationMembership.update(
-            { role: 'owner' },
-            { where: { organizationId: organization.id, userId: owner.id }, transaction, ...SKIP },
-          );
 
           await models.AdminProfile.findOrCreate({ where: { userId: owner.id }, defaults: { userId: owner.id }, transaction });
 
@@ -116,6 +111,19 @@ class PlatformProvisioningService {
               createdBy: actor.id,
             }, { transaction });
           }
+
+          // A NEW owner stays 'invited' until the activation link is spent; an
+          // existing account is active immediately - it already has working
+          // credentials. Last, so every reference check above saw an active row.
+          await models.OrganizationMembership.update(
+            {
+              role: 'owner',
+              status: existingOwner ? 'active' : 'invited',
+              joinedAt: existingOwner ? now : null,
+              invitedBy: actor.id,
+            },
+            { where: { organizationId: organization.id, userId: owner.id }, transaction, ...SKIP },
+          );
 
           return { organization, owner };
         },
