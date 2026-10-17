@@ -291,7 +291,7 @@ function PostCard({ post, canModerate, hub }: { post: CommunityPost; canModerate
 }
 
 /* ── Composer ───────────────────────────────────────────────────────────── */
-function Composer({ hub }: { hub: ReturnType<typeof useCommunityHub> }) {
+function Composer({ hub, onDone }: { hub: ReturnType<typeof useCommunityHub>; onDone?: () => void }) {
   const [type, setType] = useState<PostType>('discussion');
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
@@ -329,14 +329,47 @@ function Composer({ hub }: { hub: ReturnType<typeof useCommunityHub> }) {
       attachments,
     });
     setPosting(false);
-    if (okPost) { setTitle(''); setBody(''); setToId(''); setTags(''); setLinkUrl(''); setMentions([]); setFiles([]); setShowAttach(false); }
+    if (okPost) {
+      setTitle(''); setBody(''); setToId(''); setTags(''); setLinkUrl(''); setMentions([]); setFiles([]); setShowAttach(false);
+      // Collapse back to the prompt: the thing you now want to see is your post.
+      onDone?.();
+    }
   };
 
   const field = 'w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500';
 
   return (
-    <div className="bg-card rounded-2xl border border-slate-200 p-5 space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-sm font-semibold text-foreground">Start a conversation</h2><select aria-label="Post type" value={type} onChange={event => setType(event.target.value as PostType)} className="rounded-xl border border-border bg-muted px-3 py-2 text-sm text-foreground">{COMPOSER_TYPES.map(t => <option key={t} value={t}>{TYPE_META[t].label}</option>)}</select></div>
+    <div className="space-y-3">
+      {/*
+          Post type as pills rather than a dropdown. What kind of thing you are
+          writing changes the placeholder and the required fields, so it is not
+          a setting to go and find — it is the first thing you choose, and in
+          every community product it is visible.
+      */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Post type">
+          {COMPOSER_TYPES.map((t) => (
+            <button
+              key={t}
+              type="button"
+              aria-pressed={type === t}
+              onClick={() => setType(t)}
+              className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                type === t
+                  ? 'border-brand-400 bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300'
+                  : 'border-slate-200 text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:text-slate-300'
+              }`}
+            >
+              {TYPE_META[t].label}
+            </button>
+          ))}
+        </div>
+        {onDone && (
+          <button type="button" onClick={onDone} className="text-xs font-medium text-slate-500 hover:text-slate-800 dark:hover:text-slate-200">
+            Cancel
+          </button>
+        )}
+      </div>
 
       {type === 'kudos' && (
         <select aria-label="Shout-out recipient" value={toId} onChange={(e) => setToId(e.target.value)} className={field}>
@@ -448,6 +481,15 @@ function SpaceSwitcher({ hub }: { hub: ReturnType<typeof useCommunityHub> }) {
 export default function CommunityHub({ mentor = false }: { mentor?: boolean }) {
   const hub = useCommunityHub();
   const [showMembers, setShowMembers] = useState(false);
+  /**
+   * The composer used to live inside a collapsed `<details>` labelled "Write a
+   * post →". Every community product people are used to — Slack, Discord,
+   * Circle, Discourse — puts the box in front of you, because a community
+   * that asks you to open a drawer before you can say anything gets said in
+   * less. It opens on click rather than rendering the whole form unprompted,
+   * so the feed still starts near the top.
+   */
+  const [composing, setComposing] = useState(false);
   const canModerate = Boolean(hub.active?.isModerator && !hub.active?.readOnly);
 
   if (hub.loadingSpaces) {
@@ -456,10 +498,17 @@ export default function CommunityHub({ mentor = false }: { mentor?: boolean }) {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-3xl border border-border bg-card p-6 sm:p-8">
-        {<span className="mb-3 inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-brand-700 dark:text-brand-300"><Users className="h-4 w-4" />Better together</span>}
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900 mb-2">Community</h1>
-        <p className="text-slate-600">Collaborate with your clan, get unstuck, and cheer each other on.</p>
+      {/*
+          A full-width marketing panel sat here and pushed the feed below the
+          fold on every single visit. People come back to a community to read
+          it, not to be told what it is for, so the strapline stays as one
+          line and the conversation starts where the eye lands.
+      */}
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h1 className="inline-flex items-center gap-2 text-2xl font-semibold tracking-tight text-slate-900">
+          <Users className="h-5 w-5 text-brand-600" aria-hidden />Community
+        </h1>
+        <p className="text-sm text-slate-500">Collaborate with your clan, get unstuck, and cheer each other on.</p>
       </div>
 
       <div className="grid lg:grid-cols-[200px_minmax(0,1fr)] 2xl:grid-cols-[220px_minmax(0,1fr)_260px] gap-5">
@@ -489,7 +538,27 @@ export default function CommunityHub({ mentor = false }: { mentor?: boolean }) {
             )}
           </div>
 
-          {hub.active?.readOnly ? <p className="rounded-2xl border border-border bg-card p-4 text-sm text-muted-foreground">This space has been archived by an administrator.</p> : <details className="rounded-2xl border border-border bg-card p-4"><summary className="cursor-pointer flex items-center gap-3 text-sm font-medium text-muted-foreground"><MessagesSquare className="h-5 w-5 text-brand-600" />Share a win, ask a question, or help your clan<span className="ml-auto text-brand-700">Write a post →</span></summary><div className="mt-4"><Composer hub={hub} /></div></details>}
+          {hub.active?.readOnly ? (
+            <p className="rounded-2xl border border-border bg-card p-4 text-sm text-muted-foreground">
+              This space has been archived by an administrator.
+            </p>
+          ) : (
+            <div className="rounded-2xl border border-border bg-card p-4">
+              {composing ? (
+                <Composer hub={hub} onDone={() => setComposing(false)} />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setComposing(true)}
+                  className="flex w-full items-center gap-3 rounded-xl border border-slate-200 px-4 py-3 text-left text-sm text-slate-500 transition-colors hover:border-brand-300 hover:bg-brand-50/40 dark:border-slate-700"
+                >
+                  <MessagesSquare className="h-5 w-5 shrink-0 text-brand-600" aria-hidden />
+                  Share a win, ask a question, or help your clan
+                  <span className="ml-auto shrink-0 text-xs font-medium text-brand-700">Post</span>
+                </button>
+              )}
+            </div>
+          )}
 
           {hub.loadingFeed ? (
             <div className="flex items-center justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-brand-600" /></div>
