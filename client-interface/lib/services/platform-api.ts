@@ -212,6 +212,31 @@ export interface BuyerLeadRow {
   provisionedOrganization: { id: string; name: string; slug: string } | null;
 }
 
+
+export interface PlatformUserHit {
+  id: string; firstName: string; lastName: string; email: string;
+  role: string; status: string; emailVerified: boolean; twoFactorEnabled: boolean;
+  lastLoginAt: string | null; createdAt: string;
+  memberships: Array<{ organizationId: string; organization: { id: string; name: string; slug: string; status: string } | null; role: string; status: string }>;
+}
+
+export interface PlatformUserDetail extends PlatformUserHit {
+  activeSessions: number;
+  suppressedEmail: { reason: string; detail: string | null; since: string } | null;
+  platformRole: PlatformRole | null;
+}
+
+export interface OpsOverview {
+  email: {
+    countsByStatus: Record<string, number>;
+    oldestPendingAt: string | null;
+    recentFailures: Array<{ id: string; recipientEmail: string; subject: string; emailType: string; status: string; attemptCount: number; errorCategory: string | null; lastError: string | null; updatedAt: string }>;
+  };
+  aiEvaluation: { countsByStatus: Record<string, number> };
+  jobs: Array<{ id: string; jobName: string; jobType: string; cronExpression: string | null; isActive: boolean; lastRunAt: string | null; nextRunAt: string | null }>;
+  flags: Array<{ key: string; value: boolean; description: string }>;
+}
+
 const data = <T,>(response: { data: T }) => response.data;
 
 export const platformApi = {
@@ -300,5 +325,25 @@ export const platformApi = {
       apiClient.get<{ data: Paged & { leads: BuyerLeadRow[]; countsByStatus: Record<string, number> } }>('/platform/leads', { params }).then(data),
     update: (id: string, input: { status?: LeadStatus; notes?: string }) =>
       apiClient.patch<{ data: { lead: BuyerLeadRow } }>(`/platform/leads/${id}`, input).then((r) => r.data.lead),
+  },
+  users: {
+    search: (q: string) =>
+      apiClient.get<{ data: { users: PlatformUserHit[] } }>('/platform/users', { params: { q } }).then((r) => r.data.users),
+    detail: (id: string) =>
+      apiClient.get<{ data: { user: PlatformUserDetail } }>(`/platform/users/${id}`).then((r) => r.data.user),
+    forceSignOut: (id: string, reason?: string) =>
+      apiClient.post<{ data: { signedOut: boolean; revokedTokens: number } }>(`/platform/users/${id}/sign-out`, { reason }).then(data),
+    setStatus: (id: string, input: { status: 'active' | 'suspended'; reason: string }) =>
+      apiClient.post<{ data: { id: string; status: string } }>(`/platform/users/${id}/status`, input).then(data),
+    resetTwoFactor: (id: string, reason?: string) =>
+      apiClient.post<{ data: { reset: boolean } }>(`/platform/users/${id}/reset-2fa`, { reason }).then(data),
+    unsuppressEmail: (id: string, reason?: string) =>
+      apiClient.post<{ data: { unsuppressed: boolean } }>(`/platform/users/${id}/unsuppress-email`, { reason }).then(data),
+  },
+
+  ops: {
+    overview: () => apiClient.get<{ data: OpsOverview }>('/platform/ops').then(data),
+    retryEmail: (id: string) => apiClient.post(`/platform/ops/email/${id}/retry`),
+    toggleJob: (id: string, isActive: boolean) => apiClient.patch(`/platform/ops/jobs/${id}`, { isActive }),
   },
 };

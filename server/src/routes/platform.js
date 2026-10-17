@@ -72,6 +72,21 @@ router.post('/leads', buyerLeadLimiter, validateBody(s.leadCreate), leads.create
 router.get('/leads', authenticate, requirePlatform('read'), validateQuery(s.leadsQuery), leads.list);
 router.patch('/leads/:id', authenticate, requirePlatform('support'), validateParams(s.idParam), validateBody(s.leadUpdate), leads.update);
 
+const support = require('../controllers/platformSupportController');
+
+// ── Account lookup & support actions (cross-workspace by nature) ─────────────
+router.get('/users', authenticate, requirePlatform('support'), validateQuery(s.usersQuery), support.searchUsers);
+router.get('/users/:id', authenticate, requirePlatform('support'), validateParams(s.idParam), support.userDetail);
+router.post('/users/:id/sign-out', authenticate, requirePlatform('support'), validateParams(s.idParam), support.forceSignOut);
+router.post('/users/:id/status', authenticate, requirePlatform('lifecycle'), validateParams(s.idParam), validateBody(s.userStatus), support.setAccountStatus);
+router.post('/users/:id/reset-2fa', authenticate, requirePlatform('support'), validateParams(s.idParam), support.resetTwoFactor);
+router.post('/users/:id/unsuppress-email', authenticate, requirePlatform('support'), validateParams(s.idParam), support.unsuppressEmail);
+
+// ── Operational health ───────────────────────────────────────────────────────
+router.get('/ops', authenticate, requirePlatform('read'), support.opsOverview);
+router.post('/ops/email/:id/retry', authenticate, requirePlatform('support'), validateParams(s.idParam), support.retryEmail);
+router.patch('/ops/jobs/:id', authenticate, requirePlatform('owner'), validateParams(s.idParam), validateBody(s.jobPatch), support.toggleJob);
+
 // ── Platform audit trail ─────────────────────────────────────────────────────
 router.get('/audit', authenticate, requirePlatform('read'), validateQuery(s.auditQuery), console_.listAudit);
 router.get('/audit/actions', authenticate, requirePlatform('read'), console_.auditActions);
