@@ -51,6 +51,11 @@ router.post('/organizations/:id/activation/revoke', authenticate, requirePlatfor
 // ── Plan catalog (operator view) ─────────────────────────────────────────────
 router.get('/plans', authenticate, requirePlatform('read'), billing.listPlans);
 
+// ── Overrides (custom per-workspace arrangements) ────────────────────────────
+router.get('/organizations/:id/subscription', authenticate, requirePlatform('read'), validateParams(s.idParam), billing.subscription);
+router.put('/organizations/:id/overrides', authenticate, requirePlatform('billing'), validateParams(s.idParam), validateBody(s.overrides), billing.setOverrides);
+router.get('/overrides', authenticate, requirePlatform('read'), billing.overridesReport);
+
 // ── Platform audit trail ─────────────────────────────────────────────────────
 router.get('/audit', authenticate, requirePlatform('read'), validateQuery(s.auditQuery), console_.listAudit);
 router.get('/audit/actions', authenticate, requirePlatform('read'), console_.auditActions);

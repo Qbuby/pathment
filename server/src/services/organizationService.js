@@ -229,6 +229,7 @@ class OrganizationService {
         features: { ...(plan.features || {}), ...(subscription.overrides?.features || {}) },
         /** What the plan itself promises, before anything was changed for this workspace. */
         publishedLimits: published,
+        publishedFeatures: plan.features || {},
       },
       overriddenLimits,
     };

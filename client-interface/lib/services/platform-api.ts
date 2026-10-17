@@ -102,7 +102,7 @@ export interface WorkspaceSubscription {
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
   overrides: { limits?: Record<string, number>; features?: Record<string, boolean>; meta?: Record<string, unknown> };
-  plan: PlatformPlan & { publishedLimits?: Record<string, number> };
+  plan: PlatformPlan & { publishedLimits?: Record<string, number>; publishedFeatures?: Record<string, boolean> };
   requestedPlan?: PlatformPlan | null;
   overriddenLimits?: string[];
 }
@@ -172,6 +172,15 @@ export interface ActivationInfo {
   expiresAt: string;
 }
 
+
+export interface OverrideReportRow {
+  organization: { id: string; name: string; slug: string; status: WorkspaceStatus };
+  plan: { key: string; name: string } | null;
+  limits: Array<{ key: string; value: number; planValue: number | null }>;
+  features: Array<{ key: string; value: boolean; planValue: boolean | null }>;
+  meta: { reason?: string | null; updatedBy?: string; updatedAt?: string } | null;
+}
+
 const data = <T,>(response: { data: T }) => response.data;
 
 export const platformApi = {
@@ -228,5 +237,14 @@ export const platformApi = {
       apiClient.post<{ data: ActivationInfo }>('/platform/activation/validate', { token }).then(data),
     consume: (input: { token: string; password: string }) =>
       apiClient.post<{ data: { workspace: { name: string; slug: string }; email: string } }>('/platform/activation/consume', input).then(data),
+  },
+  billing: {
+    subscription: (organizationId: string) =>
+      apiClient.get<{ data: { subscription: WorkspaceSubscription } }>(`/platform/organizations/${organizationId}/subscription`).then((r) => r.data.subscription),
+    setOverrides: (organizationId: string, input: {
+      limits: Record<string, number | null>; features: Record<string, boolean | null>; reason: string;
+    }) => apiClient.put<{ data: { subscription: WorkspaceSubscription } }>(`/platform/organizations/${organizationId}/overrides`, input).then((r) => r.data.subscription),
+    overridesReport: () =>
+      apiClient.get<{ data: { workspaces: OverrideReportRow[] } }>('/platform/overrides').then((r) => r.data.workspaces),
   },
 };
