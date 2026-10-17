@@ -91,8 +91,21 @@ export function AssignTaskDrawer({
 
   // roadmap mode
   const { local: localRoadmaps, loading: roadmapsLoading } = useMentorRoadmaps();
+  /**
+   * The roadmap list had no ceiling and no search, so it grew with the
+   * library: a workspace with twenty roadmaps pushed the steps, the
+   * deadline and everything else that makes an assignment off the bottom
+   * of the drawer, and finding one meant scrolling the whole panel past
+   * a dozen near-identical "Full Stack Engineering Roadmap" cards.
+   */
+  const [roadmapQuery, setRoadmapQuery] = useState('');
   const [roadmapId, setRoadmapId] = useState('');
   const selectedRoadmap = localRoadmaps.find((r) => r.id === roadmapId) || null;
+  const matchingRoadmaps = (() => {
+    const q = roadmapQuery.trim().toLowerCase();
+    if (!q) return localRoadmaps;
+    return localRoadmaps.filter((r) => `${r.name} ${r.description || ''}`.toLowerCase().includes(q));
+  })();
   // Mentees who already have the selected roadmap - can't be assigned it again.
   const [assignedIds, setAssignedIds] = useState<Set<string>>(new Set());
   const [assigneesLoading, setAssigneesLoading] = useState(false);
@@ -949,25 +962,64 @@ export function AssignTaskDrawer({
                 {source === 'roadmap' && (
                   <div className="space-y-4">
                     <div>
-                      <span className="block text-sm font-medium text-slate-700 mb-1.5">Pick a roadmap</span>
+                      <div className="flex items-baseline justify-between gap-2 mb-1.5">
+                        <span className="block text-sm font-medium text-slate-700">Pick a roadmap</span>
+                        {!roadmapsLoading && localRoadmaps.length > 0 && (
+                          <span className="text-xs text-slate-400 tabular-nums">
+                            {matchingRoadmaps.length === localRoadmaps.length
+                              ? `${localRoadmaps.length} available`
+                              : `${matchingRoadmaps.length} of ${localRoadmaps.length}`}
+                          </span>
+                        )}
+                      </div>
                       {roadmapsLoading ? (
                         <div className="flex items-center gap-2 text-sm text-slate-400 py-2"><Loader2 className="w-4 h-4 animate-spin text-brand-600" />Loading your roadmaps…</div>
                       ) : localRoadmaps.length === 0 ? (
                         <p className="text-sm text-slate-500 rounded-lg border border-dashed border-slate-200 p-3">No roadmaps yet. Create or import one on the Roadmaps page, then assign it here.</p>
                       ) : (
-                        <div className="space-y-2">
-                          {localRoadmaps.map((r) => (
-                            <button key={r.id} type="button" onClick={() => { setRoadmapId(r.id); setSelectedSteps(new Set()); }}
-                              className={`w-full text-left rounded-xl border p-3 transition-colors ${roadmapId === r.id ? 'border-brand-400 bg-brand-50 dark:bg-brand-500/10' : 'border-slate-200 hover:border-slate-300'}`}>
-                              <div className="flex items-center gap-2">
-                                <Route className="w-4 h-4 text-brand-500 shrink-0" />
-                                <span className="text-sm font-medium text-slate-900 truncate">{r.name}</span>
-                                <span className="ml-auto text-xs text-slate-400 shrink-0">{r.steps.length} step{r.steps.length === 1 ? '' : 's'}</span>
-                              </div>
-                              {r.description && <p className="text-xs text-slate-500 mt-1 line-clamp-1">{r.description}</p>}
-                            </button>
-                          ))}
-                        </div>
+                        <>
+                          {/* Appears once the list is long enough to be worth
+                              searching; below that it is one more thing to read. */}
+                          {localRoadmaps.length > 5 && (
+                            <div className="mb-2 flex items-center gap-1.5 rounded-xl border border-slate-200 px-2.5 dark:border-slate-700">
+                              <Search className="w-4 h-4 text-slate-400 shrink-0" aria-hidden />
+                              <input
+                                value={roadmapQuery}
+                                onChange={(e) => setRoadmapQuery(e.target.value)}
+                                aria-label="Search roadmaps"
+                                placeholder="Search roadmaps…"
+                                className="w-full bg-transparent py-2 text-sm focus:outline-none"
+                              />
+                              {roadmapQuery && (
+                                <button type="button" onClick={() => setRoadmapQuery('')} aria-label="Clear roadmap search" className="shrink-0 p-1 text-slate-400 hover:text-slate-700">
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          )}
+                          {/*
+                              A fixed window with its own scrollbar. The list used
+                              to extend as far as the library went and take the
+                              rest of the form with it.
+                          */}
+                          <div className="max-h-72 space-y-2 overflow-y-auto rounded-xl border border-slate-200 p-2 dark:border-slate-700">
+                            {matchingRoadmaps.length === 0 ? (
+                              <p className="px-1 py-6 text-center text-sm text-slate-400">
+                                No roadmap matches &ldquo;{roadmapQuery}&rdquo;.
+                              </p>
+                            ) : matchingRoadmaps.map((r) => (
+                              <button key={r.id} type="button" onClick={() => { setRoadmapId(r.id); setSelectedSteps(new Set()); }}
+                                className={`w-full text-left rounded-xl border p-3 transition-colors ${roadmapId === r.id ? 'border-brand-400 bg-brand-50 dark:bg-brand-500/10' : 'border-slate-200 hover:border-slate-300'}`}>
+                                <div className="flex items-center gap-2">
+                                  <Route className="w-4 h-4 text-brand-500 shrink-0" />
+                                  <span className="text-sm font-medium text-slate-900 truncate">{r.name}</span>
+                                  <span className="ml-auto text-xs text-slate-400 shrink-0">{r.steps.length} step{r.steps.length === 1 ? '' : 's'}</span>
+                                </div>
+                                {r.description && <p className="text-xs text-slate-500 mt-1 line-clamp-1">{r.description}</p>}
+                              </button>
+                            ))}
+                          </div>
+                        </>
                       )}
                     </div>
 
