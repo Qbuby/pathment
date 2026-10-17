@@ -183,7 +183,10 @@ class SecurityService {
    * is not half empty.
    */
   async getAuditLogs(userId, options = {}) {
-    const { limit = 50, offset = 0, search = '', includeNoise = false } = options;
+    const {
+      limit = 50, offset = 0, search = '', includeNoise = false,
+      onlyFailed = false, since = null,
+    } = options;
 
     const where = { userId };
     const and = [];
@@ -208,6 +211,29 @@ class SecurityService {
         ],
       });
     }
+    /**
+     * Only the things that did not work.
+     *
+     * The log already drew a red "failed" badge on these and gave no way to
+     * ask for them, so finding a refused sign-in meant paging through every
+     * successful request around it. That is the one question a security log
+     * is opened to answer, and it was the one it could not be asked.
+     *
+     * `status` is recorded on the request rows as new_values.status; a
+     * semantic action (ROLE_GRANTED and friends) has none, and an action with
+     * no status is not a failure.
+     */
+    if (onlyFailed) {
+      // Matched as text rather than cast: `status` is whatever was recorded,
+      // and a cast blows up the whole query on one malformed row.
+      and.push(Sequelize.literal("(new_values->>'status') ~ '^[45][0-9][0-9]$'"));
+    }
+
+    // A window, so "what happened this morning" is not forty pages of paging.
+    if (since instanceof Date && Number.isFinite(since.getTime())) {
+      and.push({ createdAt: { [Op.gte]: since } });
+    }
+
     if (and.length) where[Op.and] = and;
 
     const logs = await models.AuditLog.findAndCountAll({

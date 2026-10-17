@@ -327,12 +327,17 @@ class AuthController {
    * GET /api/auth/audit-logs
    */
   getAuditLogs = catchAsync(async (req, res) => {
-    const { limit = 50, offset = 0, search = '', includeNoise } = req.query;
+    const { limit = 50, offset = 0, search = '', includeNoise, onlyFailed, days } = req.query;
+    // A window in whole days, which is how the question is actually asked
+    // ("anything odd yesterday?"). Anything else means no window at all.
+    const windowDays = [1, 7, 30, 90].includes(Number(days)) ? Number(days) : null;
     const result = await securityService.getAuditLogs(req.user.id, {
       limit: Math.min(200, Math.max(1, parseInt(limit, 10) || 50)),
       offset: Math.max(0, parseInt(offset, 10) || 0),
       search: String(search || '').slice(0, 120),
       includeNoise: ['1', 'true'].includes(String(includeNoise || '').toLowerCase()),
+      onlyFailed: ['1', 'true'].includes(String(onlyFailed || '').toLowerCase()),
+      since: windowDays ? new Date(Date.now() - windowDays * 86400000) : null,
     });
 
     res.status(200).json(

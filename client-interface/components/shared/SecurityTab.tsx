@@ -17,7 +17,8 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock,
-  Key
+  Key,
+  ShieldAlert
 } from 'lucide-react';
 import securityService, {
   // Session,
@@ -366,6 +367,14 @@ export default function SecurityTab({ showAuditLogs = false }: SecurityTabProps)
   const [logSearch, setLogSearch] = useState('');
   const [logQuery, setLogQuery] = useState('');
   const [showBackground, setShowBackground] = useState(false);
+  /**
+   * The log drew a red "failed" badge and gave no way to ask for those rows,
+   * so finding a refused sign-in meant paging through every successful
+   * request around it — the one question a security log is opened to answer
+   * was the one it could not be asked. Same for "what happened yesterday".
+   */
+  const [onlyFailed, setOnlyFailed] = useState(false);
+  const [windowDays, setWindowDays] = useState<number | null>(null);
   const [logsLoading, setLogsLoading] = useState(false);
   const logsPg = usePagination({ initialPage: 1, initialLimit: 20 });
   const [loading, setLoading] = useState(true);
@@ -413,12 +422,14 @@ export default function SecurityTab({ showAuditLogs = false }: SecurityTabProps)
     let live = true;
     setLogsLoading(true);
     securityService
-      .getAuditLogs(logsLimit, (logsPage - 1) * logsLimit, { search: logQuery, includeNoise: showBackground })
+      .getAuditLogs(logsLimit, (logsPage - 1) * logsLimit, {
+        search: logQuery, includeNoise: showBackground, onlyFailed, days: windowDays,
+      })
       .then((data) => { if (!live) return; setAuditLogs(data.logs); setLogsTotal(data.total); })
       .catch(() => { if (live) setAuditLogs([]); })
       .finally(() => { if (live) setLogsLoading(false); });
     return () => { live = false; };
-  }, [showAuditLogs, logsPage, logsLimit, logQuery, showBackground, setLogsTotal]);
+  }, [showAuditLogs, logsPage, logsLimit, logQuery, showBackground, onlyFailed, windowDays, setLogsTotal]);
 
   const handleChangePassword = async (
     currentPassword: string,
@@ -625,13 +636,47 @@ export default function SecurityTab({ showAuditLogs = false }: SecurityTabProps)
             </label>
           </div>
 
-          <input
-            value={logSearch}
-            onChange={(e) => setLogSearch(e.target.value)}
-            placeholder="Search the log — e.g. clan, sign in, 223.123."
-            aria-label="Search the access log"
-            className="w-full rounded-xl border border-slate-200 bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-slate-700"
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              value={logSearch}
+              onChange={(e) => setLogSearch(e.target.value)}
+              placeholder="Search the log — e.g. clan, sign in, 223.123."
+              aria-label="Search the access log"
+              className="min-w-56 flex-1 rounded-xl border border-slate-200 bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-slate-700"
+            />
+            {/* A window in whole days, because that is how the question gets
+                asked out loud: "anything odd yesterday?" */}
+            <div className="inline-flex rounded-xl border border-slate-200 p-0.5 dark:border-slate-700">
+              {([[null, 'All time'], [1, '24h'], [7, '7d'], [30, '30d']] as const).map(([value, label]) => (
+                <button
+                  key={label}
+                  type="button"
+                  aria-pressed={windowDays === value}
+                  onClick={() => { setWindowDays(value); logsPg.goToPage(1); }}
+                  className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                    windowDays === value
+                      ? 'bg-brand-600 text-white'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              aria-pressed={onlyFailed}
+              onClick={() => { setOnlyFailed((v) => !v); logsPg.goToPage(1); }}
+              className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${
+                onlyFailed
+                  ? 'border-red-300 bg-red-50 text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300'
+                  : 'border-slate-200 text-slate-600 hover:text-slate-900 dark:border-slate-700 dark:text-slate-300'
+              }`}
+            >
+              <ShieldAlert className="h-3.5 w-3.5" aria-hidden />
+              Failed only
+            </button>
+          </div>
 
           {logsLoading ? (
             <div className="flex justify-center py-10"><Spinner /></div>
@@ -667,8 +712,14 @@ export default function SecurityTab({ showAuditLogs = false }: SecurityTabProps)
             </>
           ) : (
             <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500 dark:border-slate-700">
-              {logQuery
-                ? <>Nothing matches &ldquo;{logQuery}&rdquo;.{!showBackground && ' Background activity is hidden — tick the box above to include it.'}</>
+              {/* Say which filter emptied it, or the page reads as "no data". */}
+              {logQuery || onlyFailed || windowDays
+                ? <>
+                    Nothing{onlyFailed ? ' failed' : ''}
+                    {logQuery ? <> matching &ldquo;{logQuery}&rdquo;</> : ''}
+                    {windowDays ? ` in the last ${windowDays === 1 ? '24 hours' : `${windowDays} days`}` : ''}.
+                    {!showBackground && ' Background activity is hidden — tick the box above to include it.'}
+                  </>
                 : 'Nothing recorded for this account yet.'}
             </div>
           )}

@@ -90,11 +90,24 @@ class SecurityService {
   async getAuditLogs(
     limit: number = 50,
     offset: number = 0,
-    opts: { search?: string; includeNoise?: boolean } = {},
+    opts: {
+      search?: string;
+      includeNoise?: boolean;
+      /** Only requests the server refused or failed (4xx/5xx). */
+      onlyFailed?: boolean;
+      /** Whole-day window: 1, 7, 30 or 90. Omit for everything. */
+      days?: number | null;
+    } = {},
   ): Promise<AuditLogsResponse> {
     const response = await axiosInstance.get<{ data: AuditLogsResponse }>(
       '/auth/audit-logs',
-      { params: { limit, offset, search: opts.search || undefined, includeNoise: opts.includeNoise ? 1 : undefined } }
+      { params: {
+        limit, offset,
+        search: opts.search || undefined,
+        includeNoise: opts.includeNoise ? 1 : undefined,
+        onlyFailed: opts.onlyFailed ? 1 : undefined,
+        days: opts.days || undefined,
+      } }
     );
     return response.data.data || { total: 0, logs: [] };
   }
