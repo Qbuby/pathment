@@ -11,6 +11,7 @@ import { useGate } from '@/components/platform/PlatformShell';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { AssignPlanPanel, SubscriptionControls } from '@/components/platform/AssignPlanPanel';
 import { cn } from '@/components/ui/utils';
+import { isEnforcedLimit, isShippedFeature, NOT_ENFORCED_HINT } from '@/lib/config/platform-entitlements';
 
 /**
  * The override editor: per-workspace limits and features layered over the
@@ -109,7 +110,10 @@ export function OverridesEditor({ detail, organizationId, onChanged }: {
           const draft = limits[key] || { mode: 'inherit', value: '' };
           return (
             <div key={key} className="flex flex-wrap items-center gap-2">
-              <span className="w-44 shrink-0 text-sm">{key}</span>
+              <span className="w-44 shrink-0 text-sm">
+                {key}
+                {!isEnforcedLimit(key) ? <span className="ml-1.5 rounded bg-muted px-1 py-px text-[9px] uppercase text-muted-foreground" title={NOT_ENFORCED_HINT}>not enforced</span> : null}
+              </span>
               <span className="w-20 text-xs text-muted-foreground tabular-nums" title="What the plan publishes">plan: {fmt(published[key])}</span>
               <div className="inline-flex rounded-lg border border-border p-0.5">
                 {(['inherit', 'custom', 'unlimited'] as const).map((mode) => (
@@ -144,7 +148,10 @@ export function OverridesEditor({ detail, organizationId, onChanged }: {
           const draft = features[key] || 'inherit';
           return (
             <div key={key} className="flex flex-wrap items-center gap-2">
-              <span className="w-44 shrink-0 text-sm">{key}</span>
+              <span className="w-44 shrink-0 text-sm">
+                {key}
+                {!isShippedFeature(key) ? <span className="ml-1.5 rounded bg-muted px-1 py-px text-[9px] uppercase text-muted-foreground" title={NOT_ENFORCED_HINT}>not enforced</span> : null}
+              </span>
               <span className="w-20 text-xs text-muted-foreground" title="What the plan publishes">plan: {planFeatures[key] ? 'on' : 'off'}</span>
               <div className="inline-flex rounded-lg border border-border p-0.5">
                 {(['inherit', 'on', 'off'] as const).map((mode) => (

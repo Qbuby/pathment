@@ -45,7 +45,7 @@ export default function OverridesReportPage() {
             <Link
               key={row.organization.id}
               href={`/platform/organizations/${row.organization.id}`}
-              className="block rounded-2xl border border-border bg-card p-4 transition-colors hover:border-brand-500/40"
+              className="block rounded-3xl border border-border bg-card p-4 transition-colors hover:border-brand-500/40"
             >
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-3">

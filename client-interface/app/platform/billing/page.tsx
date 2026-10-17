@@ -50,7 +50,7 @@ function RequestRow({ request }: { request: PendingPlanRequest }) {
     : '—';
 
   return (
-    <li className="rounded-2xl border border-border bg-card p-4">
+    <li className="rounded-3xl border border-border bg-card p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <Link href={`/platform/organizations/${request.organization.id}`} className="font-medium hover:underline">

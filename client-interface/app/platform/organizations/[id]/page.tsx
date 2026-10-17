@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
 import { qk, useApiQuery, STALE } from '@/lib/query';
 import { platformApi } from '@/lib/services/platform-api';
-import { OrgMark, RelativeTime, StatusPill } from '@/components/platform/primitives';
+import { OrgMark, Region, RelativeTime, StatusPill } from '@/components/platform/primitives';
 import { OverviewTab, PlanSummary, PeopleTab, ActivityTab } from '@/components/platform/OrgDetailTabs';
 import { Spinner } from '@/components/shared/LoadingSpinner';
 import { ErrorState } from '@/components/shared/ErrorState';
@@ -86,16 +86,16 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
         ))}
       </div>
 
-      {tab === 'overview' ? <OverviewTab detail={detail} /> : null}
+      {tab === 'overview' ? <Region label="overview"><OverviewTab detail={detail} /></Region> : null}
       {tab === 'plan' ? (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <PlanSummary detail={detail} />
-          <PlanActions detail={detail} organizationId={id} onChanged={refetch} />
+          <Region label="plan summary"><PlanSummary detail={detail} /></Region>
+          <Region label="operator actions"><PlanActions detail={detail} organizationId={id} onChanged={refetch} /></Region>
         </div>
       ) : null}
-      {tab === 'people' ? <PeopleTab organizationId={id} /> : null}
-      {tab === 'activity' ? <ActivityTab organizationId={id} /> : null}
-      {tab === 'danger' ? <LifecycleTab detail={detail} organizationId={id} onChanged={refetch} /> : null}
+      {tab === 'people' ? <Region label="people"><PeopleTab organizationId={id} /></Region> : null}
+      {tab === 'activity' ? <Region label="activity"><ActivityTab organizationId={id} /></Region> : null}
+      {tab === 'danger' ? <Region label="lifecycle"><LifecycleTab detail={detail} organizationId={id} onChanged={refetch} /></Region> : null}
     </div>
   );
 }

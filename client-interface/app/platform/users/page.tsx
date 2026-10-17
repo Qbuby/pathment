@@ -171,7 +171,7 @@ export default function UserLookupPage() {
       </label>
 
       {debounced.length >= 2 && hits ? (
-        <ul className="mt-4 max-w-xl divide-y divide-border overflow-hidden rounded-2xl border border-border bg-card">
+        <ul className="mt-4 max-w-xl divide-y divide-border overflow-hidden rounded-3xl border border-border bg-card">
           {hits.map((hit) => (
             <li key={hit.id}>
               <button

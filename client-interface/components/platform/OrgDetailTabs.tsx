@@ -11,11 +11,19 @@ import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { KV, Pager, RelativeTime, SectionCard, StatusPill, UsageMeter, money } from '@/components/platform/primitives';
 import { Spinner } from '@/components/shared/LoadingSpinner';
 import { useDebounce } from '@/lib/hooks/useDebounce';
+import { isEnforcedLimit, isShippedFeature, NOT_ENFORCED_HINT } from '@/lib/config/platform-entitlements';
 
 /** ── Overview ──────────────────────────────────────────────────────────────── */
 
 export function OverviewTab({ detail }: { detail: WorkspaceDetail }) {
-  const { organization, usage, memberBreakdown, counts, domains, apps, aiConnections, ownerInvite } = detail;
+  // Defaults guard against server/client version skew during rolling deploys.
+  const {
+    organization, ownerInvite,
+    usage = { members: 0, programs: 0, clans: 0 },
+    memberBreakdown = { active: 0, invited: 0, suspended: 0, left: 0 },
+    counts = { programsByStatus: {}, enrollments: null },
+    domains = [], apps = [], aiConnections = [],
+  } = detail;
   const limits = detail.subscription?.plan?.limits || {};
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -201,9 +209,13 @@ export function PlanSummary({ detail }: { detail: WorkspaceDetail }) {
           {Object.keys({ ...published, ...effective }).map((key) => {
             const fmt = (value: number | undefined) => value == null ? '—' : value < 0 ? '∞' : value.toLocaleString();
             const isOverridden = overridden.has(key);
+            const enforced = isEnforcedLimit(key);
             return (
-              <tr key={key} className="border-t border-border/60">
-                <td className="py-1.5">{key}</td>
+              <tr key={key} className={`border-t border-border/60 ${enforced ? '' : 'opacity-60'}`}>
+                <td className="py-1.5">
+                  {key}
+                  {!enforced ? <span className="ml-1.5 rounded bg-muted px-1 py-px text-[9px] uppercase text-muted-foreground" title={NOT_ENFORCED_HINT}>not enforced</span> : null}
+                </td>
                 <td className="py-1.5 text-right tabular-nums">{fmt(published[key])}</td>
                 <td className={`py-1.5 text-right tabular-nums font-medium ${isOverridden ? 'text-violet-600 dark:text-violet-400' : ''}`}>
                   {fmt(effective[key])}{isOverridden ? ' ⚑' : ''}
@@ -217,8 +229,12 @@ export function PlanSummary({ detail }: { detail: WorkspaceDetail }) {
       <h3 className="mt-4 border-t border-border pt-3 text-xs font-semibold text-muted-foreground">Features</h3>
       <div className="mt-2 flex flex-wrap gap-1.5">
         {Object.entries(plan.features || {}).map(([key, enabled]) => (
-          <span key={key} className={`rounded-full px-2 py-0.5 text-[11px] ring-1 ring-inset ${enabled ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-slate-100 text-slate-500 ring-slate-500/20 dark:bg-slate-500/10 dark:text-slate-400 line-through'}`}>
-            {key}
+          <span
+            key={key}
+            title={isShippedFeature(key) ? undefined : NOT_ENFORCED_HINT}
+            className={`rounded-full px-2 py-0.5 text-[11px] ring-1 ring-inset ${!isShippedFeature(key) ? 'border-dashed bg-muted/50 text-muted-foreground ring-border' : enabled ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-slate-100 text-slate-500 ring-slate-500/20 dark:bg-slate-500/10 dark:text-slate-400 line-through'}`}
+          >
+            {key}{!isShippedFeature(key) ? ' · not enforced' : ''}
           </span>
         ))}
       </div>
@@ -240,7 +256,7 @@ export function PeopleTab({ organizationId }: { organizationId: string }) {
   });
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-border bg-card">
+    <div className="overflow-hidden rounded-3xl border border-border bg-card">
       <div className="border-b border-border px-4 py-3">
         <input
           type="search"
@@ -253,27 +269,27 @@ export function PeopleTab({ organizationId }: { organizationId: string }) {
       {loading ? <div className="flex justify-center py-16"><Spinner /></div> : (
         <>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="admin-table">
               <thead>
-                <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
-                  <th className="px-4 py-2.5 font-medium">Member</th>
-                  <th className="px-4 py-2.5 font-medium">Workspace role</th>
-                  <th className="px-4 py-2.5 font-medium">Membership</th>
-                  <th className="px-4 py-2.5 font-medium hidden md:table-cell">Account role</th>
-                  <th className="px-4 py-2.5 font-medium hidden lg:table-cell">Last sign-in</th>
+                <tr>
+                  <th>Member</th>
+                  <th>Workspace role</th>
+                  <th>Membership</th>
+                  <th className="hidden md:table-cell">Account role</th>
+                  <th className="hidden lg:table-cell">Last sign-in</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border">
+              <tbody>
                 {(data?.members || []).map((member) => (
                   <tr key={member.membershipId}>
-                    <td className="px-4 py-2.5">
+                    <td>
                       <p className="font-medium">{member.user.firstName} {member.user.lastName}</p>
                       <p className="text-xs text-muted-foreground">{member.user.email}</p>
                     </td>
-                    <td className="px-4 py-2.5 capitalize">{member.role}</td>
-                    <td className="px-4 py-2.5"><StatusPill status={member.status} /></td>
-                    <td className="px-4 py-2.5 hidden md:table-cell capitalize text-muted-foreground">{member.user.role}</td>
-                    <td className="px-4 py-2.5 hidden lg:table-cell text-xs text-muted-foreground"><RelativeTime date={member.user.lastLoginAt} /></td>
+                    <td className="capitalize">{member.role}</td>
+                    <td><StatusPill status={member.status} /></td>
+                    <td className="hidden md:table-cell capitalize text-muted-foreground">{member.user.role}</td>
+                    <td className="hidden lg:table-cell text-xs text-muted-foreground"><RelativeTime date={member.user.lastLoginAt} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -299,7 +315,7 @@ export function ActivityTab({ organizationId }: { organizationId: string }) {
 
   if (loading) return <div className="flex justify-center py-16"><Spinner /></div>;
   return (
-    <div className="overflow-hidden rounded-2xl border border-border bg-card">
+    <div className="overflow-hidden rounded-3xl border border-border bg-card">
       <ul className="divide-y divide-border">
         {(data?.entries || []).map((entry) => (
           <li key={entry.id} className="flex items-center justify-between gap-3 px-4 py-2.5">

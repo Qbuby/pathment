@@ -1,3 +1,5 @@
+import '@/styles/mentor-appearance.css';
+import '@/styles/admin-appearance.css';
 import { PlatformShell } from '@/components/platform/PlatformShell';
 
 export const metadata = { title: 'Platform console · Pathment' };

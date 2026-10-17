@@ -1,8 +1,31 @@
 'use client';
 
-import { ReactNode } from 'react';
+import { Component, type ReactNode } from 'react';
 import { formatDistanceToNow, format } from 'date-fns';
 import { cn } from '@/components/ui/utils';
+
+
+
+/**
+ * Region boundary: a crash in one card or tab renders an inline error with
+ * the real message instead of unmounting the whole console page.
+ */
+export class Region extends Component<{ children: ReactNode; label?: string }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  componentDidCatch(error: Error) { console.error('[platform region error]', this.props.label, error); }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="rounded-3xl border border-red-200 bg-red-50/50 p-5 text-sm dark:border-red-500/30 dark:bg-red-500/5">
+          <p className="font-medium text-red-700 dark:text-red-400">This section failed to render{this.props.label ? ` (${this.props.label})` : ''}.</p>
+          <pre className="mt-2 overflow-auto rounded-lg bg-background/60 p-3 font-mono text-xs whitespace-pre-wrap break-all">{this.state.error.message}</pre>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 /** Money in cents → "$99" / "$29.50". List prices are whole dollars almost always. */
 export function money(cents: number | null | undefined, currency = 'USD'): string {
@@ -16,6 +39,9 @@ export function money(cents: number | null | undefined, currency = 'USD'): strin
 export function RelativeTime({ date, title }: { date: string | null | undefined; title?: string }) {
   if (!date) return <span className="text-muted-foreground">—</span>;
   const d = new Date(date);
+  // date-fns throws RangeError on an invalid date; a bad value from one row
+  // must never take the whole page down with it.
+  if (Number.isNaN(d.getTime())) return <span className="text-muted-foreground">—</span>;
   return (
     <span title={title || format(d, 'PPpp')} className="whitespace-nowrap">
       {formatDistanceToNow(d, { addSuffix: true })}
@@ -91,15 +117,15 @@ export function SectionCard({ title, description, actions, children, className }
   title: string; description?: string; actions?: ReactNode; children: ReactNode; className?: string;
 }) {
   return (
-    <section className={cn('rounded-2xl border border-border bg-card', className)}>
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
+    <section className={cn('rounded-3xl border border-border bg-card', className)}>
+      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-6 py-4">
         <div>
           <h2 className="text-sm font-semibold">{title}</h2>
           {description ? <p className="mt-0.5 text-xs text-muted-foreground">{description}</p> : null}
         </div>
         {actions}
       </header>
-      <div className="px-5 py-4">{children}</div>
+      <div className="px-6 py-5">{children}</div>
     </section>
   );
 }

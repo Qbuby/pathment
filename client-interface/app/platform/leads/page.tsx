@@ -66,7 +66,7 @@ function LeadCard({ lead }: { lead: BuyerLeadRow }) {
   ].filter(Boolean);
 
   return (
-    <li className="rounded-2xl border border-border bg-card p-4">
+    <li className="rounded-3xl border border-border bg-card p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="flex flex-wrap items-center gap-2 font-medium">
@@ -213,7 +213,7 @@ export default function LeadsPage() {
           <ul className="space-y-3">
             {data.leads.map((lead) => <LeadCard key={lead.id} lead={lead} />)}
           </ul>
-          <div className="mt-3 rounded-2xl border border-border bg-card">
+          <div className="mt-3 rounded-3xl border border-border bg-card">
             <Pager page={data.page} pages={data.pages} onPage={setPage} />
           </div>
         </>

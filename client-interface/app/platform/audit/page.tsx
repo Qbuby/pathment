@@ -115,7 +115,7 @@ export default function AuditPage() {
       ) : !data?.entries.length ? (
         <EmptyState icon={<ScrollText className="h-8 w-8" aria-hidden />} title="No entries match" description="Operator actions will appear here as they happen." />
       ) : (
-        <div className="overflow-hidden rounded-2xl border border-border bg-card">
+        <div className="overflow-hidden rounded-3xl border border-border bg-card">
           <ul className="divide-y divide-border">
             {data.entries.map((entry) => <Entry key={entry.id} entry={entry} />)}
           </ul>

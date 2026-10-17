@@ -21,9 +21,12 @@ import {
   MessageSquarePlus,
   ShieldCheck,
   Search,
+  TerminalSquare,
 } from 'lucide-react';
 import { NavLink } from '@/lib/config/navigation';
 import { useNavPreferences } from '@/lib/hooks/shared';
+import { qk, useApiQuery, STALE } from '@/lib/query';
+import { platformApi } from '@/lib/services/platform-api';
 import { usePermissions } from '@/lib/hooks/usePermissions';
 import { useClan, ALL_CLANS, type ClanLite } from '@/lib/context/ClanContext';
 import { useNavBadges } from '@/lib/hooks/shared/useNavBadges';
@@ -60,6 +63,32 @@ export default function Navigation({ role }: NavigationProps) {
 
   const { links, pinned, isEditing, toggleEdit, togglePin, moveUp, moveDown, reset, recordUsage, adaptive, toggleAdaptive } = useNavPreferences(role);
   const { can, canAny, canAccessAdmin, loading: permsLoading } = usePermissions();
+
+  // Platform console entry: shown only to platform operators (platform_admins
+  // rows / env bootstrap), resolved once and cached. Workspace roles never
+  // grant it, and for everyone else the sidebar simply never mentions it.
+  const { data: platformMe } = useApiQuery({
+    queryKey: qk.platform.me,
+    queryFn: platformApi.me,
+    enabled: Boolean(user?.id),
+    staleTime: STALE.long,
+  });
+  const isPlatformAdmin = Boolean(platformMe?.isPlatformAdmin);
+
+  const renderPlatformConsoleLink = (onNavigate?: () => void) => isPlatformAdmin ? (
+    <Link
+      href="/platform"
+      onClick={onNavigate}
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors text-left group ${
+        pathname.startsWith('/platform')
+          ? 'bg-brand-600 text-white shadow-sm shadow-brand-200'
+          : 'text-slate-500 hover:text-brand-700 hover:bg-brand-50'
+      }`}
+    >
+      <TerminalSquare className="w-4 h-4 text-slate-400 group-hover:text-brand-500" />
+      <span className="text-sm font-medium">Platform console</span>
+    </Link>
+  ) : null;
 
   // Permission-filtered nav: hide items the user can't use, drop empty groups,
   // and surface an "Admin area" entry for org/program admins in their own nav.
@@ -471,6 +500,7 @@ export default function Navigation({ role }: NavigationProps) {
 
           {/* Bottom Section */}
           <div className="px-3 py-4 border-t border-slate-100 space-y-1">
+            {renderPlatformConsoleLink()}
             <UserProfileCard />
             <button
               onClick={handleLogout}
@@ -534,6 +564,7 @@ export default function Navigation({ role }: NavigationProps) {
               )}
               {renderClanScope() && <div className="pb-2">{renderClanScope()}</div>}
               {renderNavItems(() => setMobileMenuOpen(false))}
+              {renderPlatformConsoleLink(() => setMobileMenuOpen(false))}
               <button
                 onClick={handleLogout}
                 className="flex items-center gap-3 px-3 py-2.5 w-full text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors text-left"

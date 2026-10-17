@@ -12,6 +12,7 @@ import { Spinner } from '@/components/shared/LoadingSpinner';
 import { ErrorState } from '@/components/shared/ErrorState';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { cn } from '@/components/ui/utils';
+import { isEnforcedLimit, isShippedFeature, NOT_ENFORCED_HINT } from '@/lib/config/platform-entitlements';
 
 const inputClass = 'mt-1 w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-brand-500/40';
 
@@ -245,15 +246,27 @@ export default function PlansPage() {
                 </p>
                 {plan.description ? <p className="mt-1.5 text-xs text-muted-foreground">{plan.description}</p> : null}
                 <dl className="mt-4 space-y-1 border-t border-border pt-3 text-xs">
-                  {Object.entries(plan.limits).map(([key, value]) => (
+                  {Object.entries(plan.limits).filter(([key]) => isEnforcedLimit(key)).map(([key, value]) => (
                     <div key={key} className="flex justify-between"><dt className="text-muted-foreground">{key}</dt><dd className="tabular-nums font-medium">{fmtLimit(value)}</dd></div>
                   ))}
                 </dl>
                 <div className="mt-3 flex flex-wrap gap-1">
-                  {Object.entries(plan.features).filter(([, enabled]) => enabled).map(([key]) => (
+                  {Object.entries(plan.features).filter(([key, enabled]) => enabled && isShippedFeature(key)).map(([key]) => (
                     <span key={key} className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700 ring-1 ring-inset ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400">{key}</span>
                   ))}
                 </div>
+                {(() => {
+                  const seeded = [
+                    ...Object.entries(plan.limits).filter(([key]) => !isEnforcedLimit(key)).map(([key, value]) => `${key}: ${fmtLimit(value)}`),
+                    ...Object.entries(plan.features).filter(([key, enabled]) => enabled && !isShippedFeature(key)).map(([key]) => key),
+                  ];
+                  if (!seeded.length) return null;
+                  return (
+                    <p className="mt-2 text-[10px] text-muted-foreground/70" title={NOT_ENFORCED_HINT}>
+                      Seeded, not enforced: {seeded.join(' · ')}
+                    </p>
+                  );
+                })()}
                 <p className="mt-4 border-t border-border pt-3 text-[11px] text-muted-foreground tabular-nums">
                   {data?.subscriberCounts?.[plan.id] || 0} subscription{(data?.subscriberCounts?.[plan.id] || 0) === 1 ? '' : 's'}
                 </p>

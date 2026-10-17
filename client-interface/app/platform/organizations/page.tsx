@@ -112,28 +112,28 @@ export default function WorkspacesDirectoryPage() {
       ) : !data?.organizations.length ? (
         <EmptyState title="No workspaces match" description="Try removing a filter, or provision the first workspace." />
       ) : (
-        <div className="overflow-hidden rounded-2xl border border-border bg-card">
+        <div className="overflow-hidden rounded-3xl border border-border bg-card">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="admin-table">
               <thead>
-                <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
-                  <th className="px-4 py-3 font-medium">Workspace</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium">Plan</th>
-                  <th className="px-4 py-3 font-medium">Members</th>
-                  <th className="px-4 py-3 font-medium hidden xl:table-cell">Programs · Clans</th>
-                  <th className="px-4 py-3 font-medium hidden lg:table-cell">Owner</th>
-                  <th className="px-4 py-3 font-medium hidden md:table-cell">Last activity</th>
+                <tr>
+                  <th>Workspace</th>
+                  <th>Status</th>
+                  <th>Plan</th>
+                  <th>Members</th>
+                  <th className="hidden xl:table-cell">Programs · Clans</th>
+                  <th className="hidden lg:table-cell">Owner</th>
+                  <th className="hidden md:table-cell">Last activity</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border">
+              <tbody>
                 {data.organizations.map((org: DirectoryRow) => (
                   <tr
                     key={org.id}
                     onClick={() => router.push(`/platform/organizations/${org.id}`)}
                     className="cursor-pointer transition-colors hover:bg-muted/50"
                   >
-                    <td className="px-4 py-3">
+                    <td>
                       <div className="flex items-center gap-3">
                         <OrgMark name={org.name} logoUrl={org.logoUrl} color={org.primaryColor} size="sm" />
                         <div className="min-w-0">
@@ -145,8 +145,8 @@ export default function WorkspacesDirectoryPage() {
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3"><StatusPill status={org.status} /></td>
-                    <td className="px-4 py-3">
+                    <td><StatusPill status={org.status} /></td>
+                    <td>
                       <div className="flex flex-col gap-0.5">
                         <span className="font-medium">{org.plan?.name || '—'}</span>
                         <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -155,11 +155,11 @@ export default function WorkspacesDirectoryPage() {
                         </span>
                       </div>
                     </td>
-                    <td className="px-4 py-3"><UsageMeter used={org.usage.members} limit={org.limits.members} /></td>
-                    <td className="px-4 py-3 hidden xl:table-cell tabular-nums text-muted-foreground">
+                    <td><UsageMeter used={org.usage.members} limit={org.limits.members} /></td>
+                    <td className="hidden xl:table-cell tabular-nums text-muted-foreground">
                       {org.usage.programs} · {org.usage.clans}
                     </td>
-                    <td className="px-4 py-3 hidden lg:table-cell">
+                    <td className="hidden lg:table-cell">
                       {org.owner ? (
                         <div className="min-w-0">
                           <p className="truncate text-xs font-medium">{org.owner.firstName} {org.owner.lastName}</p>
@@ -167,7 +167,7 @@ export default function WorkspacesDirectoryPage() {
                         </div>
                       ) : <span className="text-xs text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-4 py-3 hidden md:table-cell text-xs text-muted-foreground">
+                    <td className="hidden md:table-cell text-xs text-muted-foreground">
                       <RelativeTime date={org.lastActivityAt || org.createdAt} />
                     </td>
                   </tr>

@@ -1,9 +1,8 @@
 'use client';
 
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect } from 'react';
 import {
   LayoutDashboard, Building2, Rocket, Inbox, ReceiptText, Layers,
   SlidersHorizontal, UserSearch, ServerCog, ScrollText, ShieldCheck,
@@ -16,7 +15,8 @@ import { Spinner } from '@/components/shared/LoadingSpinner';
 import { cn } from '@/components/ui/utils';
 
 /**
- * The operator console shell.
+ * The operator console shell, in the product's own visual language (the same
+ * sidebar treatment as shared/Navigation and the admin appearance tokens).
  *
  * Access is decided by /platform/me, not by any workspace role: a tenant
  * super_admin is NOT a platform admin. A signed-in non-operator gets a quiet
@@ -71,20 +71,20 @@ const NAV: Array<{ heading: string | null; items: Array<{ href: string; label: s
 ];
 
 const ROLE_TONES: Record<string, string> = {
-  owner: 'bg-brand-500/15 text-brand-300 ring-brand-500/30',
-  billing: 'bg-violet-500/15 text-violet-300 ring-violet-500/30',
-  support: 'bg-sky-500/15 text-sky-300 ring-sky-500/30',
-  readonly: 'bg-slate-500/15 text-slate-300 ring-slate-500/30',
+  owner: 'bg-brand-50 text-brand-700 ring-brand-600/20 dark:bg-brand-500/10 dark:text-brand-400',
+  billing: 'bg-violet-50 text-violet-700 ring-violet-600/20 dark:bg-violet-500/10 dark:text-violet-400',
+  support: 'bg-sky-50 text-sky-700 ring-sky-600/20 dark:bg-sky-500/10 dark:text-sky-400',
+  readonly: 'bg-slate-100 text-slate-600 ring-slate-500/20 dark:bg-slate-500/10 dark:text-slate-400',
 };
 
 function NotFoundPanel() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-6">
+    <div className="flex min-h-screen items-center justify-center bg-canvas px-6">
       <div className="text-center">
         <p className="text-6xl font-semibold tracking-tight text-muted-foreground/40">404</p>
         <h1 className="mt-4 text-lg font-semibold">This page could not be found</h1>
         <p className="mt-1 text-sm text-muted-foreground">Check the address, or head back to your workspace.</p>
-        <Link href="/" className="mt-6 inline-block rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">
+        <Link href="/" className="mt-6 inline-block rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">
           Go home
         </Link>
       </div>
@@ -95,36 +95,37 @@ function NotFoundPanel() {
 function SidebarNav({ me, onNavigate }: { me: PlatformMe; onNavigate?: () => void }) {
   const pathname = usePathname();
   return (
-    <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-4">
+    <nav className="flex-1 space-y-4 overflow-y-auto px-3 py-4">
       {NAV.map((section) => {
         const items = section.items.filter((item) => !item.gate || me.gates.includes(item.gate));
         if (!items.length) return null;
         return (
           <div key={section.heading || 'root'}>
             {section.heading ? (
-              <p className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">{section.heading}</p>
+              <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">{section.heading}</p>
             ) : null}
-            <ul className="space-y-0.5">
+            <div className="space-y-0.5">
               {items.map((item) => {
                 const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
                 const Icon = item.icon;
                 return (
-                  <li key={item.href}>
-                    <Link
-                      href={item.href}
-                      onClick={onNavigate}
-                      className={cn(
-                        'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors',
-                        active ? 'bg-slate-800 text-white font-medium' : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200',
-                      )}
-                    >
-                      <Icon className="h-4 w-4 shrink-0" aria-hidden />
-                      {item.label}
-                    </Link>
-                  </li>
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={onNavigate}
+                    className={cn(
+                      'group flex items-center gap-3 rounded-xl px-3 py-2.5 transition-all duration-150',
+                      active
+                        ? 'bg-brand-600 text-white shadow-sm shadow-brand-200'
+                        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white',
+                    )}
+                  >
+                    <Icon className={cn('h-[18px] w-[18px] shrink-0', active ? 'text-white' : 'text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300')} aria-hidden />
+                    <span className="text-sm font-medium">{item.label}</span>
+                  </Link>
                 );
               })}
-            </ul>
+            </div>
           </div>
         );
       })}
@@ -150,7 +151,7 @@ export function PlatformShell({ children }: { children: ReactNode }) {
 
   if (isLoading || (user && loading)) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="flex min-h-screen items-center justify-center bg-canvas">
         <Spinner size="lg" label="Opening console" />
       </div>
     );
@@ -159,25 +160,25 @@ export function PlatformShell({ children }: { children: ReactNode }) {
   if (!me?.isPlatformAdmin) return <NotFoundPanel />;
 
   const sidebar = (
-    <div className="flex h-full flex-col bg-slate-950">
-      <div className="flex items-center gap-2.5 border-b border-slate-800/80 px-5 py-4">
-        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-white">
+    <div className="flex h-full flex-col bg-card">
+      <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-4 dark:border-slate-800">
+        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-600 text-white shadow-sm shadow-brand-200">
           <TerminalSquare className="h-[18px] w-[18px]" aria-hidden />
         </span>
         <div>
-          <p className="text-sm font-semibold leading-tight text-white">Pathment</p>
-          <p className="text-[11px] leading-tight text-slate-500">Platform console</p>
+          <p className="text-sm font-semibold leading-tight">Pathment</p>
+          <p className="text-[11px] leading-tight text-muted-foreground">Platform console</p>
         </div>
       </div>
       <SidebarNav me={me} onNavigate={() => setMobileOpen(false)} />
-      <div className="border-t border-slate-800/80 px-5 py-4">
-        <p className="truncate text-xs font-medium text-slate-300">{me.user.firstName} {me.user.lastName}</p>
-        <p className="truncate text-[11px] text-slate-500">{me.user.email}</p>
+      <div className="border-t border-slate-100 px-5 py-4 dark:border-slate-800">
+        <p className="truncate text-xs font-medium">{me.user.firstName} {me.user.lastName}</p>
+        <p className="truncate text-[11px] text-muted-foreground">{me.user.email}</p>
         <div className="mt-2.5 flex items-center justify-between gap-2">
           <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset capitalize', ROLE_TONES[me.role || 'readonly'])}>
             {me.role}{me.via === 'env' ? ' · env' : ''}
           </span>
-          <Link href="/" className="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-200">
+          <Link href="/" className="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-900 dark:hover:text-slate-200">
             <ArrowLeftFromLine className="h-3 w-3" aria-hidden /> Exit
           </Link>
         </div>
@@ -187,28 +188,30 @@ export function PlatformShell({ children }: { children: ReactNode }) {
 
   return (
     <PlatformContext.Provider value={me}>
-      <div className="min-h-screen bg-background">
-        {/* Desktop sidebar */}
-        <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 lg:block">{sidebar}</aside>
+      <div data-admin-appearance className="min-h-screen bg-canvas">
+        {/* Desktop sidebar - same treatment as the product navigation */}
+        <aside className="hidden lg:flex lg:w-64 lg:flex-col lg:fixed lg:inset-y-0 border-r border-slate-100 dark:border-slate-800 z-40">{sidebar}</aside>
 
         {/* Mobile top bar + drawer */}
-        <div className="sticky top-0 z-40 flex items-center justify-between border-b border-border bg-slate-950 px-4 py-3 lg:hidden">
-          <div className="flex items-center gap-2 text-white">
-            <TerminalSquare className="h-4 w-4" aria-hidden />
+        <div className="sticky top-0 z-40 flex items-center justify-between border-b border-border bg-card px-4 py-3 lg:hidden">
+          <div className="flex items-center gap-2">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-600 text-white">
+              <TerminalSquare className="h-4 w-4" aria-hidden />
+            </span>
             <span className="text-sm font-semibold">Platform console</span>
           </div>
-          <button type="button" onClick={() => setMobileOpen((open) => !open)} className="rounded-lg p-1.5 text-slate-300 hover:bg-slate-800" aria-label="Toggle navigation">
+          <button type="button" onClick={() => setMobileOpen((open) => !open)} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Toggle navigation">
             {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
         </div>
         {mobileOpen ? (
           <div className="fixed inset-0 z-50 lg:hidden">
-            <div className="absolute inset-0 bg-black/50" onClick={() => setMobileOpen(false)} aria-hidden />
-            <aside className="absolute inset-y-0 left-0 w-72">{sidebar}</aside>
+            <div className="absolute inset-0 bg-black/40" onClick={() => setMobileOpen(false)} aria-hidden />
+            <aside className="absolute inset-y-0 left-0 w-72 border-r border-border shadow-xl">{sidebar}</aside>
           </div>
         ) : null}
 
-        <main className="lg:pl-60">
+        <main className="lg:pl-64">
           <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">{children}</div>
         </main>
       </div>
@@ -216,12 +219,12 @@ export function PlatformShell({ children }: { children: ReactNode }) {
   );
 }
 
-/** Standard page heading for console pages. */
+/** Standard page heading - the product's admin-page-heading card. */
 export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
   return (
-    <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+    <div className="admin-page-heading mb-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
+        <h1>{title}</h1>
         {description ? <p className="mt-1 text-sm text-muted-foreground">{description}</p> : null}
       </div>
       {actions ? <div className="flex items-center gap-2">{actions}</div> : null}

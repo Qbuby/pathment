@@ -113,7 +113,7 @@ function ProvisionWizard() {
   if (result) {
     return (
       <div className="mx-auto max-w-xl">
-        <div className="rounded-2xl border border-border bg-card p-8 text-center">
+        <div className="rounded-3xl border border-border bg-card p-8 text-center">
           <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400">
             {result.activation === 'email_sent' ? <MailCheck className="h-7 w-7" aria-hidden /> : <CircleCheck className="h-7 w-7" aria-hidden />}
           </span>
@@ -157,7 +157,7 @@ function ProvisionWizard() {
         ))}
       </ol>
 
-      <div className="rounded-2xl border border-border bg-card p-6">
+      <div className="rounded-3xl border border-border bg-card p-6">
         {step === 0 ? (
           <div className="space-y-4">
             <Field label="Organization name">
