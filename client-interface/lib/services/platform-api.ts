@@ -181,6 +181,16 @@ export interface OverrideReportRow {
   meta: { reason?: string | null; updatedBy?: string; updatedAt?: string } | null;
 }
 
+
+export interface PendingPlanRequest {
+  organization: { id: string; name: string; slug: string; status: WorkspaceStatus };
+  currentPlan: { key: string; name: string; monthlyPriceCents: number; annualPriceCents: number; currency: string } | null;
+  requestedPlan: { key: string; name: string; monthlyPriceCents: number; annualPriceCents: number; currency: string } | null;
+  requestedAt: string | null;
+  billingInterval: 'monthly' | 'annual';
+  subscriptionStatus: SubscriptionStatus;
+}
+
 const data = <T,>(response: { data: T }) => response.data;
 
 export const platformApi = {
@@ -246,5 +256,17 @@ export const platformApi = {
     }) => apiClient.put<{ data: { subscription: WorkspaceSubscription } }>(`/platform/organizations/${organizationId}/overrides`, input).then((r) => r.data.subscription),
     overridesReport: () =>
       apiClient.get<{ data: { workspaces: OverrideReportRow[] } }>('/platform/overrides').then((r) => r.data.workspaces),
+    pendingRequests: () =>
+      apiClient.get<{ data: { requests: PendingPlanRequest[] } }>('/platform/billing/requests').then((r) => r.data.requests),
+    activateRequested: (input: { organizationId: string; planKey: string; invoiceReference: string; periodEnd: string }) =>
+      apiClient.post<{ data: { workspace: string; plan: string; alreadyActivated: boolean; subscription: WorkspaceSubscription } }>('/platform/billing/requests/activate', input).then(data),
+    assignPlan: (organizationId: string, input: {
+      planKey: string; billingInterval?: 'monthly' | 'annual'; periodEnd?: string | null;
+      reason: string; acknowledgeOverLimit?: boolean;
+    }) => apiClient.post<{ data: { assigned: string; overages: string[]; subscription: WorkspaceSubscription } }>(`/platform/organizations/${organizationId}/plan`, input).then(data),
+    patchSubscription: (organizationId: string, input: {
+      status?: SubscriptionStatus; cancelAtPeriodEnd?: boolean;
+      currentPeriodEnd?: string | null; trialEndsAt?: string | null; reason: string;
+    }) => apiClient.patch<{ data: { subscription: WorkspaceSubscription } }>(`/platform/organizations/${organizationId}/subscription`, input).then((r) => r.data.subscription),
   },
 };

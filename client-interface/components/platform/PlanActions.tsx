@@ -9,7 +9,7 @@ import { platformApi, type WorkspaceDetail } from '@/lib/services/platform-api';
 import { SectionCard } from '@/components/platform/primitives';
 import { useGate } from '@/components/platform/PlatformShell';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
-import { AssignPlanPanel } from '@/components/platform/AssignPlanPanel';
+import { AssignPlanPanel, SubscriptionControls } from '@/components/platform/AssignPlanPanel';
 import { cn } from '@/components/ui/utils';
 
 /**
@@ -213,6 +213,7 @@ export function PlanActions({ detail, organizationId, onChanged }: {
     <div className="space-y-4">
       <AssignPlanPanel detail={detail} organizationId={organizationId} onChanged={onChanged} />
       <OverridesEditor detail={detail} organizationId={organizationId} onChanged={onChanged} />
+      <SubscriptionControls detail={detail} organizationId={organizationId} onChanged={onChanged} />
     </div>
   );
 }

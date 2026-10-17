@@ -56,6 +56,12 @@ router.get('/organizations/:id/subscription', authenticate, requirePlatform('rea
 router.put('/organizations/:id/overrides', authenticate, requirePlatform('billing'), validateParams(s.idParam), validateBody(s.overrides), billing.setOverrides);
 router.get('/overrides', authenticate, requirePlatform('read'), billing.overridesReport);
 
+// ── Billing: request queue, invoice activation, operator assignment ──────────
+router.get('/billing/requests', authenticate, requirePlatform('read'), billing.pendingRequests);
+router.post('/billing/requests/activate', authenticate, requirePlatform('billing'), validateBody(s.activateRequested), billing.activateRequested);
+router.post('/organizations/:id/plan', authenticate, requirePlatform('billing'), validateParams(s.idParam), validateBody(s.assignPlan), billing.assignPlan);
+router.patch('/organizations/:id/subscription', authenticate, requirePlatform('billing'), validateParams(s.idParam), validateBody(s.subscriptionPatch), billing.patchSubscription);
+
 // ── Platform audit trail ─────────────────────────────────────────────────────
 router.get('/audit', authenticate, requirePlatform('read'), validateQuery(s.auditQuery), console_.listAudit);
 router.get('/audit/actions', authenticate, requirePlatform('read'), console_.auditActions);

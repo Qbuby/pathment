@@ -1,7 +1,7 @@
 const { Op } = require('sequelize');
 const { models, sequelize } = require('../db');
 const { NotFoundError, ValidationError, ConflictError } = require('../utils/errors/errorTypes');
-const { withoutRedundant } = require('./manualBillingService');
+const { activateRequestedPlan, withoutRedundant } = require('./manualBillingService');
 const platformAudit = require('./platformAuditService');
 
 const SKIP = { skipOrganizationScope: true };
@@ -134,6 +134,151 @@ class PlatformBillingService {
       });
     });
 
+    return this.subscriptionView(organizationId);
+  }
+
+  /** The invoice queue: every workspace whose admin requested a plan change. */
+  async pendingRequests() {
+    const rows = await models.OrganizationSubscription.findAll({
+      ...SKIP,
+      where: { requestedPlanId: { [Op.ne]: null } },
+      include: [
+        { model: models.Organization, as: 'organization', attributes: ['id', 'name', 'slug', 'status'], paranoid: false },
+        { model: models.Plan, as: 'plan', attributes: ['key', 'name', 'monthlyPriceCents', 'annualPriceCents', 'currency'] },
+        { model: models.Plan, as: 'requestedPlan', attributes: ['key', 'name', 'monthlyPriceCents', 'annualPriceCents', 'currency'] },
+      ],
+      order: [['requestedAt', 'ASC']],
+    });
+    return rows.map((row) => ({
+      organization: row.organization,
+      currentPlan: row.plan,
+      requestedPlan: row.requestedPlan,
+      requestedAt: row.requestedAt,
+      billingInterval: row.billingInterval,
+      subscriptionStatus: row.status,
+    }));
+  }
+
+  /**
+   * Activate a TENANT-REQUESTED plan after invoice confirmation. This goes
+   * through manualBillingService unchanged, deliberately: the guard that
+   * refuses to activate a plan nobody asked for is what stops an operator
+   * silently changing a customer's plan under the invoice flow. The operator
+   * path without a request is assignPlan below - a different, louder act.
+   */
+  async activateRequested(actor, { organizationId, planKey, invoiceReference, periodEnd }) {
+    const organization = await this._organization(organizationId);
+    const result = await activateRequestedPlan({
+      workspace: organization.slug,
+      planKey,
+      invoiceReference,
+      operator: actor.email,
+      periodEnd,
+    });
+    await platformAudit.record({
+      action: 'PLATFORM_PLAN_REQUEST_ACTIVATED',
+      targetType: 'OrganizationSubscription', targetId: organization.slug, organizationId,
+      newValues: { planKey, invoiceReference, periodEnd, alreadyActivated: result.alreadyActivated },
+      actor,
+    });
+    return { ...result, subscription: await this.subscriptionView(organizationId) };
+  }
+
+  /**
+   * Operator-initiated plan assignment - no tenant request required. The
+   * explicit path for closing a deal by email or correcting a plan: it
+   * demands a reason, pre-flights the downgrade against real usage, and
+   * writes its own audit action so it can never be mistaken for the
+   * invoice-confirmation flow.
+   */
+  async assignPlan(actor, organizationId, { planKey, billingInterval, periodEnd, reason, acknowledgeOverLimit = false }) {
+    const organization = await this._organization(organizationId);
+    const plan = await models.Plan.findOne({ where: { key: String(planKey || ''), active: true } });
+    if (!plan) throw new NotFoundError('Plan not found');
+    const endsAt = periodEnd ? new Date(periodEnd) : null;
+    if (endsAt && (!Number.isFinite(endsAt.getTime()) || endsAt <= new Date())) {
+      throw new ValidationError('The period end must be a future date');
+    }
+
+    const result = await sequelize.transaction(async (transaction) => {
+      const subscription = await this._subscription(organizationId, { transaction, lock: true });
+      const interval = billingInterval || subscription.billingInterval;
+      if (subscription.planId === plan.id && subscription.billingInterval === interval) {
+        throw new ValidationError(`${plan.name} (${interval}) is already the active plan`);
+      }
+
+      // Pre-flight: would this move the workspace below what it already uses?
+      const overrides = {
+        ...(subscription.overrides || {}),
+        limits: withoutRedundant(subscription.overrides?.limits, plan.limits),
+        features: withoutRedundant(subscription.overrides?.features, plan.features),
+      };
+      const effective = { ...(plan.limits || {}), ...(overrides.limits || {}) };
+      const usage = (await require('./platformOrganizationService')._usageFor([organizationId]))[organizationId]
+        || { members: 0, programs: 0, clans: 0 };
+      const overages = Object.entries(usage)
+        .filter(([key, used]) => Number.isFinite(Number(effective[key])) && Number(effective[key]) >= 0 && used > Number(effective[key]))
+        .map(([key, used]) => `${key}: ${used} in use, ${effective[key]} allowed`);
+      if (overages.length && !acknowledgeOverLimit) {
+        throw new ConflictError(`This plan is below current usage (${overages.join('; ')}). Existing data is kept but nothing new fits; acknowledge to proceed.`);
+      }
+
+      const oldValues = {
+        planId: subscription.planId, billingInterval: subscription.billingInterval,
+        status: subscription.status, requestedPlanId: subscription.requestedPlanId,
+        overrides: subscription.overrides || {},
+      };
+
+      await subscription.update({
+        planId: plan.id,
+        billingInterval: interval,
+        status: 'active',
+        provider: 'platform_operator',
+        requestedPlanId: null,
+        requestedAt: null,
+        currentPeriodStart: new Date(),
+        currentPeriodEnd: endsAt,
+        cancelAtPeriodEnd: false,
+        trialEndsAt: null,
+        overrides,
+      }, { transaction, ...SKIP });
+
+      await platformAudit.record({
+        action: 'PLATFORM_PLAN_ASSIGNED',
+        targetType: 'OrganizationSubscription', targetId: organization.slug, organizationId,
+        oldValues,
+        newValues: { planKey: plan.key, billingInterval: interval, periodEnd: endsAt?.toISOString() || null, overages },
+        reason, actor, transaction,
+      });
+
+      return { assigned: plan.key, overages };
+    });
+
+    return { ...result, subscription: await this.subscriptionView(organizationId) };
+  }
+
+  /** Subscription housekeeping: pause/cancel/reactivate, period and trial dates. */
+  async patchSubscription(actor, organizationId, { status, cancelAtPeriodEnd, currentPeriodEnd, trialEndsAt, reason }) {
+    const organization = await this._organization(organizationId);
+    await sequelize.transaction(async (transaction) => {
+      const subscription = await this._subscription(organizationId, { transaction, lock: true });
+      const patch = {};
+      if (status !== undefined) patch.status = status;
+      if (cancelAtPeriodEnd !== undefined) patch.cancelAtPeriodEnd = cancelAtPeriodEnd;
+      if (currentPeriodEnd !== undefined) patch.currentPeriodEnd = currentPeriodEnd ? new Date(currentPeriodEnd) : null;
+      if (trialEndsAt !== undefined) patch.trialEndsAt = trialEndsAt ? new Date(trialEndsAt) : null;
+      if (!Object.keys(patch).length) throw new ValidationError('Nothing to change');
+      const oldValues = {
+        status: subscription.status, cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+        currentPeriodEnd: subscription.currentPeriodEnd, trialEndsAt: subscription.trialEndsAt,
+      };
+      await subscription.update(patch, { transaction, ...SKIP });
+      await platformAudit.record({
+        action: 'PLATFORM_SUBSCRIPTION_UPDATED',
+        targetType: 'OrganizationSubscription', targetId: organization.slug, organizationId,
+        oldValues, newValues: patch, reason, actor, transaction,
+      });
+    });
     return this.subscriptionView(organizationId);
   }
 

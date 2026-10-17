@@ -23,4 +23,20 @@ const overridesReport = catchAsync(async (_req, res) => {
   res.status(200).json(successResponse('Overrides report', { workspaces: await platformBillingService.overridesReport() }));
 });
 
-module.exports = { listPlans, subscription, setOverrides, overridesReport };
+const pendingRequests = catchAsync(async (_req, res) => {
+  res.status(200).json(successResponse('Pending plan requests', { requests: await platformBillingService.pendingRequests() }));
+});
+
+const activateRequested = catchAsync(async (req, res) => {
+  res.status(200).json(successResponse('Plan request activated', await platformBillingService.activateRequested(req.user, req.body)));
+});
+
+const assignPlan = catchAsync(async (req, res) => {
+  res.status(200).json(successResponse('Plan assigned', await platformBillingService.assignPlan(req.user, req.params.id, req.body)));
+});
+
+const patchSubscription = catchAsync(async (req, res) => {
+  res.status(200).json(successResponse('Subscription updated', { subscription: await platformBillingService.patchSubscription(req.user, req.params.id, req.body) }));
+});
+
+module.exports = { listPlans, subscription, setOverrides, overridesReport, pendingRequests, activateRequested, assignPlan, patchSubscription };
