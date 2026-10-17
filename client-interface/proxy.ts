@@ -74,6 +74,10 @@ export function proxy(request: NextRequest) {
     // decides from the signed-in account's real memberships; it must never
     // infer a tenant from a stale cookie or the deployment's demo workspace.
     if (ACCOUNT_ROUTES.has(pathname)) return NextResponse.next();
+    // The platform console and owner activation are account-level too: they
+    // span (or precede) workspaces, so canonicalizing them into /w/<slug>/…
+    // would scope an operator surface to whatever tenant a cookie remembers.
+    if (pathname === '/platform' || pathname.startsWith('/platform/') || pathname === '/activate') return NextResponse.next();
     const remembered = request.cookies.get(WORKSPACE_COOKIE)?.value;
     const target = request.nextUrl.clone();
     // Old short links may reuse a workspace the browser actually visited. With

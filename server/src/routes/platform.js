@@ -24,6 +24,16 @@ router.post('/admins', authenticate, requirePlatform('owner'), validateBody(s.gr
 router.patch('/admins/:id', authenticate, requirePlatform('owner'), validateParams(s.idParam), validateBody(s.updateAdmin), console_.updateAdmin);
 router.delete('/admins/:id', authenticate, requirePlatform('owner'), validateParams(s.idParam), console_.revokeAdmin);
 
+const organizations = require('../controllers/platformOrgController');
+
+// ── Metrics & workspace directory ────────────────────────────────────────────
+router.get('/metrics', authenticate, requirePlatform('read'), organizations.metrics);
+router.get('/organizations', authenticate, requirePlatform('read'), validateQuery(s.organizationsQuery), organizations.directory);
+router.get('/organizations/:id', authenticate, requirePlatform('read'), validateParams(s.idParam), organizations.detail);
+router.get('/organizations/:id/members', authenticate, requirePlatform('read'), validateParams(s.idParam), validateQuery(s.membersQuery), organizations.members);
+router.get('/organizations/:id/audit', authenticate, requirePlatform('read'), validateParams(s.idParam), organizations.audit);
+router.post('/organizations/:id/status', authenticate, requirePlatform('lifecycle'), validateParams(s.idParam), validateBody(s.organizationStatus), organizations.setStatus);
+
 // ── Platform audit trail ─────────────────────────────────────────────────────
 router.get('/audit', authenticate, requirePlatform('read'), validateQuery(s.auditQuery), console_.listAudit);
 router.get('/audit/actions', authenticate, requirePlatform('read'), console_.auditActions);
