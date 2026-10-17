@@ -6,8 +6,21 @@ const platformBillingService = require('../services/platformBillingService');
 /** The FULL catalog - every limit and feature key, inactive plans included.
  *  This is the operator view; the public projection stays in /organizations/plans. */
 const listPlans = catchAsync(async (_req, res) => {
-  const plans = await models.Plan.findAll({ order: [['sortOrder', 'ASC'], ['createdAt', 'ASC']] });
-  res.status(200).json(successResponse('Plans retrieved', { plans }));
+  const [plans, subscriberCounts] = await Promise.all([
+    models.Plan.findAll({ order: [['sortOrder', 'ASC'], ['createdAt', 'ASC']] }),
+    platformBillingService.planSubscriberCounts(),
+  ]);
+  res.status(200).json(successResponse('Plans retrieved', { plans, subscriberCounts }));
+});
+
+const createPlan = catchAsync(async (req, res) => {
+  const plan = await platformBillingService.createPlan(req.user, req.body);
+  res.status(201).json(successResponse('Plan created', { plan }, 201));
+});
+
+const updatePlan = catchAsync(async (req, res) => {
+  const plan = await platformBillingService.updatePlan(req.user, req.params.id, req.body);
+  res.status(200).json(successResponse('Plan updated', { plan }));
 });
 
 const subscription = catchAsync(async (req, res) => {
@@ -39,4 +52,4 @@ const patchSubscription = catchAsync(async (req, res) => {
   res.status(200).json(successResponse('Subscription updated', { subscription: await platformBillingService.patchSubscription(req.user, req.params.id, req.body) }));
 });
 
-module.exports = { listPlans, subscription, setOverrides, overridesReport, pendingRequests, activateRequested, assignPlan, patchSubscription };
+module.exports = { listPlans, createPlan, updatePlan, subscription, setOverrides, overridesReport, pendingRequests, activateRequested, assignPlan, patchSubscription };

@@ -48,8 +48,10 @@ router.post('/organizations', authenticate, requirePlatform('billing'), validate
 router.post('/organizations/:id/activation/resend', authenticate, requirePlatform('support'), validateParams(s.idParam), provisioning.resendActivation);
 router.post('/organizations/:id/activation/revoke', authenticate, requirePlatform('support'), validateParams(s.idParam), provisioning.revokeActivation);
 
-// ── Plan catalog (operator view) ─────────────────────────────────────────────
+// ── Plan catalog (operator view + owner authoring) ───────────────────────────
 router.get('/plans', authenticate, requirePlatform('read'), billing.listPlans);
+router.post('/plans', authenticate, requirePlatform('owner'), validateBody(s.planCreate), billing.createPlan);
+router.patch('/plans/:id', authenticate, requirePlatform('owner'), validateParams(s.idParam), validateBody(s.planUpdate), billing.updatePlan);
 
 // ── Overrides (custom per-workspace arrangements) ────────────────────────────
 router.get('/organizations/:id/subscription', authenticate, requirePlatform('read'), validateParams(s.idParam), billing.subscription);

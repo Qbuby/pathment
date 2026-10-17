@@ -250,6 +250,11 @@ export const platformApi = {
   },
   plans: {
     list: () => apiClient.get<{ data: { plans: PlatformPlan[] } }>('/platform/plans').then((r) => r.data.plans),
+    catalog: () => apiClient.get<{ data: { plans: PlatformPlan[]; subscriberCounts: Record<string, number> } }>('/platform/plans').then(data),
+    create: (input: Omit<PlatformPlan, 'id'>) =>
+      apiClient.post<{ data: { plan: PlatformPlan } }>('/platform/plans', input).then((r) => r.data.plan),
+    update: (id: string, patch: Partial<Omit<PlatformPlan, 'id' | 'key'>>) =>
+      apiClient.patch<{ data: { plan: PlatformPlan } }>(`/platform/plans/${id}`, patch).then((r) => r.data.plan),
   },
 
   provisioning: {

@@ -137,6 +137,67 @@ class PlatformBillingService {
     return this.subscriptionView(organizationId);
   }
 
+  /**
+   * Plan catalog authoring. The catalog is live product surface - the
+   * marketing pricing page reads it unauthenticated - so creation and edits
+   * are owner-gated and audited, keys are immutable once created, and plans
+   * deactivate rather than delete (subscriptions reference them forever).
+   */
+  async createPlan(actor, input) {
+    const key = String(input.key || '').trim().toLowerCase();
+    if (!/^[a-z0-9_-]{2,40}$/.test(key)) throw new ValidationError('Plan key must be 2-40 lowercase letters, numbers, hyphens or underscores');
+    if (await models.Plan.findOne({ where: { key } })) throw new ConflictError(`A plan with key "${key}" already exists`);
+    const plan = await models.Plan.create({
+      key,
+      name: String(input.name || '').trim(),
+      description: input.description || null,
+      monthlyPriceCents: input.monthlyPriceCents,
+      annualPriceCents: input.annualPriceCents,
+      currency: (input.currency || 'USD').toUpperCase(),
+      limits: input.limits || {},
+      features: input.features || {},
+      active: input.active !== false,
+      sortOrder: input.sortOrder || 0,
+    });
+    await platformAudit.record({
+      action: 'PLATFORM_PLAN_CREATED', targetType: 'Plan', targetId: key,
+      newValues: plan.toJSON(), actor,
+    });
+    return plan;
+  }
+
+  async updatePlan(actor, id, patch) {
+    const plan = await models.Plan.findByPk(id);
+    if (!plan) throw new NotFoundError('Plan not found');
+    const editable = ['name', 'description', 'monthlyPriceCents', 'annualPriceCents', 'currency', 'limits', 'features', 'active', 'sortOrder'];
+    const oldValues = {};
+    const newValues = {};
+    for (const field of editable) {
+      if (patch[field] === undefined) continue;
+      const next = field === 'currency' ? String(patch[field]).toUpperCase() : patch[field];
+      if (JSON.stringify(plan[field]) === JSON.stringify(next)) continue;
+      oldValues[field] = plan[field];
+      newValues[field] = next;
+      plan[field] = next;
+    }
+    if (!Object.keys(newValues).length) return plan;
+    await plan.save();
+    await platformAudit.record({
+      action: 'PLATFORM_PLAN_UPDATED', targetType: 'Plan', targetId: plan.key,
+      oldValues, newValues, actor,
+    });
+    return plan;
+  }
+
+  /** How many subscriptions sit on each plan - shown before anyone edits one. */
+  async planSubscriberCounts() {
+    const rows = await sequelize.query(
+      `SELECT plan_id AS "planId", COUNT(*)::int AS count FROM organization_subscriptions GROUP BY plan_id`,
+      { type: sequelize.QueryTypes.SELECT },
+    );
+    return Object.fromEntries(rows.map((row) => [row.planId, row.count]));
+  }
+
   /** The invoice queue: every workspace whose admin requested a plan change. */
   async pendingRequests() {
     const rows = await models.OrganizationSubscription.findAll({
