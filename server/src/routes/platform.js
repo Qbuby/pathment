@@ -62,6 +62,14 @@ router.post('/billing/requests/activate', authenticate, requirePlatform('billing
 router.post('/organizations/:id/plan', authenticate, requirePlatform('billing'), validateParams(s.idParam), validateBody(s.assignPlan), billing.assignPlan);
 router.patch('/organizations/:id/subscription', authenticate, requirePlatform('billing'), validateParams(s.idParam), validateBody(s.subscriptionPatch), billing.patchSubscription);
 
+const leads = require('../controllers/platformLeadController');
+const { buyerLeadLimiter } = require('../middlewares/rateLimiter');
+
+// ── Buyer leads (public intake + operator inbox) ─────────────────────────────
+router.post('/leads', buyerLeadLimiter, validateBody(s.leadCreate), leads.createPublic);
+router.get('/leads', authenticate, requirePlatform('read'), validateQuery(s.leadsQuery), leads.list);
+router.patch('/leads/:id', authenticate, requirePlatform('support'), validateParams(s.idParam), validateBody(s.leadUpdate), leads.update);
+
 // ── Platform audit trail ─────────────────────────────────────────────────────
 router.get('/audit', authenticate, requirePlatform('read'), validateQuery(s.auditQuery), console_.listAudit);
 router.get('/audit/actions', authenticate, requirePlatform('read'), console_.auditActions);

@@ -191,6 +191,27 @@ export interface PendingPlanRequest {
   subscriptionStatus: SubscriptionStatus;
 }
 
+
+export type LeadStatus = 'new' | 'contacted' | 'qualified' | 'provisioned' | 'lost';
+
+export interface BuyerLeadRow {
+  id: string;
+  email: string;
+  fullName: string;
+  organizationName: string;
+  organizationSize: string | null;
+  participants: string | null;
+  programType: string | null;
+  launchTimeframe: string | null;
+  planInterest: string | null;
+  message: string | null;
+  source: string;
+  status: LeadStatus;
+  notes: string | null;
+  createdAt: string;
+  provisionedOrganization: { id: string; name: string; slug: string } | null;
+}
+
 const data = <T,>(response: { data: T }) => response.data;
 
 export const platformApi = {
@@ -268,5 +289,11 @@ export const platformApi = {
       status?: SubscriptionStatus; cancelAtPeriodEnd?: boolean;
       currentPeriodEnd?: string | null; trialEndsAt?: string | null; reason: string;
     }) => apiClient.patch<{ data: { subscription: WorkspaceSubscription } }>(`/platform/organizations/${organizationId}/subscription`, input).then((r) => r.data.subscription),
+  },
+  leads: {
+    list: (params: { status?: string; page?: number; limit?: number }) =>
+      apiClient.get<{ data: Paged & { leads: BuyerLeadRow[]; countsByStatus: Record<string, number> } }>('/platform/leads', { params }).then(data),
+    update: (id: string, input: { status?: LeadStatus; notes?: string }) =>
+      apiClient.patch<{ data: { lead: BuyerLeadRow } }>(`/platform/leads/${id}`, input).then((r) => r.data.lead),
   },
 };
