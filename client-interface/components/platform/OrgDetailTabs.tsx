@@ -2,8 +2,12 @@
 
 import { useState } from 'react';
 import { Globe, Plug, Bot, MailCheck } from 'lucide-react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { qk, useApiQuery, STALE } from '@/lib/query';
 import { platformApi, type WorkspaceDetail } from '@/lib/services/platform-api';
+import { useGate } from '@/components/platform/PlatformShell';
+import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { KV, Pager, RelativeTime, SectionCard, StatusPill, UsageMeter, money } from '@/components/platform/primitives';
 import { Spinner } from '@/components/shared/LoadingSpinner';
 import { useDebounce } from '@/lib/hooks/useDebounce';
@@ -49,21 +53,7 @@ export function OverviewTab({ detail }: { detail: WorkspaceDetail }) {
       </SectionCard>
 
       <div className="space-y-4 lg:col-span-1">
-        {ownerInvite ? (
-          <SectionCard title="Owner activation">
-            <div className="flex items-center gap-3">
-              <span className="rounded-xl bg-muted p-2"><MailCheck className="h-4 w-4" aria-hidden /></span>
-              <div className="flex-1">
-                <StatusPill status={ownerInvite.status} />
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {ownerInvite.status === 'pending' ? <>Expires <RelativeTime date={ownerInvite.expiresAt} /></>
-                    : ownerInvite.status === 'used' ? <>Activated <RelativeTime date={ownerInvite.usedAt} /></>
-                    : <>Sent <RelativeTime date={ownerInvite.createdAt} /></>}
-                </p>
-              </div>
-            </div>
-          </SectionCard>
-        ) : null}
+        {ownerInvite ? <OwnerActivationCard organizationId={organization.id} ownerInvite={ownerInvite} /> : null}
 
         <SectionCard title="Domains" description="Custom hostnames pointing at this workspace.">
           {domains.length ? (
@@ -98,6 +88,68 @@ export function OverviewTab({ detail }: { detail: WorkspaceDetail }) {
         </SectionCard>
       </div>
     </div>
+  );
+}
+
+
+/** Owner activation state + the support actions that manage the live link. */
+function OwnerActivationCard({ organizationId, ownerInvite }: {
+  organizationId: string;
+  ownerInvite: NonNullable<WorkspaceDetail['ownerInvite']>;
+}) {
+  const canSupport = useGate('support');
+  const queryClient = useQueryClient();
+  const refresh = () => queryClient.invalidateQueries({ queryKey: qk.platform.organization(organizationId) });
+
+  const resend = useMutation({
+    mutationFn: () => platformApi.provisioning.resendActivation(organizationId),
+    onSuccess: (result) => { toast.success(`Fresh activation link sent to ${result.owner}`); refresh(); },
+    onError: (error) => toast.error(extractApiErrorMessage(error, 'Could not resend the link')),
+  });
+  const revoke = useMutation({
+    mutationFn: () => platformApi.provisioning.revokeActivation(organizationId),
+    onSuccess: () => { toast.success('Activation link revoked'); refresh(); },
+    onError: (error) => toast.error(extractApiErrorMessage(error, 'Could not revoke the link')),
+  });
+
+  const actionable = ownerInvite.status === 'pending' || ownerInvite.status === 'expired' || ownerInvite.status === 'revoked';
+
+  return (
+    <SectionCard title="Owner activation">
+      <div className="flex items-center gap-3">
+        <span className="rounded-xl bg-muted p-2"><MailCheck className="h-4 w-4" aria-hidden /></span>
+        <div className="flex-1">
+          <StatusPill status={ownerInvite.status} />
+          <p className="mt-1 text-xs text-muted-foreground">
+            {ownerInvite.status === 'pending' ? <>Expires <RelativeTime date={ownerInvite.expiresAt} /></>
+              : ownerInvite.status === 'used' ? <>Activated <RelativeTime date={ownerInvite.usedAt} /></>
+              : <>Sent <RelativeTime date={ownerInvite.createdAt} /></>}
+          </p>
+        </div>
+      </div>
+      {canSupport && actionable ? (
+        <div className="mt-3 flex gap-2 border-t border-border pt-3">
+          <button
+            type="button"
+            onClick={() => resend.mutate()}
+            disabled={resend.isPending}
+            className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 hover:bg-brand-700"
+          >
+            {resend.isPending ? 'Sending…' : 'Resend link'}
+          </button>
+          {ownerInvite.status === 'pending' ? (
+            <button
+              type="button"
+              onClick={() => revoke.mutate()}
+              disabled={revoke.isPending}
+              className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-50"
+            >
+              Revoke link
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </SectionCard>
   );
 }
 

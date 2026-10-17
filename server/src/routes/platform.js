@@ -34,6 +34,23 @@ router.get('/organizations/:id/members', authenticate, requirePlatform('read'), 
 router.get('/organizations/:id/audit', authenticate, requirePlatform('read'), validateParams(s.idParam), organizations.audit);
 router.post('/organizations/:id/status', authenticate, requirePlatform('lifecycle'), validateParams(s.idParam), validateBody(s.organizationStatus), organizations.setStatus);
 
+const provisioning = require('../controllers/platformProvisioningController');
+const billing = require('../controllers/platformBillingController');
+const { platformActivationLimiter } = require('../middlewares/rateLimiter');
+
+// ── Owner activation (PUBLIC: this is how the first password gets set) ───────
+router.post('/activation/validate', platformActivationLimiter, validateBody(s.activationValidate), provisioning.validateActivation);
+router.post('/activation/consume', platformActivationLimiter, validateBody(s.activationConsume), provisioning.consumeActivation);
+
+// ── Provisioning ─────────────────────────────────────────────────────────────
+router.get('/slug-check', authenticate, requirePlatform('billing'), validateQuery(s.slugQuery), provisioning.checkSlug);
+router.post('/organizations', authenticate, requirePlatform('billing'), validateBody(s.provision), provisioning.provision);
+router.post('/organizations/:id/activation/resend', authenticate, requirePlatform('support'), validateParams(s.idParam), provisioning.resendActivation);
+router.post('/organizations/:id/activation/revoke', authenticate, requirePlatform('support'), validateParams(s.idParam), provisioning.revokeActivation);
+
+// ── Plan catalog (operator view) ─────────────────────────────────────────────
+router.get('/plans', authenticate, requirePlatform('read'), billing.listPlans);
+
 // ── Platform audit trail ─────────────────────────────────────────────────────
 router.get('/audit', authenticate, requirePlatform('read'), validateQuery(s.auditQuery), console_.listAudit);
 router.get('/audit/actions', authenticate, requirePlatform('read'), console_.auditActions);

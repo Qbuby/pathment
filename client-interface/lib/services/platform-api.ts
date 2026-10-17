@@ -147,6 +147,31 @@ export interface PlatformMetrics {
   leads: { new: number };
 }
 
+
+export interface ProvisionInput {
+  name: string;
+  slug: string;
+  timezone: string;
+  planKey: string;
+  billingInterval: 'monthly' | 'annual';
+  trialDays: number;
+  owner: { email: string; firstName: string; lastName: string };
+  leadId?: string | null;
+  reason?: string;
+}
+
+export interface ProvisionResult {
+  organization: { id: string; name: string; slug: string; status: WorkspaceStatus };
+  owner: { id: string; email: string; account: 'existing' | 'created' };
+  activation: 'email_sent' | 'not_needed';
+}
+
+export interface ActivationInfo {
+  organization: { name: string; slug: string };
+  owner: { email: string; firstName: string };
+  expiresAt: string;
+}
+
 const data = <T,>(response: { data: T }) => response.data;
 
 export const platformApi = {
@@ -182,5 +207,26 @@ export const platformApi = {
       apiClient.get<{ data: { entries: Array<{ id: string; action: string; entityType: string; createdAt: string; user: { firstName: string; lastName: string; email: string } | null }> } & Paged }>(`/platform/organizations/${id}/audit`, { params }).then(data),
     setStatus: (id: string, input: { status: WorkspaceStatus; reason: string }) =>
       apiClient.post<{ data: { id: string; slug: string; status: WorkspaceStatus } }>(`/platform/organizations/${id}/status`, input).then(data),
+  },
+  plans: {
+    list: () => apiClient.get<{ data: { plans: PlatformPlan[] } }>('/platform/plans').then((r) => r.data.plans),
+  },
+
+  provisioning: {
+    checkSlug: (slug: string) =>
+      apiClient.get<{ data: { slug: string | null; available: boolean; reason: string | null } }>('/platform/slug-check', { params: { slug } }).then(data),
+    provision: (input: ProvisionInput) =>
+      apiClient.post<{ data: ProvisionResult }>('/platform/organizations', input).then(data),
+    resendActivation: (organizationId: string) =>
+      apiClient.post<{ data: { resent: boolean; owner: string } }>(`/platform/organizations/${organizationId}/activation/resend`).then(data),
+    revokeActivation: (organizationId: string) =>
+      apiClient.post<{ data: { revoked: boolean } }>(`/platform/organizations/${organizationId}/activation/revoke`).then(data),
+  },
+
+  activation: {
+    validate: (token: string) =>
+      apiClient.post<{ data: ActivationInfo }>('/platform/activation/validate', { token }).then(data),
+    consume: (input: { token: string; password: string }) =>
+      apiClient.post<{ data: { workspace: { name: string; slug: string }; email: string } }>('/platform/activation/consume', input).then(data),
   },
 };
