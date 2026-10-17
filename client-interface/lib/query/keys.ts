@@ -119,7 +119,8 @@ export const qk = {
     programs: ['admin', 'programs'] as const,
     mentors: ['admin', 'mentors'] as const,
     mentees: ['admin', 'mentees'] as const,
-    activity: (days: number) => ['admin', 'activity', days] as const,
+    activity: (days: number, programId?: string | null) =>
+      ['admin', 'activity', days, programId ?? ''] as const,
     storage: ['admin', 'storage'] as const,
     moderation: (status: string) => ['admin', 'moderation', status] as const,
     clanRequests: ['admin', 'clan-requests'] as const,
