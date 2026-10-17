@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { Plus, Loader2, ChevronRight, CalendarRange } from 'lucide-react';
+import { Plus, Loader2, ChevronRight, CalendarRange, Link2, Check, Inbox } from 'lucide-react';
 import { Drawer } from '@/components/shared/Drawer';
+import { SelectMenu } from '@/components/shared/SelectMenu';
 import { useCohorts, type Cohort, type CohortStatus } from '@/lib/hooks/admin';
 import { cohortApi } from '@/lib/services/intake-api';
 import { programsApi } from '@/lib/services/program-api';
@@ -71,10 +72,15 @@ function CreateCohortDrawer({ onClose, onCreated }: { onClose: () => void; onCre
       <div className="space-y-4">
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Program <span className="text-red-500">*</span></label>
-          <select value={form.programId} onChange={(e) => setForm({ ...form, programId: e.target.value })} className={field}>
-            <option value="">Select a program…</option>
-            {programs.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
+          {/* The shared searchable select, not a native one: a workspace with
+              thirty programmes made this a scroll-and-squint. */}
+          <SelectMenu
+            ariaLabel="Program"
+            value={form.programId}
+            onChange={(value) => setForm({ ...form, programId: value })}
+            placeholder="Select a program…"
+            options={programs.map((p) => ({ value: p.id, label: p.name }))}
+          />
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Name <span className="text-red-500">*</span></label>
@@ -98,12 +104,22 @@ function CreateCohortDrawer({ onClose, onCreated }: { onClose: () => void; onCre
   );
 }
 
+/** Applications that are somebody's job right now, as opposed to decided. */
+const waitingOn = (cohort: Cohort) =>
+  (cohort.applicationsByStatus?.pending ?? 0)
+  + (cohort.applicationsByStatus?.under_review ?? 0)
+  + (cohort.applicationsByStatus?.assessment_sent ?? 0);
+
 function CohortCard({ cohort }: { cohort: Cohort }) {
   const meta = STATUS_META[cohort.status] ?? STATUS_META.planning;
   const accepted = cohort.applicationsByStatus?.accepted ?? 0;
-  const pending = (cohort.applicationsByStatus?.pending ?? 0) + (cohort.applicationsByStatus?.under_review ?? 0) + (cohort.applicationsByStatus?.assessment_sent ?? 0);
+  const pending = waitingOn(cohort);
+  const [copied, setCopied] = useState(false);
+  const applyUrl = cohort.publicEnabled && cohort.publicSlug && typeof window !== 'undefined'
+    ? `${window.location.origin}/apply/${cohort.publicSlug}`
+    : null;
   return (
-    <Link href={`/admin/cohorts/${cohort.id}`} className="group block rounded-2xl border border-slate-200 bg-card p-5 hover:border-brand-300 hover:shadow-sm transition-all">
+    <Link href={`/admin/cohorts/${cohort.id}`} className="group relative block rounded-2xl border border-slate-200 bg-card p-5 hover:border-brand-300 hover:shadow-sm transition-all">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="font-medium text-slate-900 truncate">{cohort.name}</p>
@@ -116,8 +132,8 @@ function CohortCard({ cohort }: { cohort: Cohort }) {
           <p className="text-sm font-semibold text-slate-900">{cohort.applicationCount ?? 0}</p>
           <p className="text-[11px] text-slate-500">applicants</p>
         </div>
-        <div className="rounded-lg bg-slate-50 py-2">
-          <p className="text-sm font-semibold text-slate-900">{pending}</p>
+        <div className={`rounded-lg py-2 ${pending ? 'bg-amber-50' : 'bg-slate-50'}`}>
+          <p className={`text-sm font-semibold ${pending ? 'text-amber-700' : 'text-slate-900'}`}>{pending}</p>
           <p className="text-[11px] text-slate-500">in review</p>
         </div>
         <div className="rounded-lg bg-emerald-50 py-2">
@@ -125,8 +141,31 @@ function CohortCard({ cohort }: { cohort: Cohort }) {
           <p className="text-[11px] text-slate-500">accepted</p>
         </div>
       </div>
-      <div className="mt-3 flex items-center justify-end text-xs font-medium text-brand-600 transition-colors">
-        Review applications <ChevronRight className="ml-0.5 w-3.5 h-3.5" />
+      <div className="mt-3 flex items-center justify-between gap-2 text-xs font-medium">
+        {/*
+            The apply link is the entire point of an open intake and lived two
+            clicks inside the cohort, so sharing one meant opening it, finding
+            the settings panel and copying from there. It belongs on the card.
+        */}
+        {applyUrl ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              navigator.clipboard.writeText(applyUrl)
+                .then(() => { setCopied(true); toast.success('Apply link copied'); setTimeout(() => setCopied(false), 2000); })
+                .catch(() => toast.error('Could not copy the link'));
+            }}
+            className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-50 hover:text-brand-700"
+          >
+            {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Link2 className="w-3.5 h-3.5" />}
+            {copied ? 'Copied' : 'Copy apply link'}
+          </button>
+        ) : <span />}
+        <span className="inline-flex items-center text-brand-600">
+          {pending ? `Review ${pending}` : 'Open intake'} <ChevronRight className="ml-0.5 w-3.5 h-3.5" />
+        </span>
       </div>
     </Link>
   );
@@ -137,7 +176,20 @@ export default function AdminCohortsPage() {
   const [creating, setCreating] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const filtered = cohorts.filter(cohort => (statusFilter === 'all' || cohort.status === statusFilter) && `${cohort.name} ${cohort.program?.name || ''}`.toLowerCase().includes(search.toLowerCase()));
+  const filtered = cohorts
+    .filter(cohort => (statusFilter === 'all' || cohort.status === statusFilter)
+      && `${cohort.name} ${cohort.program?.name || ''}`.toLowerCase().includes(search.toLowerCase()))
+    /**
+     * Worst first. The cards arrived in whatever order the API returned, so
+     * the intake with forty people waiting could sit below three finished
+     * ones — and an admissions admin opens this page to find exactly that.
+     */
+    .sort((a, b) => waitingOn(b) - waitingOn(a) || a.name.localeCompare(b.name));
+
+  // What is waiting across everything, which is the question the page is
+  // opened to answer and which it previously made you open each card to work out.
+  const totalWaiting = cohorts.reduce((sum, c) => sum + waitingOn(c), 0);
+  const openIntakes = cohorts.filter((c) => c.status === 'open').length;
 
   return (
     <div className="space-y-6">
@@ -151,7 +203,44 @@ export default function AdminCohortsPage() {
         </button>
       </div>
 
-      <div className="flex flex-wrap gap-3"><input aria-label="Search intakes" value={search} onChange={event => setSearch(event.target.value)} placeholder="Find an intake or program…" className="min-w-48 flex-1 rounded-xl border bg-card px-4 py-3 text-sm"/><select aria-label="Intake status" value={statusFilter} onChange={event => setStatusFilter(event.target.value)} className="rounded-xl border bg-card px-4 py-3 text-sm"><option value="all">All statuses</option>{Object.entries(STATUS_META).map(([value, meta]) => <option key={value} value={value}>{meta.label}</option>)}</select></div>
+      {!loading && !error && cohorts.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl border border-slate-200 bg-card px-5 py-4">
+          <p className="inline-flex items-center gap-2 text-sm">
+            <Inbox className={`h-4 w-4 ${totalWaiting ? 'text-amber-600' : 'text-slate-300'}`} aria-hidden />
+            {totalWaiting
+              ? <><strong className="text-slate-900">{totalWaiting}</strong> <span className="text-slate-600">{totalWaiting === 1 ? 'application is' : 'applications are'} waiting on a decision</span></>
+              : <span className="text-slate-600">Nothing is waiting on a decision</span>}
+          </p>
+          <p className="text-sm text-slate-500">
+            {openIntakes} of {cohorts.length} {cohorts.length === 1 ? 'intake' : 'intakes'} accepting applications
+          </p>
+          {totalWaiting > 0 && statusFilter !== 'all' && (
+            <button onClick={() => { setStatusFilter('all'); setSearch(''); }} className="text-sm font-medium text-brand-700 hover:underline">
+              Show everything
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-3">
+        <input
+          aria-label="Search intakes"
+          value={search}
+          onChange={event => setSearch(event.target.value)}
+          placeholder="Find an intake or program…"
+          className="min-w-48 flex-1 rounded-xl border bg-card px-4 py-3 text-sm"
+        />
+        <SelectMenu
+          ariaLabel="Intake status"
+          value={statusFilter}
+          onChange={setStatusFilter}
+          className="min-w-44"
+          options={[
+            { value: 'all', label: 'All statuses' },
+            ...Object.entries(STATUS_META).map(([value, meta]) => ({ value, label: meta.label })),
+          ]}
+        />
+      </div>
       {!loading && !error && cohorts.length > 0 && filtered.length === 0 && <p className="rounded-2xl border bg-card p-8 text-center text-muted-foreground">No intakes match these filters.</p>}
       {loading ? (
         <div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-brand-600" /></div>
