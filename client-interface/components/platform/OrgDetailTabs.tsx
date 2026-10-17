@@ -281,15 +281,18 @@ export function PeopleTab({ organizationId }: { organizationId: string }) {
               </thead>
               <tbody>
                 {(data?.members || []).map((member) => (
-                  <tr key={member.membershipId}>
+                  <tr key={member.membershipId} className={member.user?.deletedAt ? 'opacity-60' : undefined}>
                     <td>
-                      <p className="font-medium">{member.user.firstName} {member.user.lastName}</p>
-                      <p className="text-xs text-muted-foreground">{member.user.email}</p>
+                      <p className="font-medium">
+                        {member.user ? `${member.user.firstName} ${member.user.lastName}` : 'Deleted account'}
+                        {member.user?.deletedAt ? <span className="ml-2 rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-600 dark:bg-rose-500/10 dark:text-rose-400">deleted</span> : null}
+                      </p>
+                      <p className="text-xs text-muted-foreground">{member.user?.email || '—'}</p>
                     </td>
                     <td className="capitalize">{member.role}</td>
                     <td><StatusPill status={member.status} /></td>
-                    <td className="hidden md:table-cell capitalize text-muted-foreground">{member.user.role}</td>
-                    <td className="hidden lg:table-cell text-xs text-muted-foreground"><RelativeTime date={member.user.lastLoginAt} /></td>
+                    <td className="hidden md:table-cell capitalize text-muted-foreground">{member.user?.role || '—'}</td>
+                    <td className="hidden lg:table-cell text-xs text-muted-foreground"><RelativeTime date={member.user?.lastLoginAt ?? null} /></td>
                   </tr>
                 ))}
               </tbody>

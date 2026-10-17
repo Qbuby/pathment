@@ -132,7 +132,7 @@ export interface WorkspaceMemberRow {
   role: 'owner' | 'admin' | 'member' | 'guest';
   status: 'invited' | 'active' | 'suspended' | 'left';
   joinedAt: string | null;
-  user: { id: string; firstName: string; lastName: string; email: string; role: string; status: string; lastLoginAt: string | null; createdAt: string };
+  user: { id: string; firstName: string; lastName: string; email: string; role: string; status: string; lastLoginAt: string | null; createdAt: string; deletedAt?: string | null } | null;
 }
 
 export interface PlatformMetrics {

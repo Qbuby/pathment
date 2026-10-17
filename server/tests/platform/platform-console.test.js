@@ -205,6 +205,23 @@ describe('platform console', () => {
       });
       expect(live).toBe(1);
     });
+
+    it('members list keeps a soft-deleted user visible instead of returning user:null', async () => {
+      const response = await provision();
+      const { organization, owner } = response.body.data;
+
+      // Soft-delete the owner's account; the membership row remains.
+      const user = await models.User.findByPk(owner.id);
+      await user.destroy();
+
+      const members = await request(app)
+        .get(`/api/platform/organizations/${organization.id}/members`)
+        .set(authed(tokens.operator));
+      expect(members.status).toBe(200);
+      const row = members.body.data.members.find((m) => m.user && m.user.id === owner.id);
+      expect(row).toBeTruthy();
+      expect(row.user.deletedAt).toBeTruthy();
+    });
   });
 
   describe('overrides', () => {

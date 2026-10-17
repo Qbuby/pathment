@@ -279,8 +279,9 @@ class PlatformOrganizationService {
       ...SKIP,
       where: { organizationId: id },
       include: [{
-        model: models.User, as: 'user', where: userWhere,
-        attributes: ['id', 'firstName', 'lastName', 'email', 'role', 'status', 'lastLoginAt', 'createdAt'],
+        // paranoid:false keeps memberships of soft-deleted users visible to operators.
+        model: models.User, as: 'user', where: userWhere, paranoid: false,
+        attributes: ['id', 'firstName', 'lastName', 'email', 'role', 'status', 'lastLoginAt', 'createdAt', 'deletedAt'],
       }],
       order: [[sequelize.literal(`CASE "OrganizationMembership"."role" WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END`), 'ASC'], ['createdAt', 'ASC']],
       limit: size, offset: (current - 1) * size,
