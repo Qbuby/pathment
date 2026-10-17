@@ -8,7 +8,7 @@ import { toast } from 'sonner';
 import { qk, useApiQuery, STALE } from '@/lib/query';
 import { platformApi, type PlatformUserDetail } from '@/lib/services/platform-api';
 import { PageHeader, useGate } from '@/components/platform/PlatformShell';
-import { RelativeTime, SectionCard, StatusPill } from '@/components/platform/primitives';
+import { CardSkeleton, RelativeTime, SectionCard, StatusPill } from '@/components/platform/primitives';
 import { Spinner } from '@/components/shared/LoadingSpinner';
 import { useDebounce } from '@/lib/hooks/useDebounce';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
@@ -88,7 +88,7 @@ function AccountCard({ userId }: { userId: string }) {
     staleTime: STALE.short,
   });
 
-  if (loading) return <div className="flex justify-center py-10"><Spinner /></div>;
+  if (loading) return <CardSkeleton lines={6} />;
   if (!user) return null;
 
   return (

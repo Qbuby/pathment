@@ -5,9 +5,8 @@ import { ArrowRight, Building2, CircleDollarSign, HourglassIcon, Inbox, ReceiptT
 import { qk, useApiQuery, STALE } from '@/lib/query';
 import { platformApi } from '@/lib/services/platform-api';
 import { PageHeader } from '@/components/platform/PlatformShell';
-import { money, OrgMark, RelativeTime, SectionCard, StatusPill } from '@/components/platform/primitives';
+import { CardSkeleton, money, OrgMark, RelativeTime, SectionCard, StatusPill, TileSkeleton } from '@/components/platform/primitives';
 import { MetricTile } from '@/components/shared/MetricTile';
-import { Spinner } from '@/components/shared/LoadingSpinner';
 import { ErrorState } from '@/components/shared/ErrorState';
 
 /**
@@ -40,7 +39,17 @@ export default function PlatformOverviewPage() {
     staleTime: STALE.short,
   });
 
-  if (loading) return <div className="flex justify-center py-24"><Spinner size="lg" label="Loading metrics" /></div>;
+  if (loading) {
+    return (
+      <div className="space-y-5">
+        <TileSkeleton />
+        <div className="grid gap-5 xl:grid-cols-2">
+          <CardSkeleton lines={5} />
+          <CardSkeleton lines={5} />
+        </div>
+      </div>
+    );
+  }
   if (error || !metrics) return <ErrorState message={error || undefined} onRetry={refetch} variant="page" />;
 
   const orgs = metrics.organizations;

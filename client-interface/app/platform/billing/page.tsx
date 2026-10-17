@@ -8,8 +8,7 @@ import { toast } from 'sonner';
 import { qk, useApiQuery, STALE } from '@/lib/query';
 import { platformApi, type PendingPlanRequest } from '@/lib/services/platform-api';
 import { PageHeader, useGate } from '@/components/platform/PlatformShell';
-import { money, RelativeTime, StatusPill } from '@/components/platform/primitives';
-import { Spinner } from '@/components/shared/LoadingSpinner';
+import { btn, money, RelativeTime, StatusPill, TableSkeleton } from '@/components/platform/primitives';
 import { ErrorState } from '@/components/shared/ErrorState';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
@@ -72,7 +71,7 @@ function RequestRow({ request }: { request: PendingPlanRequest }) {
           <button
             type="button"
             onClick={() => setOpen((value) => !value)}
-            className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700"
+            className={btn.primarySm}
           >
             {open ? 'Close' : 'Activate…'}
           </button>
@@ -123,7 +122,7 @@ export default function BillingRequestsPage() {
         description="Workspace admins request a plan from their settings; confirmed invoices are activated here."
       />
       {loading ? (
-        <div className="flex justify-center py-24"><Spinner size="lg" /></div>
+        <div className="overflow-hidden rounded-3xl border border-border bg-card"><TableSkeleton rows={4} /></div>
       ) : error ? (
         <ErrorState message={error || undefined} onRetry={refetch} variant="page" />
       ) : !data?.length ? (

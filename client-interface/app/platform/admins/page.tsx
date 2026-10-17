@@ -7,10 +7,10 @@ import { toast } from 'sonner';
 import { qk, useApiQuery, STALE } from '@/lib/query';
 import { platformApi, type PlatformAdminRow, type PlatformRole } from '@/lib/services/platform-api';
 import { PageHeader, usePlatform } from '@/components/platform/PlatformShell';
-import { RelativeTime, SectionCard } from '@/components/platform/primitives';
-import { Spinner } from '@/components/shared/LoadingSpinner';
+import { btn, RelativeTime, SectionCard, TableSkeleton } from '@/components/platform/primitives';
 import { SelectMenu } from '@/components/shared/SelectMenu';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
+import { cn } from '@/components/ui/utils';
 
 const ROLE_OPTIONS: Array<{ value: PlatformRole; label: string; description: string }> = [
   { value: 'owner', label: 'Owner', description: 'Everything, including this page' },
@@ -102,7 +102,7 @@ export default function PlatformAdminsPage() {
       <div className="grid gap-4 lg:grid-cols-3">
         <SectionCard title="Operators" className="lg:col-span-2">
           {loading ? (
-            <div className="flex justify-center py-10"><Spinner /></div>
+            <TableSkeleton rows={3} />
           ) : (
             <ul className="divide-y divide-border">
               {(admins || []).map((admin) => <AdminRow key={admin.id} admin={admin} selfId={me.user.id} />)}
@@ -156,7 +156,7 @@ export default function PlatformAdminsPage() {
             <button
               type="submit"
               disabled={!/.+@.+\..+/.test(email) || grant.isPending}
-              className="mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 hover:bg-brand-700"
+              className={cn(btn.primary, 'mt-4 w-full justify-center')}
             >
               <UserPlus className="h-4 w-4" aria-hidden />
               {grant.isPending ? 'Granting…' : 'Grant access'}

@@ -6,7 +6,7 @@ import { Infinity as InfinityIcon, SlidersHorizontal, Undo2 } from 'lucide-react
 import { toast } from 'sonner';
 import { qk } from '@/lib/query';
 import { platformApi, type WorkspaceDetail } from '@/lib/services/platform-api';
-import { SectionCard } from '@/components/platform/primitives';
+import { btn, SectionCard } from '@/components/platform/primitives';
 import { useGate } from '@/components/platform/PlatformShell';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { AssignPlanPanel, SubscriptionControls } from '@/components/platform/AssignPlanPanel';
@@ -194,7 +194,7 @@ export function OverridesEditor({ detail, organizationId, onChanged }: {
             type="button"
             onClick={() => { setLimits(initialLimits); setFeatures(initialFeatures); setReason(''); }}
             disabled={!dirty}
-            className="inline-flex items-center gap-1 rounded-lg border border-border px-3 py-1.5 text-xs font-medium disabled:opacity-40 hover:bg-muted"
+            className={btn.ghostSm}
           >
             <Undo2 className="h-3.5 w-3.5" aria-hidden /> Reset
           </button>
@@ -202,7 +202,7 @@ export function OverridesEditor({ detail, organizationId, onChanged }: {
             type="button"
             onClick={() => mutation.mutate()}
             disabled={!dirty || reason.trim().length < 3 || mutation.isPending}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50 hover:bg-brand-700"
+            className={btn.primarySm}
           >
             <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
             {mutation.isPending ? 'Saving…' : 'Save arrangement'}

@@ -7,8 +7,7 @@ import { toast } from 'sonner';
 import { qk, useApiQuery, STALE } from '@/lib/query';
 import { platformApi, type PlatformPlan } from '@/lib/services/platform-api';
 import { PageHeader, useGate } from '@/components/platform/PlatformShell';
-import { money, SectionCard } from '@/components/platform/primitives';
-import { Spinner } from '@/components/shared/LoadingSpinner';
+import { btn, CardSkeleton, money, SectionCard } from '@/components/platform/primitives';
 import { ErrorState } from '@/components/shared/ErrorState';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { cn } from '@/components/ui/utils';
@@ -134,7 +133,7 @@ function PlanEditor({ plan, onClose }: { plan: PlatformPlan | null; onClose: () 
             type="button"
             disabled={!/^[a-zA-Z][a-zA-Z0-9]{1,39}$/.test(newLimitKey)}
             onClick={() => { setDraft((d) => ({ ...d, limits: [...d.limits, { key: newLimitKey, value: '0' }] })); setNewLimitKey(''); }}
-            className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium disabled:opacity-40 hover:bg-muted"
+            className={btn.ghostSm}
           >
             <Plus className="h-3.5 w-3.5" aria-hidden /> Add
           </button>
@@ -165,7 +164,7 @@ function PlanEditor({ plan, onClose }: { plan: PlatformPlan | null; onClose: () 
             type="button"
             disabled={!/^[a-zA-Z][a-zA-Z0-9]{1,39}$/.test(newFeatureKey)}
             onClick={() => { setDraft((d) => ({ ...d, features: [...d.features, { key: newFeatureKey, value: true }] })); setNewFeatureKey(''); }}
-            className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium disabled:opacity-40 hover:bg-muted"
+            className={btn.ghostSm}
           >
             <Plus className="h-3.5 w-3.5" aria-hidden /> Add
           </button>
@@ -173,12 +172,12 @@ function PlanEditor({ plan, onClose }: { plan: PlatformPlan | null; onClose: () 
       </div>
 
       <div className="mt-5 flex justify-end gap-2 border-t border-border pt-4">
-        <button type="button" onClick={onClose} className="rounded-lg border border-border px-3.5 py-2 text-xs font-medium hover:bg-muted">Cancel</button>
+        <button type="button" onClick={onClose} className={btn.ghostSm}>Cancel</button>
         <button
           type="button"
           disabled={save.isPending || !draft.name.trim() || (!plan && !/^[a-z0-9_-]{2,40}$/.test(draft.key))}
           onClick={() => save.mutate()}
-          className="rounded-lg bg-brand-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50 hover:bg-brand-700"
+          className={btn.primarySm}
         >
           {save.isPending ? 'Saving…' : plan ? 'Save changes' : 'Create plan'}
         </button>
@@ -205,14 +204,16 @@ export default function PlansPage() {
         title="Plan catalog"
         description="What the pricing page sells and the product enforces."
         actions={isOwner ? (
-          <button type="button" onClick={() => setEditing('new')} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-700">
+          <button type="button" onClick={() => setEditing('new')} className={btn.primary}>
             <Plus className="h-4 w-4" aria-hidden /> New plan
           </button>
         ) : null}
       />
 
       {loading ? (
-        <div className="flex justify-center py-24"><Spinner size="lg" /></div>
+        <div className="grid gap-5 lg:grid-cols-2 xl:grid-cols-3">
+          <CardSkeleton lines={6} /><CardSkeleton lines={6} /><CardSkeleton lines={6} />
+        </div>
       ) : error ? (
         <ErrorState message={error || undefined} onRetry={refetch} variant="page" />
       ) : (

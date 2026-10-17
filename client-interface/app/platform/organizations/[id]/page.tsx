@@ -5,9 +5,8 @@ import Link from 'next/link';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
 import { qk, useApiQuery, STALE } from '@/lib/query';
 import { platformApi } from '@/lib/services/platform-api';
-import { OrgMark, Region, RelativeTime, StatusPill } from '@/components/platform/primitives';
+import { CardSkeleton, OrgMark, Region, RelativeTime, StatusPill } from '@/components/platform/primitives';
 import { OverviewTab, PlanSummary, PeopleTab, ActivityTab } from '@/components/platform/OrgDetailTabs';
-import { Spinner } from '@/components/shared/LoadingSpinner';
 import { ErrorState } from '@/components/shared/ErrorState';
 import { cn } from '@/components/ui/utils';
 import { PlanActions } from '@/components/platform/PlanActions';
@@ -33,7 +32,14 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
     staleTime: STALE.short,
   });
 
-  if (loading) return <div className="flex justify-center py-24"><Spinner size="lg" label="Loading workspace" /></div>;
+  if (loading) {
+    return (
+      <div className="space-y-5">
+        <CardSkeleton lines={2} />
+        <div className="grid gap-5 xl:grid-cols-2"><CardSkeleton lines={5} /><CardSkeleton lines={5} /></div>
+      </div>
+    );
+  }
   if (error || !detail) return <ErrorState message={error || 'Workspace not found'} onRetry={refetch} variant="page" />;
 
   const { organization } = detail;
@@ -68,7 +74,7 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
         </a>
       </div>
 
-      <div className="mb-5 flex gap-1 overflow-x-auto border-b border-border" role="tablist">
+      <div className="mb-5 inline-flex max-w-full gap-1 overflow-x-auto rounded-full border border-border bg-card p-1" role="tablist">
         {TABS.map((item) => (
           <button
             key={item.key}
@@ -77,8 +83,10 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
             aria-selected={tab === item.key}
             onClick={() => setTab(item.key)}
             className={cn(
-              'whitespace-nowrap border-b-2 px-3.5 py-2 text-sm font-medium transition-colors',
-              tab === item.key ? 'border-brand-600 text-brand-600' : 'border-transparent text-muted-foreground hover:text-foreground',
+              'whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40',
+              tab === item.key
+                ? 'bg-brand-600 text-white shadow-sm shadow-brand-200 dark:shadow-none'
+                : 'text-muted-foreground hover:bg-muted hover:text-foreground',
             )}
           >
             {item.label}

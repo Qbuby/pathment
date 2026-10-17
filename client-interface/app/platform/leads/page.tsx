@@ -8,8 +8,7 @@ import { toast } from 'sonner';
 import { qk, useApiQuery, STALE } from '@/lib/query';
 import { platformApi, type BuyerLeadRow, type LeadStatus } from '@/lib/services/platform-api';
 import { PageHeader, useGate } from '@/components/platform/PlatformShell';
-import { Pager, RelativeTime, StatusPill } from '@/components/platform/primitives';
-import { Spinner } from '@/components/shared/LoadingSpinner';
+import { btn, Pager, RelativeTime, StatusPill, TableSkeleton } from '@/components/platform/primitives';
 import { ErrorState } from '@/components/shared/ErrorState';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
@@ -83,7 +82,7 @@ function LeadCard({ lead }: { lead: BuyerLeadRow }) {
             <button
               type="button"
               onClick={() => setNotesOpen((value) => !value)}
-              className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium hover:bg-muted"
+              className={btn.ghostSm}
             >
               <StickyNote className="h-3.5 w-3.5" aria-hidden /> Notes
             </button>
@@ -91,7 +90,7 @@ function LeadCard({ lead }: { lead: BuyerLeadRow }) {
           {canBilling && lead.status !== 'provisioned' ? (
             <Link
               href={provisionHref(lead)}
-              className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-brand-700"
+              className={btn.primarySm}
             >
               <Rocket className="h-3.5 w-3.5" aria-hidden /> Provision
             </Link>
@@ -149,7 +148,7 @@ function LeadCard({ lead }: { lead: BuyerLeadRow }) {
               type="button"
               disabled={update.isPending}
               onClick={() => update.mutate({ notes })}
-              className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50 hover:bg-brand-700"
+              className={btn.primarySm}
             >
               Save notes
             </button>
@@ -199,7 +198,7 @@ export default function LeadsPage() {
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-24"><Spinner size="lg" /></div>
+        <div className="overflow-hidden rounded-3xl border border-border bg-card"><TableSkeleton rows={6} /></div>
       ) : error ? (
         <ErrorState message={error || undefined} onRetry={refetch} variant="page" />
       ) : !data?.leads.length ? (

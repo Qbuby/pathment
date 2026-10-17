@@ -6,8 +6,7 @@ import { toast } from 'sonner';
 import { qk, useApiQuery, STALE } from '@/lib/query';
 import { platformApi } from '@/lib/services/platform-api';
 import { PageHeader, useGate } from '@/components/platform/PlatformShell';
-import { RelativeTime, SectionCard } from '@/components/platform/primitives';
-import { Spinner } from '@/components/shared/LoadingSpinner';
+import { CardSkeleton, RelativeTime, SectionCard } from '@/components/platform/primitives';
 import { ErrorState } from '@/components/shared/ErrorState';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { cn } from '@/components/ui/utils';
@@ -45,7 +44,13 @@ export default function OpsPage() {
     onError: (err) => toast.error(extractApiErrorMessage(err, 'Could not update the job')),
   });
 
-  if (loading) return <div className="flex justify-center py-24"><Spinner size="lg" /></div>;
+  if (loading) {
+    return (
+      <div className="grid gap-5 lg:grid-cols-2">
+        <CardSkeleton lines={5} /><CardSkeleton lines={5} /><CardSkeleton lines={4} /><CardSkeleton lines={4} />
+      </div>
+    );
+  }
   if (error || !data) return <ErrorState message={error || undefined} onRetry={refetch} variant="page" />;
 
   const queueBlock = (title: string, icon: typeof Mail, counts: Record<string, number>) => {

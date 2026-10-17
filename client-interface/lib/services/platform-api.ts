@@ -274,7 +274,9 @@ export const platformApi = {
       apiClient.post<{ data: { id: string; slug: string; status: WorkspaceStatus } }>(`/platform/organizations/${id}/status`, input).then(data),
   },
   plans: {
-    list: () => apiClient.get<{ data: { plans: PlatformPlan[] } }>('/platform/plans').then((r) => r.data.plans),
+    // One shape under one query key: every consumer reads `.plans` off this.
+    // (A second fn returning a bare array under the same key once poisoned the
+    // cache for whichever page loaded second.)
     catalog: () => apiClient.get<{ data: { plans: PlatformPlan[]; subscriberCounts: Record<string, number> } }>('/platform/plans').then(data),
     create: (input: Omit<PlatformPlan, 'id'>) =>
       apiClient.post<{ data: { plan: PlatformPlan } }>('/platform/plans', input).then((r) => r.data.plan),

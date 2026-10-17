@@ -6,9 +6,8 @@ import { ChevronDown, ScrollText, Search } from 'lucide-react';
 import { qk, useApiQuery, STALE } from '@/lib/query';
 import { platformApi, type PlatformAuditEntry } from '@/lib/services/platform-api';
 import { PageHeader } from '@/components/platform/PlatformShell';
-import { Pager, RelativeTime } from '@/components/platform/primitives';
+import { Pager, RelativeTime, TableSkeleton } from '@/components/platform/primitives';
 import { SelectMenu } from '@/components/shared/SelectMenu';
-import { Spinner } from '@/components/shared/LoadingSpinner';
 import { ErrorState } from '@/components/shared/ErrorState';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { useDebounce } from '@/lib/hooks/useDebounce';
@@ -109,7 +108,7 @@ export default function AuditPage() {
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-24"><Spinner size="lg" /></div>
+        <div className="overflow-hidden rounded-3xl border border-border bg-card"><TableSkeleton rows={8} /></div>
       ) : error ? (
         <ErrorState message={error || undefined} onRetry={refetch} variant="page" />
       ) : !data?.entries.length ? (

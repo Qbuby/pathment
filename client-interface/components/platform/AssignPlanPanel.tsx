@@ -6,7 +6,7 @@ import { ArrowRightLeft, CalendarClock, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { qk, useApiQuery, STALE } from '@/lib/query';
 import { platformApi, type SubscriptionStatus, type WorkspaceDetail } from '@/lib/services/platform-api';
-import { money, SectionCard } from '@/components/platform/primitives';
+import { btn, money, SectionCard } from '@/components/platform/primitives';
 import { useGate } from '@/components/platform/PlatformShell';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { cn } from '@/components/ui/utils';
@@ -26,13 +26,16 @@ export function AssignPlanPanel({ detail, organizationId, onChanged }: {
   const queryClient = useQueryClient();
   const subscription = detail.subscription;
 
-  const { data: plans } = useApiQuery({
+  const { data: planCatalog } = useApiQuery({
     queryKey: qk.platform.plans,
-    queryFn: platformApi.plans.list,
+    queryFn: platformApi.plans.catalog,
     staleTime: STALE.long,
     enabled: canBilling,
   });
-  const activePlans = useMemo(() => (plans || []).filter((plan) => plan.active), [plans]);
+  const activePlans = useMemo(
+    () => (planCatalog?.plans || []).filter((plan) => plan.active),
+    [planCatalog],
+  );
 
   const [planKey, setPlanKey] = useState('');
   const [interval, setInterval_] = useState<'monthly' | 'annual'>(subscription?.billingInterval || 'monthly');
@@ -152,7 +155,7 @@ export function AssignPlanPanel({ detail, organizationId, onChanged }: {
           type="button"
           onClick={() => assign.mutate()}
           disabled={!changed || reason.trim().length < 3 || assign.isPending || (Boolean(overLimitWarning) && !acknowledge)}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50 hover:bg-brand-700"
+          className={btn.primarySm}
         >
           <ArrowRightLeft className="h-3.5 w-3.5" aria-hidden />
           {assign.isPending ? 'Assigning…' : selected ? `Move to ${selected.name}` : 'Pick a plan'}
@@ -226,7 +229,7 @@ export function SubscriptionControls({ detail, organizationId, onChanged }: {
           type="button"
           disabled={reason.trim().length < 3 || patch.isPending}
           onClick={() => patch.mutate({ cancelAtPeriodEnd: !subscription.cancelAtPeriodEnd, reason: reason.trim() })}
-          className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-50"
+          className={btn.ghostSm}
         >
           {subscription.cancelAtPeriodEnd ? 'Keep renewing' : 'Cancel at period end'}
         </button>

@@ -13,6 +13,7 @@ import { qk, useApiQuery, STALE } from '@/lib/query';
 import { platformApi, type PlatformMe, type PlatformGate } from '@/lib/services/platform-api';
 import { Spinner } from '@/components/shared/LoadingSpinner';
 import { cn } from '@/components/ui/utils';
+import { btn } from '@/components/platform/primitives';
 
 /**
  * The operator console shell, in the product's own visual language (the same
@@ -84,7 +85,7 @@ function NotFoundPanel() {
         <p className="text-6xl font-semibold tracking-tight text-muted-foreground/40">404</p>
         <h1 className="mt-4 text-lg font-semibold">This page could not be found</h1>
         <p className="mt-1 text-sm text-muted-foreground">Check the address, or head back to your workspace.</p>
-        <Link href="/" className="mt-6 inline-block rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">
+        <Link href="/" className={cn(btn.primary, 'mt-6')}>
           Go home
         </Link>
       </div>

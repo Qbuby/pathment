@@ -3,7 +3,67 @@
 import { Component, type ReactNode } from 'react';
 import { formatDistanceToNow, format } from 'date-fns';
 import { cn } from '@/components/ui/utils';
+import { Skeleton } from '@/components/ui/skeleton';
 
+/**
+ * The console's button recipes. One vocabulary instead of fourteen hand-rolled
+ * variants: same radius, same focus ring, same disabled treatment everywhere.
+ */
+export const btn = {
+  primary: 'inline-flex items-center justify-center gap-1.5 rounded-lg bg-brand-600 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/50 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+  primarySm: 'inline-flex items-center justify-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/50 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+  ghost: 'inline-flex items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-3.5 py-2 text-sm font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 disabled:cursor-not-allowed disabled:opacity-40',
+  ghostSm: 'inline-flex items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 disabled:cursor-not-allowed disabled:opacity-40',
+  dangerSm: 'inline-flex items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 transition-colors hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20',
+} as const;
+
+/** Skeleton rows shaped like the console's tables; shimmer instead of a spinner. */
+export function TableSkeleton({ rows = 6 }: { rows?: number }) {
+  return (
+    <div className="divide-y divide-border" aria-busy="true" aria-label="Loading">
+      {Array.from({ length: rows }).map((_, index) => (
+        <div key={index} className="flex items-center gap-4 px-5 py-4">
+          <Skeleton className="h-9 w-9 shrink-0 rounded-lg" />
+          <div className="flex-1 space-y-2">
+            <Skeleton className="h-3 w-1/3 max-w-[14rem]" />
+            <Skeleton className="h-2.5 w-1/5 max-w-[8rem]" />
+          </div>
+          <Skeleton className="hidden h-3 w-24 md:block" />
+          <Skeleton className="hidden h-3 w-16 lg:block" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Skeleton for the stat-tile row on dashboards. */
+export function TileSkeleton({ count = 4 }: { count?: number }) {
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-busy="true" aria-label="Loading">
+      {Array.from({ length: count }).map((_, index) => (
+        <div key={index} className="rounded-3xl border border-border bg-card p-6">
+          <Skeleton className="h-3 w-24" />
+          <Skeleton className="mt-3 h-7 w-16" />
+          <Skeleton className="mt-2 h-2.5 w-32" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Skeleton for a SectionCard body. */
+export function CardSkeleton({ lines = 4 }: { lines?: number }) {
+  return (
+    <div className="rounded-3xl border border-border bg-card p-6" aria-busy="true" aria-label="Loading">
+      <Skeleton className="h-4 w-40" />
+      <div className="mt-4 space-y-3">
+        {Array.from({ length: lines }).map((_, index) => (
+          <Skeleton key={index} className="h-3" style={{ width: `${85 - index * 12}%` }} />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 
 /**
@@ -164,20 +224,10 @@ export function Pager({ page, pages, onPage }: { page: number; pages: number; on
     <div className="flex items-center justify-between gap-3 border-t border-border px-5 py-3 text-xs">
       <span className="text-muted-foreground tabular-nums">Page {page} of {pages}</span>
       <div className="flex gap-2">
-        <button
-          type="button"
-          disabled={page <= 1}
-          onClick={() => onPage(page - 1)}
-          className="rounded-lg border border-border px-3 py-1.5 font-medium disabled:opacity-40 hover:bg-muted"
-        >
+        <button type="button" disabled={page <= 1} onClick={() => onPage(page - 1)} className={btn.ghostSm}>
           Previous
         </button>
-        <button
-          type="button"
-          disabled={page >= pages}
-          onClick={() => onPage(page + 1)}
-          className="rounded-lg border border-border px-3 py-1.5 font-medium disabled:opacity-40 hover:bg-muted"
-        >
+        <button type="button" disabled={page >= pages} onClick={() => onPage(page + 1)} className={btn.ghostSm}>
           Next
         </button>
       </div>

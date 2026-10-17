@@ -8,8 +8,7 @@ import { qk, useApiQuery, STALE } from '@/lib/query';
 import { platformApi, type WorkspaceDetail } from '@/lib/services/platform-api';
 import { useGate } from '@/components/platform/PlatformShell';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
-import { KV, Pager, RelativeTime, SectionCard, StatusPill, UsageMeter, money } from '@/components/platform/primitives';
-import { Spinner } from '@/components/shared/LoadingSpinner';
+import { btn, KV, money, Pager, RelativeTime, SectionCard, StatusPill, TableSkeleton, UsageMeter } from '@/components/platform/primitives';
 import { useDebounce } from '@/lib/hooks/useDebounce';
 import { isEnforcedLimit, isShippedFeature, NOT_ENFORCED_HINT } from '@/lib/config/platform-entitlements';
 
@@ -141,7 +140,7 @@ function OwnerActivationCard({ organizationId, ownerInvite }: {
             type="button"
             onClick={() => resend.mutate()}
             disabled={resend.isPending}
-            className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 hover:bg-brand-700"
+            className={btn.primarySm}
           >
             {resend.isPending ? 'Sending…' : 'Resend link'}
           </button>
@@ -150,7 +149,7 @@ function OwnerActivationCard({ organizationId, ownerInvite }: {
               type="button"
               onClick={() => revoke.mutate()}
               disabled={revoke.isPending}
-              className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-50"
+              className={btn.ghostSm}
             >
               Revoke link
             </button>
@@ -266,7 +265,7 @@ export function PeopleTab({ organizationId }: { organizationId: string }) {
           className="w-full max-w-xs rounded-lg border border-border bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-brand-500/40"
         />
       </div>
-      {loading ? <div className="flex justify-center py-16"><Spinner /></div> : (
+      {loading ? <TableSkeleton rows={6} /> : (
         <>
           <div className="overflow-x-auto">
             <table className="admin-table">
@@ -316,7 +315,7 @@ export function ActivityTab({ organizationId }: { organizationId: string }) {
     staleTime: STALE.short,
   });
 
-  if (loading) return <div className="flex justify-center py-16"><Spinner /></div>;
+  if (loading) return <div className="overflow-hidden rounded-3xl border border-border bg-card"><TableSkeleton rows={6} /></div>;
   return (
     <div className="overflow-hidden rounded-3xl border border-border bg-card">
       <ul className="divide-y divide-border">

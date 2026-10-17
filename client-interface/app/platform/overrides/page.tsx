@@ -5,8 +5,7 @@ import { SlidersHorizontal } from 'lucide-react';
 import { qk, useApiQuery, STALE } from '@/lib/query';
 import { platformApi } from '@/lib/services/platform-api';
 import { PageHeader } from '@/components/platform/PlatformShell';
-import { StatusPill } from '@/components/platform/primitives';
-import { Spinner } from '@/components/shared/LoadingSpinner';
+import { StatusPill, TableSkeleton } from '@/components/platform/primitives';
 import { ErrorState } from '@/components/shared/ErrorState';
 import { EmptyState } from '@/components/shared/EmptyState';
 
@@ -30,7 +29,7 @@ export default function OverridesReportPage() {
     <div>
       <PageHeader title="Custom arrangements" description="Workspaces whose enforced limits or features differ from their plan." />
       {loading ? (
-        <div className="flex justify-center py-24"><Spinner size="lg" /></div>
+        <div className="overflow-hidden rounded-3xl border border-border bg-card"><TableSkeleton rows={5} /></div>
       ) : error ? (
         <ErrorState message={error || undefined} onRetry={refetch} variant="page" />
       ) : !data?.length ? (

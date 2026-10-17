@@ -7,7 +7,7 @@ import Link from 'next/link';
 import { qk, useApiQuery, STALE } from '@/lib/query';
 import { platformApi, type DirectoryRow } from '@/lib/services/platform-api';
 import { PageHeader, useGate } from '@/components/platform/PlatformShell';
-import { OrgMark, Pager, RelativeTime, StatusPill, UsageMeter } from '@/components/platform/primitives';
+import { btn, OrgMark, Pager, RelativeTime, StatusPill, TableSkeleton, UsageMeter } from '@/components/platform/primitives';
 import { SelectMenu } from '@/components/shared/SelectMenu';
 import { Spinner } from '@/components/shared/LoadingSpinner';
 import { ErrorState } from '@/components/shared/ErrorState';
@@ -74,7 +74,7 @@ export default function WorkspacesDirectoryPage() {
         title="Workspaces"
         description="Every organization on the platform — plan, usage and health."
         actions={canProvision ? (
-          <Link href="/platform/provision" className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-700">
+          <Link href="/platform/provision" className={btn.primary}>
             <Rocket className="h-4 w-4" aria-hidden /> Provision workspace
           </Link>
         ) : null}
@@ -106,7 +106,7 @@ export default function WorkspacesDirectoryPage() {
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-24"><Spinner size="lg" label="Loading workspaces" /></div>
+        <div className="overflow-hidden rounded-3xl border border-border bg-card"><TableSkeleton rows={8} /></div>
       ) : error ? (
         <ErrorState message={error || undefined} onRetry={refetch} variant="page" />
       ) : !data?.organizations.length ? (

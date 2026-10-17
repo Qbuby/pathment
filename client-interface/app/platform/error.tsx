@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import Link from 'next/link';
 import { RotateCcw, TriangleAlert } from 'lucide-react';
+import { btn } from '@/components/platform/primitives';
 
 /**
  * Console-local error boundary. The console is an internal operator surface,
@@ -32,11 +33,11 @@ export default function PlatformError({ error, reset }: { error: Error & { diges
               <button
                 type="button"
                 onClick={reset}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
+                className={btn.primary}
               >
                 <RotateCcw className="h-4 w-4" aria-hidden /> Try again
               </button>
-              <Link href="/platform" className="inline-flex items-center rounded-xl border border-border px-4 py-2 text-sm font-medium hover:bg-muted">
+              <Link href="/platform" className={btn.ghost}>
                 Console overview
               </Link>
             </div>

@@ -8,7 +8,7 @@ import { Check, ChevronLeft, ChevronRight, CircleCheck, CircleX, Loader2, MailCh
 import { qk, useApiQuery, STALE, useInvalidate } from '@/lib/query';
 import { platformApi, type PlatformPlan, type ProvisionInput, type ProvisionResult } from '@/lib/services/platform-api';
 import { PageHeader, useGate } from '@/components/platform/PlatformShell';
-import { money, SectionCard } from '@/components/platform/primitives';
+import { btn, money, SectionCard } from '@/components/platform/primitives';
 import { useDebounce } from '@/lib/hooks/useDebounce';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { cn } from '@/components/ui/utils';
@@ -66,12 +66,15 @@ function ProvisionWizard() {
   });
   const [result, setResult] = useState<ProvisionResult | null>(null);
 
-  const { data: plans } = useApiQuery({
+  const { data: planCatalog } = useApiQuery({
     queryKey: qk.platform.plans,
-    queryFn: platformApi.plans.list,
+    queryFn: platformApi.plans.catalog,
     staleTime: STALE.long,
   });
-  const activePlans = useMemo(() => (plans || []).filter((plan) => plan.active), [plans]);
+  const activePlans = useMemo(
+    () => (planCatalog?.plans || []).filter((plan) => plan.active),
+    [planCatalog],
+  );
 
   // Derived, not synced: the first active plan is the default until a pick is made.
   const planKey = form.planKey || activePlans[0]?.key || '';
@@ -124,13 +127,13 @@ function ProvisionWizard() {
               : <>{result.owner.email} already had a Pathment account, so it was attached as owner and notified. They sign in with their existing credentials.</>}
           </p>
           <div className="mt-6 flex flex-wrap justify-center gap-2">
-            <Link href={`/platform/organizations/${result.organization.id}`} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">
+            <Link href={`/platform/organizations/${result.organization.id}`} className={btn.primary}>
               Open workspace record
             </Link>
             <button
               type="button"
               onClick={() => { setResult(null); setStep(0); setForm((current) => ({ ...current, name: '', slug: '', owner: { email: '', firstName: '', lastName: '' }, reason: '', leadId: undefined })); }}
-              className="rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
+              className={btn.ghost}
             >
               Provision another
             </button>
@@ -309,7 +312,7 @@ function ProvisionWizard() {
             type="button"
             onClick={() => setStep((current) => Math.max(0, current - 1))}
             disabled={step === 0 || mutation.isPending}
-            className="inline-flex items-center gap-1 rounded-lg border border-border px-3 py-2 text-sm font-medium disabled:opacity-40 hover:bg-muted"
+            className={btn.ghost}
           >
             <ChevronLeft className="h-4 w-4" aria-hidden /> Back
           </button>
@@ -318,7 +321,7 @@ function ProvisionWizard() {
               type="button"
               onClick={() => setStep((current) => current + 1)}
               disabled={!stepValid}
-              className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-40 hover:bg-brand-700"
+              className={btn.primary}
             >
               Continue <ChevronRight className="h-4 w-4" aria-hidden />
             </button>
@@ -327,7 +330,7 @@ function ProvisionWizard() {
               type="button"
               onClick={() => mutation.mutate({ ...form, planKey, reason: form.reason || undefined, leadId: form.leadId || undefined })}
               disabled={mutation.isPending}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60 hover:bg-brand-700"
+              className={btn.primary}
             >
               {mutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Rocket className="h-4 w-4" aria-hidden />}
               {mutation.isPending ? 'Provisioning…' : 'Provision workspace'}
