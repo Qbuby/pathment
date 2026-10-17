@@ -141,11 +141,6 @@ export const adminWorkspaces: { label: string; tabs: AdminWorkspaceTab[] }[] = [
         permission: "analytics.view",
       },
       {
-        href: "/admin/review-records",
-        label: "Review records",
-        permission: "analytics.view",
-      },
-      {
         href: "/admin/activity",
         label: "Activity",
         permission: "analytics.view",
