@@ -163,6 +163,9 @@ router.use('/access', accessRoutes);
 // AI connections - admin BYO provider keys + feature routing
 router.use('/ai-connections', aiConnectionRoutes);
 
+// Platform console - operator surface spanning every workspace
+router.use('/platform', require('./platform'));
+
 // External apps - platform catalog + per-workspace connections
 router.use('/apps', require('./externalApps'));
 
