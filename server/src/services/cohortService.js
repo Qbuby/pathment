@@ -480,7 +480,10 @@ class CohortService {
       models.User.findByPk(menteeId, {
         attributes: ['id', 'firstName', 'lastName', 'email', 'profilePictureUrl'],
         include: [
-          { model: models.MenteeProfile, as: 'menteeProfile', attributes: ['lastActivityDate', 'currentOccupation', 'personality'] },
+          // The streak comes with the profile because showing up is the one
+          // progress signal a standing clan HAS — it has no enrollment, so no
+          // week number, no programme length and no overall percentage.
+          { model: models.MenteeProfile, as: 'menteeProfile', attributes: ['lastActivityDate', 'currentOccupation', 'personality', 'currentStreakDays', 'longestStreakDays'] },
           {
             model: models.Enrollment,
             as: 'enrollments',
@@ -637,6 +640,41 @@ class CohortService {
       // to the profile the review page already loads rather than a second
       // request, so walking 20 mentees does not become 20 extra round trips.
       taskProgress,
+      /**
+       * Showing up, counted from the daily log itself.
+       *
+       * The mentee's own progress page had nothing true to say to somebody in
+       * a standing clan: week, programme length and overall percentage all
+       * come off an enrollment, and a standing clan has none, so a mentee
+       * three days into a streak with five tasks in flight was shown four
+       * zeroes and "Not started". The log is the thing that actually measures
+       * them, and it was the one thing the page never read.
+       *
+       * `loggedLast7` counts DAYS, not rows: one row per mentee per day is
+       * the table's unique key, but the window is what makes the number mean
+       * "five of the last seven".
+       */
+      consistency: (() => {
+        const today = new Date();
+        const keyOf = (offset) => {
+          const d = new Date(today);
+          d.setUTCDate(d.getUTCDate() - offset);
+          return d.toISOString().split('T')[0];
+        };
+        const last7 = new Set(Array.from({ length: 7 }, (_, i) => keyOf(i)));
+        const keys = new Set(dailyLogs.map((l) => l.dateKey));
+        return {
+          currentStreakDays: Number(mentee.menteeProfile?.currentStreakDays || 0),
+          longestStreakDays: Number(mentee.menteeProfile?.longestStreakDays || 0),
+          loggedLast7: [...keys].filter((k) => last7.has(k)).length,
+          lastLoggedOn: dailyLogs.length ? dailyLogs[0].dateKey : null,
+          // In flight right now, which is what a standing-clan mentee is doing
+          // even when nothing is finished and the percentage reads zero.
+          inFlight: allTasks.filter((t) => ['assigned', 'in_progress', 'revision_needed'].includes(t.status)).length,
+          taskCount: allTasks.length,
+          completedCount: completed,
+        };
+      })(),
       dailyLogs: dailyLogs.map((l) => ({
         dateKey: l.dateKey,
         tasksDone: (l.tasksDone || []).length,
