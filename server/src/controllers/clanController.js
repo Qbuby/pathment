@@ -26,6 +26,39 @@ const clanFollowUps = catchAsync(async (req, res) => {
   res.status(200).json(successResponse('Follow-ups retrieved', data));
 });
 
+/**
+ * POST /api/clans/follow-ups/nudge  (admin)
+ *
+ * Nudge everybody the follow-up filters currently match.
+ *
+ * The queue existed to tell an admin who needed chasing and then gave them no
+ * way to chase anyone — the whole page was a table and a paginator. The
+ * filters are re-run on the server rather than trusting a list of ids from
+ * the browser, so "nudge everyone showing" cannot be turned into "message
+ * anyone", and the admin's programme scope still applies.
+ */
+const nudgeFollowUps = catchAsync(async (req, res) => {
+  const { risk, clanId, search, message } = req.body || {};
+  const programScope = await authzService.adminProgramScope(req.user);
+  const { ids, total, capped } = await clanHealthService.followUpRecipients(
+    { risk, clanId, search }, programScope,
+  );
+  if (!ids.length) throw new ValidationError('Nobody matches these filters right now');
+
+  const cohortService = require('../services/cohortService');
+  // One failure must not swallow the rest: a mentee in a frozen clan is a
+  // legitimate skip, not a reason to abandon the other twenty-nine.
+  const results = await Promise.allSettled(
+    ids.map((menteeId) => cohortService.sendNudge(req.user.id, menteeId, message, clanId || null)),
+  );
+  const sent = results.filter((r) => r.status === 'fulfilled').length;
+
+  res.status(200).json(successResponse(
+    sent === 1 ? 'Nudge sent to 1 mentee' : `Nudge sent to ${sent} mentees`,
+    { sent, skipped: ids.length - sent, matched: total, capped },
+  ));
+});
+
 const clanInsights = catchAsync(async (req, res) => {
   const insights = await clanHealthService.orgInsights(await authzService.adminProgramScope(req.user));
   res.status(200).json(successResponse('Clan insights retrieved', insights));
@@ -505,6 +538,7 @@ const continueWork = catchAsync(async (req, res) => {
 });
 
 module.exports = {
+  nudgeFollowUps,
   getStandingPriorRecord,
   getUnfinishedPriorWork,
   carryForwardWork,

@@ -306,6 +306,32 @@ class ClanHealthService {
   }
 
   /**
+   * Everybody the current follow-up filters match, not just the page on screen.
+   *
+   * The follow-ups queue was a table an admin could read and nothing else:
+   * it named thirty people who needed chasing and offered no way to chase
+   * one, let alone all of them. A bulk nudge has to act on the QUERY rather
+   * than on a list of ids posted by the browser — otherwise the client
+   * decides who gets messaged, and "nudge everyone" becomes "message anyone".
+   *
+   * Capped, because a nudge is a notification per person and an accidental
+   * org-wide send is not undoable.
+   */
+  async followUpRecipients(filters = {}, programIds = null, { cap = 200 } = {}) {
+    const { total, rows } = await this.followUps(
+      { ...filters, page: 1, limit: 50 }, programIds,
+    );
+    // followUps paginates at 50; walk the pages rather than widening its limit.
+    const ids = rows.map((r) => r.id);
+    const pages = Math.ceil(Math.min(total, cap) / 50);
+    for (let page = 2; page <= pages; page += 1) {
+      const next = await this.followUps({ ...filters, page, limit: 50 }, programIds);
+      ids.push(...next.rows.map((r) => r.id));
+    }
+    return { ids: [...new Set(ids)].slice(0, cap), total, capped: total > cap };
+  }
+
+  /**
    * Org Insights payload (admin /admin/insights): a worst-first CLAN comparison
    * plus the fairness lens - org absolute vs relative progress and a per-mentee
    * distribution. "Extensions" = accepted DelayEvents (friction the org granted).

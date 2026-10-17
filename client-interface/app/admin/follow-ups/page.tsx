@@ -3,8 +3,11 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { Loader2, BellRing } from "lucide-react";
+import { toast } from "sonner";
 import { apiClient } from "@/lib/services/api-client";
+import { Drawer } from "@/components/shared/Drawer";
+import { extractApiErrorMessage } from "@/lib/utils/api-error";
 import { useClanHealth } from "@/lib/hooks/admin/useClanHealth";
 import { useDebounce } from "@/lib/hooks/shared/useDebounce";
 import { usePermissions } from "@/lib/hooks/usePermissions";
@@ -43,6 +46,15 @@ function FollowUps() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
+  /**
+   * The page named thirty people who needed chasing and offered no way to
+   * chase one of them — it was a table and a paginator. Nudging is the action
+   * the queue exists for, so it belongs on the queue.
+   */
+  const [nudging, setNudging] = useState(false);
+  const [note, setNote] = useState("");
+  const [sending, setSending] = useState(false);
+  const canNudge = can("mentee.manage");
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -77,6 +89,24 @@ function FollowUps() {
         title="Mentee follow-ups"
         subtitle="A focused queue for coordinating support with clan mentors. High priority first, then lowest completion. Snapshots are cached for 30 seconds; refresh to check for updates."
       />
+      {canNudge && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-brand-200 bg-brand-50/50 px-4 py-3 dark:border-brand-500/20 dark:bg-brand-500/5">
+          <p className="text-sm text-muted-foreground">
+            {data?.total
+              ? <>Nudge the <strong className="text-foreground">{data.total.toLocaleString()}</strong> {data.total === 1 ? "mentee" : "mentees"} matching these filters — not just this page.</>
+              : "Nobody matches these filters right now."}
+          </p>
+          <button
+            type="button"
+            disabled={!data?.total}
+            onClick={() => { setNote(""); setNudging(true); }}
+            className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-40"
+          >
+            <BellRing className="h-4 w-4" aria-hidden />
+            Nudge {data?.total ? data.total.toLocaleString() : "all"}
+          </button>
+        </div>
+      )}
       <div className="flex flex-wrap gap-3 rounded-2xl border bg-card p-4">
         <input
           aria-label="Search follow-ups"
@@ -239,6 +269,82 @@ function FollowUps() {
           </div>
         </div>
       )}
+
+      {/*
+          A confirmation with the count in it, because this is a notification
+          per person and there is no unsend. The message is optional: the
+          server writes a sensible default rather than sending an empty one.
+      */}
+      <Drawer
+        open={nudging}
+        onClose={() => setNudging(false)}
+        title="Nudge these mentees"
+        subtitle={data?.total
+          ? `${data.total.toLocaleString()} ${data.total === 1 ? "person" : "people"} match the filters on this page`
+          : undefined}
+        footer={
+          <div className="flex w-full items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setNudging(false)}
+              className="rounded-lg border px-4 py-2 text-sm font-medium"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={sending}
+              onClick={async () => {
+                setSending(true);
+                try {
+                  const res = await apiClient.post<{ message: string; data: { sent: number; skipped: number; capped: boolean } }>(
+                    "/clans/follow-ups/nudge",
+                    { risk: risk || undefined, clanId: clanId || undefined, search: query || undefined, message: note.trim() || undefined },
+                  );
+                  const { sent, skipped, capped } = res.data;
+                  toast.success(
+                    `Nudged ${sent} ${sent === 1 ? "mentee" : "mentees"}`,
+                    { description: [
+                      skipped ? `${skipped} skipped (closed or frozen clans)` : null,
+                      capped ? "Capped at 200 — narrow the filters and run it again for the rest" : null,
+                    ].filter(Boolean).join(" · ") || undefined },
+                  );
+                  setNudging(false);
+                } catch (e) {
+                  toast.error(extractApiErrorMessage(e, "Could not send the nudges"));
+                } finally {
+                  setSending(false);
+                }
+              }}
+              className="inline-flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+            >
+              {sending && <Loader2 className="h-4 w-4 animate-spin" />}
+              Send {data?.total ? data.total.toLocaleString() : ""} {data?.total === 1 ? "nudge" : "nudges"}
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Each person gets one in-app notification. It goes to everyone the current filters match,
+            not only the page you can see, and mentees in a closed or frozen clan are skipped.
+          </p>
+          <div>
+            <label htmlFor="nudge-note" className="mb-1.5 block text-sm font-medium">
+              Message <span className="font-normal text-muted-foreground">(optional)</span>
+            </label>
+            <textarea
+              id="nudge-note"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={4}
+              maxLength={500}
+              placeholder="Leave this empty and each person gets a friendly check-in in their own name."
+              className="w-full rounded-xl border bg-card px-3.5 py-2.5 text-sm"
+            />
+          </div>
+        </div>
+      </Drawer>
     </div>
   );
 }

@@ -21,6 +21,10 @@ router.get('/', authenticate, validateQuery(clanSchemas.listQuery), clanControll
 
 // Org-wide clan-health snapshot + insights (analytics consumers).
 router.get('/follow-ups', authenticate, requirePermissionMinScope(PERMISSIONS.ANALYTICS_VIEW), validateQuery(clanSchemas.followUpQuery), clanController.clanFollowUps);
+// Reading the queue is an analytics permission; messaging the people in it is
+// not — sending to thirty mentees at once needs the permission that edits
+// mentee records, not the one that views a chart.
+router.post('/follow-ups/nudge', authenticate, requirePermissionMinScope(PERMISSIONS.MENTEE_MANAGE), clanController.nudgeFollowUps);
 router.get('/health', authenticate, requirePermissionMinScope(PERMISSIONS.ANALYTICS_VIEW), clanController.clanHealth);
 router.get('/insights', authenticate, requirePermissionMinScope(PERMISSIONS.ANALYTICS_VIEW), clanController.clanInsights);
 
