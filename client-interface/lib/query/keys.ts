@@ -176,4 +176,26 @@ export const qk = {
     states: (country: string) => ['geo', 'states', country] as const,
     cities: (country: string, state: string, q: string) => ['geo', 'cities', country, state, q] as const,
   },
+
+  // Platform console (operator surface) - all cross-workspace.
+  platform: {
+    all: ['platform'] as const,
+    me: ['platform', 'me'] as const,
+    metrics: ['platform', 'metrics'] as const,
+    admins: (includeRevoked: boolean) => ['platform', 'admins', includeRevoked] as const,
+    audit: (params: Record<string, unknown>) => ['platform', 'audit', params] as const,
+    auditActions: ['platform', 'audit-actions'] as const,
+    organizations: (params: Record<string, unknown>) => ['platform', 'organizations', params] as const,
+    organization: (id: string) => ['platform', 'organization', id] as const,
+    organizationMembers: (id: string, params: Record<string, unknown>) => ['platform', 'organization', id, 'members', params] as const,
+    organizationAudit: (id: string, page: number) => ['platform', 'organization', id, 'audit', page] as const,
+    plans: ['platform', 'plans'] as const,
+    billingRequests: ['platform', 'billing-requests'] as const,
+    overridesReport: ['platform', 'overrides-report'] as const,
+    leads: (params: Record<string, unknown>) => ['platform', 'leads', params] as const,
+    users: (q: string) => ['platform', 'users', q] as const,
+    user: (id: string) => ['platform', 'user', id] as const,
+    ops: ['platform', 'ops'] as const,
+    slugCheck: (slug: string) => ['platform', 'slug-check', slug] as const,
+  },
 } as const;

@@ -91,4 +91,4 @@ async function activateRequestedPlan({ workspace, planKey, invoiceReference, ope
   });
 }
 
-module.exports = { activateRequestedPlan };
+module.exports = { activateRequestedPlan, withoutRedundant };

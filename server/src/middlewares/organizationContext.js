@@ -30,6 +30,10 @@ const ACCOUNT_PATHS = new Set([
 
 /** Resolve workspace before authentication; authentication validates membership. */
 module.exports = catchAsync(async (req, _res, next) => {
+  // The platform console spans every workspace, so resolving one here would
+  // silently scope operator queries to the default tenant. Platform handlers
+  // enter a target workspace's context deliberately when they need one.
+  if (req.path.startsWith('/api/platform')) return next();
   // Public catalog and health checks do not require a selected workspace.
   if (['/api/organizations/plans', '/api/health', '/'].includes(req.path)) return next();
   const header = req.headers['x-pathment-workspace'];

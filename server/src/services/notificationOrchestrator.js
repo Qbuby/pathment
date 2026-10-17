@@ -395,6 +395,61 @@ class NotificationOrchestrator {
     });
   }
 
+  /**
+   * Operator-provisioned workspace: the single-use link that lets the new
+   * owner set their own password. Nothing secret travels in this email except
+   * the one-time token itself - no password exists until the owner chooses
+   * one. Transactional and never suppressed.
+   */
+  async sendWorkspaceOwnerActivationEmail(user, organization, activationToken) {
+    const url = `${clientUrl()}/activate?token=${encodeURIComponent(activationToken)}`;
+    const heading = `Your ${organization.name} workspace is ready`;
+
+    return emailService.sendEmail({
+      to: user.email,
+      emailType: 'workspace_owner_activation',
+      subject: `Activate your ${organization.name} workspace on Pathment`,
+      text: plainText({
+        heading,
+        bodyText: `Hi ${user.firstName || 'there'}, a Pathment workspace named "${organization.name}" has been set up for you. Open the link below to choose your password and sign in as its owner. The link works once and expires in 72 hours.`,
+        cta: { label: 'Activate workspace', url },
+      }),
+      html: renderEmail({
+        heading,
+        bodyHtml: `<p style="margin:0 0 14px;">Hi ${escHtml(user.firstName || 'there')}, a Pathment workspace named <strong>${escHtml(organization.name)}</strong> has been set up for you.</p><p style="margin:0 0 14px;">Choose your password below and you are in as its owner.</p>`,
+        cta: { label: 'Activate workspace', url },
+        preheader: `Choose your password to open ${organization.name}`,
+        footerNote: "This link works once and expires in 72 hours. Didn't expect it? Ignore this email and nothing happens.",
+      }),
+    });
+  }
+
+  /**
+   * Operator provisioned a workspace onto an EXISTING Pathment account: no
+   * activation needed, just tell the owner where their new workspace lives.
+   */
+  async sendWorkspaceReadyEmail(user, organization) {
+    const url = `${clientUrl()}/w/${organization.slug}/login`;
+    const heading = `${organization.name} is ready`;
+
+    return emailService.sendEmail({
+      to: user.email,
+      emailType: 'workspace_ready',
+      subject: `Your new Pathment workspace: ${organization.name}`,
+      text: plainText({
+        heading,
+        bodyText: `Hi ${user.firstName || 'there'}, the workspace "${organization.name}" has been created and your existing Pathment account is its owner. Sign in with your usual credentials.`,
+        cta: { label: 'Open workspace', url },
+      }),
+      html: renderEmail({
+        heading,
+        bodyHtml: `<p style="margin:0 0 14px;">Hi ${escHtml(user.firstName || 'there')}, the workspace <strong>${escHtml(organization.name)}</strong> has been created and your existing Pathment account is its owner.</p><p style="margin:0 0 14px;">Sign in with your usual credentials.</p>`,
+        cta: { label: 'Open workspace', url },
+        preheader: `Your account now owns ${organization.name}`,
+      }),
+    });
+  }
+
   async sendEmailVerificationEmail(user, verificationToken, workspaceSlug) {
     const verifyUrl = verifyLink(verificationToken, workspaceSlug);
 
