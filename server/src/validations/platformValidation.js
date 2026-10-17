@@ -36,6 +36,10 @@ const platformSchemas = {
     limit: Joi.number().integer().min(1).max(100).default(25),
   }),
 
+  featureUsageQuery: Joi.object({
+    days: Joi.number().integer().min(1).max(365).default(30),
+  }),
+
   membersQuery: Joi.object({
     search: Joi.string().trim().max(160).allow(''),
     page: Joi.number().integer().min(1).default(1),

@@ -11,12 +11,14 @@ import { ErrorState } from '@/components/shared/ErrorState';
 import { cn } from '@/components/ui/utils';
 import { PlanActions } from '@/components/platform/PlanActions';
 import { LifecycleTab } from '@/components/platform/LifecycleTab';
+import { FeatureUsageTab } from '@/components/platform/FeatureUsageTab';
 
 const TABS = [
   { key: 'overview', label: 'Overview' },
   { key: 'plan', label: 'Plan & billing' },
   { key: 'people', label: 'People' },
   { key: 'activity', label: 'Activity' },
+  { key: 'usage', label: 'Feature usage' },
   { key: 'danger', label: 'Lifecycle' },
 ] as const;
 
@@ -103,6 +105,7 @@ export default function WorkspaceDetailPage({ params }: { params: Promise<{ id: 
       ) : null}
       {tab === 'people' ? <Region label="people"><PeopleTab organizationId={id} /></Region> : null}
       {tab === 'activity' ? <Region label="activity"><ActivityTab organizationId={id} /></Region> : null}
+      {tab === 'usage' ? <Region label="feature usage"><FeatureUsageTab organizationId={id} /></Region> : null}
       {tab === 'danger' ? <Region label="lifecycle"><LifecycleTab detail={detail} organizationId={id} onChanged={refetch} /></Region> : null}
     </div>
   );

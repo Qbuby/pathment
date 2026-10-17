@@ -389,6 +389,29 @@ describe('platform console', () => {
     });
   });
 
+  describe('feature usage', () => {
+    it('moved to the console: operator reads it per workspace, the old tenant route is gone', async () => {
+      const response = await request(app).post('/api/platform/organizations').set(authed(tokens.operator)).send({
+        name: 'Usage Org', slug: `usage-${Date.now()}`, timezone: 'UTC', planKey: 'starter',
+        owner: { email: `usage-owner-${Date.now()}@test.com`, firstName: 'Use', lastName: 'Age' },
+      });
+      const organizationId = response.body.data.organization.id;
+
+      const report = await request(app)
+        .get(`/api/platform/organizations/${organizationId}/feature-usage?days=30`)
+        .set(authed(tokens.readonly));
+      expect(report.status).toBe(200);
+      expect(report.body.data).toMatchObject({ days: 30, pages: [], coversFullWindow: false });
+      expect(report.body.data).toHaveProperty('activeByRole');
+      expect(report.body.data).toHaveProperty('eligibleByRole');
+
+      const tenant = await request(app)
+        .get('/api/activity/admin/feature-usage?days=30')
+        .set(authed(tokens.tenant));
+      expect(tenant.status).toBe(404);
+    });
+  });
+
   describe('app catalog', () => {
     it('owner runs full CRUD with audit; readonly can list but not write', async () => {
       const name = `Buildment-${Date.now()}`;

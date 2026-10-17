@@ -120,7 +120,6 @@ export const qk = {
     mentors: ['admin', 'mentors'] as const,
     mentees: ['admin', 'mentees'] as const,
     activity: (days: number) => ['admin', 'activity', days] as const,
-    featureUsage: (days: number) => ['admin', 'feature-usage', days] as const,
     storage: ['admin', 'storage'] as const,
     moderation: (status: string) => ['admin', 'moderation', status] as const,
     clanRequests: ['admin', 'clan-requests'] as const,
@@ -197,6 +196,7 @@ export const qk = {
     user: (id: string) => ['platform', 'user', id] as const,
     ops: ['platform', 'ops'] as const,
     apps: ['platform', 'apps'] as const,
+    featureUsage: (id: string, days: number) => ['platform', 'organization', id, 'feature-usage', days] as const,
     slugCheck: (slug: string) => ['platform', 'slug-check', slug] as const,
   },
 } as const;

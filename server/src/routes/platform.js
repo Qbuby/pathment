@@ -32,6 +32,7 @@ router.get('/organizations', authenticate, requirePlatform('read'), validateQuer
 router.get('/organizations/:id', authenticate, requirePlatform('read'), validateParams(s.idParam), organizations.detail);
 router.get('/organizations/:id/members', authenticate, requirePlatform('read'), validateParams(s.idParam), validateQuery(s.membersQuery), organizations.members);
 router.get('/organizations/:id/audit', authenticate, requirePlatform('read'), validateParams(s.idParam), organizations.audit);
+router.get('/organizations/:id/feature-usage', authenticate, requirePlatform('read'), validateParams(s.idParam), validateQuery(s.featureUsageQuery), organizations.featureUsage);
 router.post('/organizations/:id/status', authenticate, requirePlatform('lifecycle'), validateParams(s.idParam), validateBody(s.organizationStatus), organizations.setStatus);
 
 const provisioning = require('../controllers/platformProvisioningController');

@@ -3,7 +3,6 @@ import type {
   MyActivityResponse,
   MenteeActivityResponse,
   AdminActivityOverview,
-  FeatureUsageResponse,
   ActivityEventType,
   ActivityEventCategory,
 } from '@/lib/types/activity';
@@ -45,7 +44,4 @@ export const activityApi = {
 
   getAdminOverview: (days = 7) =>
     apiClient.get<AdminActivityOverview>('/activity/admin/overview', { params: { days } }),
-
-  getFeatureUsage: (days = 30) =>
-    apiClient.get<FeatureUsageResponse>('/activity/admin/feature-usage', { params: { days } }),
 };

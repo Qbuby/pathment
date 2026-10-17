@@ -1,4 +1,5 @@
 import { apiClient } from './api-client';
+import type { FeatureUsageResponse } from '@/lib/types/activity';
 
 /**
  * The platform console API - the OPERATOR surface (/api/platform/*).
@@ -308,6 +309,8 @@ export const platformApi = {
       apiClient.get<{ data: { entries: Array<{ id: string; action: string; entityType: string; createdAt: string; user: { firstName: string; lastName: string; email: string } | null }> } & Paged }>(`/platform/organizations/${id}/audit`, { params }).then(data),
     setStatus: (id: string, input: { status: WorkspaceStatus; reason: string }) =>
       apiClient.post<{ data: { id: string; slug: string; status: WorkspaceStatus } }>(`/platform/organizations/${id}/status`, input).then(data),
+    featureUsage: (id: string, days: number) =>
+      apiClient.get<{ data: FeatureUsageResponse }>(`/platform/organizations/${id}/feature-usage`, { params: { days } }).then(data),
   },
   apps: {
     list: (params?: { search?: string; type?: CatalogAppType }) =>

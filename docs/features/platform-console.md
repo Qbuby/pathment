@@ -96,6 +96,12 @@ the marketing pricing page reads it live, and the editor says so.
   pipeline statuses, one-click provision-from-lead prefill.
 - Ops (`/platform/ops`): email/AI queue depths, dead-letter retry, scheduled
   job toggles (owner), rollout gates and worker kill switches read-only.
+- Feature usage (workspace detail → Feature usage tab,
+  `GET /platform/organizations/:id/feature-usage`): which screens that
+  workspace's admins/mentors/mentees actually open, joined onto the client's
+  navigation registry so never-opened screens fall out as zeroes. Moved here
+  from the workspace admin surface (`/admin/feature-usage`, removed): "what
+  can we delete" is the operator's question, not a tenant's.
 - App catalog (`/platform/apps`): CRUD over the global external-app catalog
   that every workspace's admins see on their Apps page (read tier lists;
   owner writes, all audited). Rows carry a cross-workspace connection count —
