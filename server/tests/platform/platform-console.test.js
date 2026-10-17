@@ -389,6 +389,46 @@ describe('platform console', () => {
     });
   });
 
+  describe('app catalog', () => {
+    it('owner runs full CRUD with audit; readonly can list but not write', async () => {
+      const name = `Buildment-${Date.now()}`;
+      const created = await request(app).post('/api/platform/apps').set(authed(tokens.operator))
+        .send({ name, type: 'developer', description: 'Project delivery', integrationKey: 'buildment' });
+      expect(created.status).toBe(201);
+      const appId = created.body.data.app.id;
+      expect(created.body.data.app.connections).toBe(0);
+
+      // One integration key, one app.
+      const duplicate = await request(app).post('/api/platform/apps').set(authed(tokens.operator))
+        .send({ name: `Other-${Date.now()}`, type: 'developer', integrationKey: 'buildment' });
+      expect(duplicate.status).toBe(409);
+
+      const listed = await request(app).get('/api/platform/apps').set(authed(tokens.readonly));
+      expect(listed.status).toBe(200);
+      const row = listed.body.data.apps.find((item) => item.id === appId);
+      expect(row).toMatchObject({ name, integrationKey: 'buildment', isActive: true, connections: 0 });
+      expect(listed.body.data.integrations.find((i) => i.key === 'buildment').usedBy).toBe(name);
+
+      const refusedWrite = await request(app).post('/api/platform/apps').set(authed(tokens.readonly))
+        .send({ name: `Nope-${Date.now()}`, type: 'other' });
+      expect(refusedWrite.status).toBe(403);
+
+      const deactivated = await request(app).patch(`/api/platform/apps/${appId}`).set(authed(tokens.operator))
+        .send({ isActive: false });
+      expect(deactivated.body.data.app.isActive).toBe(false);
+
+      const removed = await request(app).delete(`/api/platform/apps/${appId}`).set(authed(tokens.operator));
+      expect(removed.status).toBe(200);
+
+      const audited = await models.PlatformAuditLog.findAll({
+        where: { targetType: 'ExternalApp' }, skipOrganizationScope: true, order: [['createdAt', 'ASC']],
+      });
+      expect(audited.map((entry) => entry.action)).toEqual(
+        expect.arrayContaining(['PLATFORM_APP_CREATED', 'PLATFORM_APP_UPDATED', 'PLATFORM_APP_DELETED']),
+      );
+    });
+  });
+
   describe('leads', () => {
     it('accepts a public lead, drops honeypots silently, and tracks the pipeline', async () => {
       const accepted = await request(app).post('/api/platform/leads').send({

@@ -237,6 +237,42 @@ export interface OpsOverview {
   flags: Array<{ key: string; value: boolean; description: string }>;
 }
 
+// ── App catalog (global; what workspace admins can connect) ───────────────────
+
+export type CatalogAppType = 'course' | 'communication' | 'productivity' | 'developer' | 'analytics' | 'other';
+export const CATALOG_APP_TYPES: CatalogAppType[] = ['course', 'communication', 'productivity', 'developer', 'analytics', 'other'];
+
+export interface CatalogApp {
+  id: string;
+  name: string;
+  type: CatalogAppType;
+  description: string | null;
+  iconUrl: string | null;
+  /** null = listed but not connectable; a key = backed by a server integration. */
+  integrationKey: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  /** Workspaces currently connected - the blast radius of deactivating/deleting. */
+  connections: number;
+}
+
+export interface CatalogIntegration {
+  key: string;
+  credentialFields: Array<{ key: string; label: string; secret: boolean }>;
+  /** Name of the app already claiming this key (keys are unique), or null. */
+  usedBy: string | null;
+}
+
+export interface CatalogAppInput {
+  name: string;
+  type: CatalogAppType;
+  description?: string | null;
+  iconUrl?: string | null;
+  integrationKey?: string | null;
+  isActive?: boolean;
+}
+
 const data = <T,>(response: { data: T }) => response.data;
 
 export const platformApi = {
@@ -273,6 +309,16 @@ export const platformApi = {
     setStatus: (id: string, input: { status: WorkspaceStatus; reason: string }) =>
       apiClient.post<{ data: { id: string; slug: string; status: WorkspaceStatus } }>(`/platform/organizations/${id}/status`, input).then(data),
   },
+  apps: {
+    list: (params?: { search?: string; type?: CatalogAppType }) =>
+      apiClient.get<{ data: { apps: CatalogApp[]; integrations: CatalogIntegration[] } }>('/platform/apps', { params }).then(data),
+    create: (input: CatalogAppInput) =>
+      apiClient.post<{ data: { app: CatalogApp } }>('/platform/apps', input).then((r) => r.data.app),
+    update: (id: string, patch: Partial<CatalogAppInput>) =>
+      apiClient.patch<{ data: { app: CatalogApp } }>(`/platform/apps/${id}`, patch).then((r) => r.data.app),
+    remove: (id: string) => apiClient.delete(`/platform/apps/${id}`),
+  },
+
   plans: {
     // One shape under one query key: every consumer reads `.plans` off this.
     // (A second fn returning a bare array under the same key once poisoned the

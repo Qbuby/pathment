@@ -96,6 +96,15 @@ the marketing pricing page reads it live, and the editor says so.
   pipeline statuses, one-click provision-from-lead prefill.
 - Ops (`/platform/ops`): email/AI queue depths, dead-letter retry, scheduled
   job toggles (owner), rollout gates and worker kill switches read-only.
+- App catalog (`/platform/apps`): CRUD over the global external-app catalog
+  that every workspace's admins see on their Apps page (read tier lists;
+  owner writes, all audited). Rows carry a cross-workspace connection count —
+  the blast radius of deactivating or deleting (delete cascades connections).
+  An app may claim one server-side integration key (`config/externalApps.js`,
+  e.g. `buildment`); keyless apps are listed but not connectable. The older
+  `/api/apps/catalog` routes remain for compatibility, but the console uses
+  `/api/platform/apps`, which skips workspace context like the rest of the
+  console surface.
 
 ## Running it
 

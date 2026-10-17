@@ -6,7 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutDashboard, Building2, Rocket, Inbox, ReceiptText, Layers,
   SlidersHorizontal, UserSearch, ServerCog, ScrollText, ShieldCheck,
-  ArrowLeftFromLine, Menu, X, TerminalSquare,
+  ArrowLeftFromLine, Menu, X, TerminalSquare, Blocks,
 } from 'lucide-react';
 import { useAuth } from '@/lib/context/AuthContext';
 import { qk, useApiQuery, STALE } from '@/lib/query';
@@ -60,7 +60,10 @@ const NAV: Array<{ heading: string | null; items: Array<{ href: string; label: s
   },
   {
     heading: 'Operations',
-    items: [{ href: '/platform/ops', label: 'Queues & jobs', icon: ServerCog }],
+    items: [
+      { href: '/platform/apps', label: 'App catalog', icon: Blocks },
+      { href: '/platform/ops', label: 'Queues & jobs', icon: ServerCog },
+    ],
   },
   {
     heading: 'Governance',

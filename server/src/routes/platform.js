@@ -64,6 +64,15 @@ router.post('/billing/requests/activate', authenticate, requirePlatform('billing
 router.post('/organizations/:id/plan', authenticate, requirePlatform('billing'), validateParams(s.idParam), validateBody(s.assignPlan), billing.assignPlan);
 router.patch('/organizations/:id/subscription', authenticate, requirePlatform('billing'), validateParams(s.idParam), validateBody(s.subscriptionPatch), billing.patchSubscription);
 
+const apps = require('../controllers/platformAppController');
+const { externalAppSchemas } = require('../validations/externalAppValidation');
+
+// ── App catalog (global: what every workspace's admins can connect) ──────────
+router.get('/apps', authenticate, requirePlatform('read'), validateQuery(externalAppSchemas.listQuery), apps.list);
+router.post('/apps', authenticate, requirePlatform('owner'), validateBody(externalAppSchemas.createApp), apps.create);
+router.patch('/apps/:id', authenticate, requirePlatform('owner'), validateParams(externalAppSchemas.idParam), validateBody(externalAppSchemas.updateApp), apps.update);
+router.delete('/apps/:id', authenticate, requirePlatform('owner'), validateParams(externalAppSchemas.idParam), apps.remove);
+
 const leads = require('../controllers/platformLeadController');
 const { buyerLeadLimiter } = require('../middlewares/rateLimiter');
 
