@@ -1,5 +1,6 @@
 const programService = require('../services/programService');
 const programLifecycleService = require('../services/programLifecycleService');
+const authzService = require('../services/authzService');
 const { successResponse, paginatedResponse } = require('../utils/responses');
 const { catchAsync } = require('../middlewares/errorHandler');
 
@@ -33,7 +34,11 @@ class ProgramController {
       // Reading it here served them the anonymous view of their own
       // programmes: published-and-public only, which silently hid every
       // completed or private one and made the status filter look broken.
-      req.user ? await req.loadWorkspaceRole() : null
+      req.user ? await req.loadWorkspaceRole() : null,
+      // …and being AN admin is not the same as being an admin of everything.
+      // null for an org-tier admin or an anonymous caller; a list of ids for
+      // somebody whose admin role was granted at programme scope.
+      req.user ? await authzService.adminProgramScope(req.user) : null,
     );
 
     res.status(200).json(paginatedResponse(
@@ -52,7 +57,8 @@ class ProgramController {
     const program = await programService.getProgramById(
       req.params.id,
       req.user?.id,
-      req.user ? await req.loadWorkspaceRole() : null
+      req.user ? await req.loadWorkspaceRole() : null,
+      req.user ? await authzService.adminProgramScope(req.user) : null,
     );
 
     res.status(200).json(successResponse(

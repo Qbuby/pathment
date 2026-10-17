@@ -9,7 +9,9 @@ const { AuthorizationError } = require('../utils/errors/errorTypes');
  * GET /api/enrollments/stats
  */
 exports.getEnrollmentStats = catchAsync(async (req, res) => {
-  const stats = await enrollmentService.getEnrollmentStats();
+  const stats = await enrollmentService.getEnrollmentStats(
+    await authzService.adminProgramScope(req.user),
+  );
   res.status(200).json(successResponse('Enrollment stats retrieved successfully', { stats }));
 });
 

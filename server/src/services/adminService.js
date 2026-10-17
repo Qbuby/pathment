@@ -443,6 +443,11 @@ class AdminService {
     });
 
     const organizationId = await require('./organizationService').currentId();
+    // A seat is a seat however it is filled. Registration and invite
+    // acceptance both check the member cap; creating somebody from the admin
+    // screen did not, which made the whole limit optional for anyone who
+    // could reach that screen.
+    await require('./organizationService').assertLimit(organizationId, 'members');
     await models.OrganizationMembership.findOrCreate({
       where: { organizationId, userId: admin.id },
       defaults: { role: 'admin', status: 'active', joinedAt: new Date(), invitedBy: createdBy },

@@ -3,8 +3,9 @@ const { VISIBLE_MEMBERSHIP_STATUSES } = require('../config/membership');
 const { models } = require('../db');
 const { Op, fn, col } = require('sequelize');
 const { catchAsync } = require('../middlewares/errorHandler');
-const { NotFoundError } = require('../utils/errors/errorTypes');
+const { NotFoundError, AuthorizationError } = require('../utils/errors/errorTypes');
 const programReviewService = require('../services/programReviewService');
+const authzService = require('../services/authzService');
 
 const TERMINAL_ENROLLMENT_STATUSES = ['program_completed', 'dropped', 'rejected', 'withdrawn'];
 
@@ -27,9 +28,23 @@ const getAllMentors = catchAsync(async (req, res) => {
    * answer comes from clan membership either way — the programme case is just
    * every clan of that programme. Only the roles that actually mentor count:
    * somebody's mentee membership in a clan does not make them its mentor.
+   *
+   * The programme filter used to be whatever the caller asked for, which made
+   * it a convenience rather than a boundary: an admin granted one programme
+   * simply omitted the parameter and got the whole workspace's mentors, names
+   * and email addresses included. Their scope now sets the filter when they
+   * send none, and narrows the one they do send.
    */
-  if (programId || clanId) {
-    const clanWhere = clanId ? { id: clanId } : { programId };
+  const programScope = await authzService.adminProgramScope(req.user);
+  if (Array.isArray(programScope) && programId && !programScope.includes(programId)) {
+    throw new AuthorizationError('That program is outside your program scope');
+  }
+  const scopedPrograms = programId
+    ? [programId]
+    : Array.isArray(programScope) ? programScope : null;
+
+  if (scopedPrograms || clanId) {
+    const clanWhere = clanId ? { id: clanId } : { programId: { [Op.in]: scopedPrograms } };
     const clans = await models.Clan.findAll({ where: clanWhere, attributes: ['id'], raw: true });
     const clanIds = clans.map((c) => c.id);
     const rows = clanIds.length

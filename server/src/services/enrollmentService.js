@@ -10,14 +10,26 @@ class EnrollmentService {
    * Return overall enrollment counts by status group.
    * Runs COUNT queries across the full table - never paginated.
    */
-  async getEnrollmentStats() {
+  /**
+   * The counters above the enrolments table.
+   *
+   * `getEnrollments` below has been programme-scoped for a while; these tiles
+   * were not, so an admin granted one programme read its own list under six
+   * totals counted across the whole workspace — the one number on the screen
+   * that was nobody's business but the org's.
+   *
+   * @param {string[]|null} programIds  null = every programme (org-tier admin).
+   */
+  async getEnrollmentStats(programIds = null) {
+    const scope = Array.isArray(programIds) ? { programId: { [Op.in]: programIds } } : {};
+    const countWhere = (where = {}) => models.Enrollment.count({ where: { ...scope, ...where } });
     const [total, active, pendingMatch, pendingCompletion, completed, dropped] = await Promise.all([
-      models.Enrollment.count(),
-      models.Enrollment.count({ where: { status: ['active', 'matched'] } }),
-      models.Enrollment.count({ where: { status: ['pending_match', 'approved'] } }),
-      models.Enrollment.count({ where: { status: 'pending_completion' } }),
-      models.Enrollment.count({ where: { status: ['program_completed', 'level_completed'] } }),
-      models.Enrollment.count({ where: { status: ['dropped', 'rejected'] } }),
+      countWhere(),
+      countWhere({ status: ['active', 'matched'] }),
+      countWhere({ status: ['pending_match', 'approved'] }),
+      countWhere({ status: 'pending_completion' }),
+      countWhere({ status: ['program_completed', 'level_completed'] }),
+      countWhere({ status: ['dropped', 'rejected'] }),
     ]);
 
     return { total, active, pendingMatch, pendingCompletion, completed, dropped };
