@@ -30,6 +30,8 @@ export function PlansSettingsTab() {
 
   if (!subscription) return <div role="status" className="space-y-3 py-8"><p>Workspace plan information is unavailable.</p><button onClick={() => void refresh()} className="text-brand-700 underline">Try again</button></div>;
 
+  /** The three limits this page measures. Storage and AI quota are not shown here. */
+  const METERED = ['members', 'programs', 'clans'] as const;
   /** Limit keys this workspace has had changed for it. */
   const overridden = new Set(subscription.overriddenLimits ?? []);
   const limitText = (value: number | undefined | null) =>
@@ -38,6 +40,13 @@ export function PlansSettingsTab() {
     const published = subscription.plan.publishedLimits?.[key];
     return published === undefined ? '' : limitText(published);
   };
+  /**
+   * Only count an override the page can actually point at. An overridden
+   * storage quota is real but has no card here, so announcing "some limits
+   * have been set for this workspace" would send an admin looking for a
+   * difference that is nowhere on the screen.
+   */
+  const shownOverrides = METERED.filter((key) => overridden.has(key));
 
   /**
    * The plan cards list only ACTIVE plans. A workspace sitting on one that has
@@ -57,9 +66,9 @@ export function PlansSettingsTab() {
        * card must not become the one place they are advertised.
        */
       limits: Object.fromEntries(
-        (['members', 'programs', 'clans'] as const)
-          .filter((key) => subscription.plan.limits?.[key] !== undefined)
-          .map((key) => [key, subscription.plan.limits[key]]),
+        METERED
+          .filter((key) => subscription.plan.publishedLimits?.[key] !== undefined)
+          .map((key) => [key, subscription.plan.publishedLimits![key]]),
       ),
     },
     ...plans,
@@ -79,15 +88,18 @@ export function PlansSettingsTab() {
       <p className="text-sm text-muted-foreground">Plan changes use manual invoicing: request a plan → Pathment arranges an invoice → an operator confirms and activates the change. No payment is taken here. <a href="https://pathment.me/pricing" target="_blank" rel="noreferrer" className="text-brand-700 underline">Browse public plans (opens a new tab)</a></p>
       {!canManage && <p className="text-sm text-muted-foreground">Only people with full workspace administration access can request a plan change.</p>}
       {/*
-          Usage is measured against what is ENFORCED here, which is not always
-          what the plan publishes. An overridden workspace saw "1089 /
-          Unlimited" above a Growth card promising 1500 members, with nothing
-          on the page reconciling the two — so the only available conclusion
-          was that the numbers were broken. The override is now named on the
-          card that carries it.
+          These three cards are the only numbers on the page that are about
+          THIS workspace. Everything below is the price list.
+
+          That distinction is the whole bug. The cards used to say "1089 /
+          Unlimited · Custom limit for this workspace · Growth publishes 1500"
+          — three facts, no sentence, and "custom limit" sitting over the word
+          "Unlimited", which is the absence of one. Now each card states what
+          is enforced here, and names the plan's own figure underneath only
+          when the two actually differ.
       */}
       <div className="grid gap-3 sm:grid-cols-3">
-        {(['members', 'programs', 'clans'] as const).map((key) => {
+        {METERED.map((key) => {
           const used = overview?.usage[key] || 0;
           const raw = subscription.plan.limits?.[key];
           // An absent limit is no limit. `Number(undefined)` is NaN, and NaN
@@ -95,6 +107,7 @@ export function PlansSettingsTab() {
           const limit = raw === undefined || raw === null ? -1 : Number(raw);
           const unlimited = !Number.isFinite(limit) || limit < 0;
           const custom = overridden.has(key);
+          const published = plannedLimitLabel(key);
           return (
             <div key={key} className="rounded-2xl border border-border p-4">
               <p className="text-xs font-medium capitalize text-muted-foreground">{key}</p>
@@ -102,25 +115,29 @@ export function PlansSettingsTab() {
                 {used}
                 <span className="text-sm font-normal text-muted-foreground"> / {unlimited ? 'Unlimited' : limit}</span>
               </p>
-              {custom && (
-                <p className="mt-1 text-[11px] font-medium text-brand-700 dark:text-brand-300">
-                  Custom limit for this workspace
-                  {plannedLimitLabel(key) ? ` · ${subscription.plan.name} publishes ${plannedLimitLabel(key)}` : ''}
-                </p>
-              )}
               {!unlimited && (
                 <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
                   <div className="h-full rounded-full bg-brand-600" style={{ width: `${Math.min(100, (used / Math.max(1, limit)) * 100)}%` }} />
                 </div>
               )}
+              {custom && (
+                <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+                  <span className="font-medium text-brand-700 dark:text-brand-300">
+                    {unlimited ? 'No cap here' : `Set to ${limit} here`}
+                  </span>
+                  {published ? ` — ${subscription.plan.name} publishes ${published}` : ''}
+                </p>
+              )}
             </div>
           );
         })}
       </div>
-      {overridden.size > 0 && (
+      {shownOverrides.length > 0 && (
         <p className="text-sm text-muted-foreground">
-          Some limits have been set for this workspace directly, so they differ from what the
-          {' '}{subscription.plan.name} plan publishes below. The figures above are the ones enforced.
+          {shownOverrides.length === 1 ? 'One limit has' : `${shownOverrides.length} limits have`} been set for this
+          workspace directly, so {shownOverrides.length === 1 ? 'it does' : 'they do'} not match what the
+          {' '}{subscription.plan.name} plan publishes. The figures above are the ones enforced here; the plans
+          below are what each plan comes with.
         </p>
       )}
       {subscription.requestedPlan && <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Plan change requested: <strong>{subscription.requestedPlan.name}</strong>. Not active yet. Pathment will arrange an invoice; your current plan and limits stay in effect until an operator confirms and activates the change.</div>}
@@ -132,19 +149,23 @@ export function PlansSettingsTab() {
             <div className="flex items-center justify-between"><h3 className="font-semibold">{plan.name}</h3>{active && <span className="rounded-full bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-700">Current</span>}</div>
             <p className="mt-2 min-h-10 text-sm text-muted-foreground">{plan.description}</p>
             <p className="mt-4 text-2xl font-semibold">{plan.monthlyPriceCents ? new Intl.NumberFormat('en', { style: 'currency', currency: plan.currency, currencyDisplay: 'code' }).format(plan.monthlyPriceCents / 100) : 'Free'}<span className="text-sm font-normal text-muted-foreground">{plan.monthlyPriceCents ? '/month' : ''}</span></p>
-            {/* On the CURRENT plan, show what is enforced here rather than
-                what the plan publishes — otherwise this card and the usage
-                bars above it state different numbers for the same thing. */}
-            <ul className="mt-4 space-y-2 text-sm">{Object.entries(plan.limits).map(([key, limit]) => {
-              const custom = active && overridden.has(key);
-              const shown = active ? subscription.plan.limits?.[key] : limit;
-              return (
-                <li key={key}>
-                  {limitText(shown)} {key}
-                  {custom && <span className="ml-1.5 text-xs text-brand-700 dark:text-brand-300">&middot; custom here</span>}
-                </li>
-              );
-            })}</ul>
+            {/*
+                What this PLAN comes with — on every card, the current one
+                included. It used to swap in the workspace's own limits here,
+                so a Dev Weekends admin on an overridden Growth subscription
+                read "Growth: Unlimited members" and had no way to find out
+                what Growth actually is. A price list that changes depending
+                on who is reading it is not a price list. What applies to this
+                workspace is stated once, in the usage cards above.
+            */}
+            <ul className="mt-4 space-y-2 text-sm">{Object.entries(plan.limits).map(([key, limit]) => (
+              <li key={key}>{limitText(limit)} {key}</li>
+            ))}</ul>
+            {active && shownOverrides.length > 0 && (
+              <p className="mt-2 text-xs text-brand-700 dark:text-brand-300">
+                Your workspace runs on its own limits — see the figures above.
+              </p>
+            )}
             <ul className="mt-5 space-y-2 text-sm">{Object.entries(plan.features).filter(([, enabled]) => enabled).map(([key]) => <li key={key} className="flex items-center gap-2"><Check className="h-4 w-4 text-emerald-600" />{LABELS[key] || key}</li>)}</ul>
             {!active && canManage && <button onClick={() => request(plan)} disabled={requesting !== null || pending} className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-brand-300 px-4 py-2.5 text-sm font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-50">{requesting === plan.key ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}{pending ? 'Requested — awaiting activation' : `Request ${plan.name}`}</button>}
           </article>

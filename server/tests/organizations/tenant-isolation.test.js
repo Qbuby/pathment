@@ -264,6 +264,63 @@ describe('organization tenancy', () => {
     });
   });
 
+  /**
+   * The state Dev Weekends was found in: left on Growth with every limit
+   * overridden to unlimited, because that was the quick way to keep a large
+   * workspace running. Buying Scale publishes unlimited anyway, so carrying
+   * the override forward would leave the settings page calling the plan's own
+   * figures "custom limits for this workspace" for good.
+   */
+  it('drops the overrides the new plan already makes true, and keeps the ones it does not', async () => {
+    const billing = require('../../src/services/manualBillingService');
+    const orgService = require('../../src/services/organizationService');
+    const growth = await models.Plan.findOne({ where: { key: 'growth' } });
+    const scale = await models.Plan.findOne({ where: { key: 'scale' } });
+
+    await runWithRequestContext({ organizationId: secondary.id, userId: admin.id }, async () => {
+      await models.OrganizationSubscription.update({
+        planId: growth.id,
+        overrides: {
+          // Exactly what Scale publishes: a workaround, not an arrangement.
+          limits: { members: scale.limits.members, clans: scale.limits.clans, storageGb: -1 },
+          features: { sso: true, aiEvaluation: true },
+        },
+      }, { where: { organizationId: secondary.id } });
+
+      await orgService.requestPlan(admin, secondary.id, 'scale');
+      await billing.activateRequestedPlan({
+        workspace: secondary.slug, planKey: 'scale', invoiceReference: 'INV-TEST-PRUNE',
+        operator: 'test-operator', periodEnd: new Date(Date.now() + 86400000).toISOString(),
+      });
+
+      const row = await models.OrganizationSubscription.findOne({
+        where: { organizationId: secondary.id }, skipOrganizationScope: true,
+      });
+      // Redundant now, so gone.
+      expect(row.overrides.limits.members).toBeUndefined();
+      expect(row.overrides.limits.clans).toBeUndefined();
+      expect(row.overrides.features.sso).toBeUndefined();
+      // Scale publishes a storage figure; unlimited is still a real deviation.
+      expect(row.overrides.limits.storageGb).toBe(-1);
+
+      // And the page therefore stops calling the plan's own numbers custom.
+      const subscription = await orgService.subscription(secondary.id);
+      expect(subscription.plan.key).toBe('scale');
+      expect(subscription.overriddenLimits).toEqual(['storageGb']);
+    });
+  });
+
+  it('says plainly when nobody asked for the plan being activated', async () => {
+    const billing = require('../../src/services/manualBillingService');
+    await models.OrganizationSubscription.update(
+      { requestedPlanId: null }, { where: { organizationId: secondary.id } },
+    );
+    await expect(billing.activateRequestedPlan({
+      workspace: secondary.slug, planKey: 'growth', invoiceReference: 'INV-TEST-NOREQ',
+      operator: 'test-operator', periodEnd: new Date(Date.now() + 86400000).toISOString(),
+    })).rejects.toThrow(/has not requested growth/i);
+  });
+
   describe('a workspace whose limits were set for it directly', () => {
     /**
      * The settings page reads the EFFECTIVE limits for its usage bars and the
