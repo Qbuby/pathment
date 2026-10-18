@@ -1,6 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { useAdminScope } from '@/lib/context/AdminScopeContext';
 import { AdminScopeFilter } from '@/components/admin/AdminScopeFilter';
 import {
   Download,
@@ -241,7 +243,27 @@ const STATUS_OPTIONS = [
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function EnrollmentOverviewPage() {
+function EnrollmentOverviewContent() {
+  /**
+   * `?programId=` arrives from a programme's own page, which used to render
+   * its first twenty enrolments inline instead of sending people here.
+   *
+   * Applied once, on arrival. The admin scope is a remembered, workspace-wide
+   * choice — reapplying the link's programme on every render would make the
+   * scope picker unusable, because every attempt to change it would snap
+   * back. After the first application the picker is theirs again, and the
+   * choice persists as usual.
+   */
+  const params = useSearchParams();
+  const { setProgramId } = useAdminScope();
+  const seeded = useRef(false);
+  useEffect(() => {
+    const fromLink = params.get('programId');
+    if (!fromLink || seeded.current) return;
+    seeded.current = true;
+    setProgramId(fromLink);
+  }, [params, setProgramId]);
+
   const {
     enrollments, isLoading, error, isEmpty,
     pagination,
@@ -502,5 +524,14 @@ export default function EnrollmentOverviewPage() {
         onCancel={() => setRemoveEnrollmentId(null)}
       />
     </>
+  );
+}
+
+export default function EnrollmentOverviewPage() {
+  // useSearchParams needs a boundary; the page is client-rendered regardless.
+  return (
+    <Suspense fallback={null}>
+      <EnrollmentOverviewContent />
+    </Suspense>
   );
 }
