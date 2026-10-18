@@ -6,7 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutDashboard, Building2, Rocket, Inbox, ReceiptText, Layers,
   SlidersHorizontal, UserSearch, ServerCog, ScrollText, ShieldCheck,
-  ArrowLeftFromLine, Menu, X, TerminalSquare, Blocks,
+  ArrowLeftFromLine, Menu, X, TerminalSquare, Blocks, Megaphone, HardDrive,
 } from 'lucide-react';
 import { useAuth } from '@/lib/context/AuthContext';
 import { qk, useApiQuery, STALE } from '@/lib/query';
@@ -62,7 +62,9 @@ const NAV: Array<{ heading: string | null; items: Array<{ href: string; label: s
     heading: 'Operations',
     items: [
       { href: '/platform/apps', label: 'App catalog', icon: Blocks },
+      { href: '/platform/updates', label: "What's new", icon: Megaphone },
       { href: '/platform/ops', label: 'Queues & jobs', icon: ServerCog },
+      { href: '/platform/storage', label: 'Storage', icon: HardDrive },
     ],
   },
   {

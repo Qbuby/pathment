@@ -3,12 +3,14 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Database, HardDrive, Loader2, Layers, Trash2, Info } from 'lucide-react';
-import { qk, useApiQuery } from '@/lib/query';
-import { adminApi } from '@/lib/services/admin-api';
+import { qk, useApiQuery, STALE } from '@/lib/query';
+import { platformApi, type StorageOverview } from '@/lib/services/platform-api';
 import { useConfirm } from '@/lib/context/ConfirmContext';
-import { Spinner } from '@/components/shared/LoadingSpinner';
-import { ErrorView } from '@/components/shared/ErrorView';
+import { PageHeader, useGate } from '@/components/platform/PlatformShell';
+import { btn, CardSkeleton, TileSkeleton } from '@/components/platform/primitives';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
+import { cn } from '@/components/ui/utils';
 
 /**
  * Where the database size is.
@@ -37,27 +39,6 @@ function bytes(n: number): string {
   const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), units.length - 1);
   const v = n / 1024 ** i;
   return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
-}
-
-interface TableRow {
-  table: string;
-  totalBytes: number;
-  heapBytes: number;
-  indexBytes: number;
-  liveRows: number;
-  deadRows: number;
-  lastAutovacuum: string | null;
-}
-
-interface StorageOverview {
-  totalBytes: number;
-  tableBytes: number;
-  indexBytes: number;
-  liveRows: number;
-  deadRows: number;
-  tableCount: number;
-  tables: TableRow[];
-  prunable: Record<string, number>;
 }
 
 /** What each policy removes, in the words of somebody deciding whether to run it. */
@@ -92,26 +73,25 @@ function Stat({ icon: Icon, label, value, hint }: {
   icon: typeof Database; label: string; value: string; hint?: string;
 }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-card p-4 dark:border-slate-800">
-      <p className="inline-flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-500">
+    <div className="rounded-3xl border border-border bg-card p-6">
+      <p className="inline-flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
         <Icon className="h-3.5 w-3.5" aria-hidden />{label}
       </p>
-      <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900 dark:text-slate-100">{value}</p>
+      <p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p>
       {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
     </div>
   );
 }
 
-export default function AdminStoragePage() {
+export default function PlatformStoragePage() {
   const confirm = useConfirm();
+  const canSweep = useGate('owner');
   const [sweeping, setSweeping] = useState(false);
 
-  const { data, loading, error, refetch } = useApiQuery<StorageOverview>({
-    queryKey: qk.admin.storage,
-    queryFn: async () => (
-      await adminApi.storage.overview() as unknown as { data: StorageOverview }
-    ).data,
-    errorMessage: 'Could not read storage',
+  const { data, loading, error, refetch } = useApiQuery({
+    queryKey: qk.platform.storage,
+    queryFn: platformApi.storage.overview,
+    staleTime: STALE.short,
   });
 
   const prunable = data?.prunable ?? {};
@@ -129,8 +109,8 @@ export default function AdminStoragePage() {
     if (!ok) return;
     try {
       setSweeping(true);
-      const res = await adminApi.storage.sweep() as unknown as { data: { removed: Record<string, number> } };
-      const removed = Object.values(res.data?.removed ?? {}).reduce((a, b) => a + b, 0);
+      const res = await platformApi.storage.sweep();
+      const removed = Object.values(res.removed ?? {}).reduce((a, b) => a + b, 0);
       toast.success(removed ? `Removed ${removed.toLocaleString()} rows` : 'Nothing was due for removal');
       void refetch();
     } catch (e) {
@@ -140,21 +120,29 @@ export default function AdminStoragePage() {
     }
   };
 
-  if (loading && !data) return <div className="flex justify-center py-16"><Spinner /></div>;
-  if (error) return <ErrorView error={new Error(error)} reset={() => void refetch()} />;
+  if (loading && !data) {
+    return (
+      <div className="space-y-5">
+        <TileSkeleton />
+        <CardSkeleton lines={6} />
+        <CardSkeleton lines={8} />
+      </div>
+    );
+  }
+  if (error) return <ErrorState message={error || undefined} onRetry={refetch} variant="page" />;
   if (!data) return null;
 
   const indexShare = data.tableBytes > 0 ? Math.round((data.indexBytes / data.tableBytes) * 100) : 0;
   const biggest = data.tables[0]?.totalBytes ?? 1;
 
   return (
-    <div className="space-y-6">
-      <div className="admin-page-heading">
-        <h1 className="mb-1 font-semibold text-slate-900 dark:text-slate-100">Storage</h1>
-        <p className="text-sm text-slate-500">What the database size is made of, and what can safely go.</p>
-      </div>
+    <div className="space-y-5">
+      <PageHeader
+        title="Storage"
+        description="What the WHOLE database's size is made of, and what can safely go. Every workspace's data lives here together."
+      />
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Stat icon={HardDrive} label="Database" value={bytes(data.totalBytes)} hint="as the server reports it" />
         <Stat
           icon={Layers}
@@ -177,7 +165,7 @@ export default function AdminStoragePage() {
       </div>
 
       {/* The two things that make people delete the wrong thing. */}
-      <p className="flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2.5 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-400">
+      <p className="flex items-start gap-2 rounded-xl border border-border bg-muted/40 px-3 py-2.5 text-xs text-muted-foreground">
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
         <span>
           Indexes are {indexShare}% of the table space here, and they do not shrink when rows go. Deleting rows also
@@ -188,33 +176,34 @@ export default function AdminStoragePage() {
         </span>
       </p>
 
-      <section className="rounded-2xl border border-slate-200 bg-card dark:border-slate-800">
-        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+      <section className="overflow-hidden rounded-3xl border border-border bg-card">
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-4">
           <div>
-            <h2 className="font-semibold text-slate-900 dark:text-slate-100">Safe to remove</h2>
+            <h2 className="font-semibold text-foreground">Safe to remove</h2>
             <p className="text-sm text-muted-foreground">
               These run daily by themselves. The button only brings the next pass forward.
             </p>
           </div>
           <button
             onClick={runSweep}
-            disabled={sweeping || totalPrunable === 0}
-            className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+            disabled={!canSweep || sweeping || totalPrunable === 0}
+            title={canSweep ? undefined : 'Running the sweep requires the platform owner role'}
+            className={cn(btn.primary)}
           >
             {sweeping ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Trash2 className="h-4 w-4" aria-hidden />}
             {totalPrunable === 0 ? 'Nothing due' : `Run sweep (${totalPrunable.toLocaleString()})`}
           </button>
         </header>
-        <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+        <ul className="divide-y divide-border">
           {Object.entries(prunable).map(([key, count]) => {
             const copy = POLICY_COPY[key] ?? { label: key, detail: '' };
             return (
-              <li key={key} className="flex items-start justify-between gap-4 px-5 py-3">
+              <li key={key} className="flex items-start justify-between gap-4 px-6 py-3">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-slate-900 dark:text-slate-100">{copy.label}</p>
+                  <p className="text-sm font-medium text-foreground">{copy.label}</p>
                   {copy.detail && <p className="mt-0.5 text-xs text-muted-foreground">{copy.detail}</p>}
                 </div>
-                <span className={`shrink-0 text-sm tabular-nums ${count > 0 ? 'font-medium text-slate-900 dark:text-slate-100' : 'text-slate-400'}`}>
+                <span className={`shrink-0 text-sm tabular-nums ${count > 0 ? 'font-medium text-foreground' : 'text-slate-400'}`}>
                   {count.toLocaleString()}
                 </span>
               </li>
@@ -223,19 +212,19 @@ export default function AdminStoragePage() {
         </ul>
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-card dark:border-slate-800">
-        <header className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
-          <h2 className="font-semibold text-slate-900 dark:text-slate-100">Largest tables</h2>
+      <section className="overflow-hidden rounded-3xl border border-border bg-card">
+        <header className="border-b border-border px-6 py-4">
+          <h2 className="font-semibold text-foreground">Largest tables</h2>
           <p className="text-sm text-muted-foreground">
             Data and its indexes together. Nothing here is deletable from this screen — it is here so the size has an
             explanation.
           </p>
         </header>
-        <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+        <ul className="divide-y divide-border">
           {data.tables.map((t) => (
-            <li key={t.table} className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1.5 px-5 py-3">
+            <li key={t.table} className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1.5 px-6 py-3">
               <p className="truncate font-mono text-sm text-slate-800 dark:text-slate-200">{t.table}</p>
-              <p className="shrink-0 text-sm font-medium tabular-nums text-slate-900 dark:text-slate-100">
+              <p className="shrink-0 text-sm font-medium tabular-nums text-foreground">
                 {bytes(t.totalBytes)}
               </p>
               <p className="col-span-2 text-xs text-muted-foreground">

@@ -47,14 +47,9 @@ export const adminApi = {
   /**
    * What the database size is made of, and the standing retention policies.
    *
-   * There is no "delete these rows" call here on purpose: the sweep runs the
-   * same policies the daily worker runs, and nothing else is deletable from
-   * a screen.
+   * Storage/retention moved to the platform console (platformApi.storage):
+   * the report covers the whole database, not one workspace.
    */
-  storage: {
-    overview: () => apiClient.get('/admin/storage'),
-    sweep: () => apiClient.post('/admin/storage/sweep', {}),
-  },
   /** Co-mentor promotion pipeline — admin review of mentor nominations. */
   promotions: {
     list: () => apiClient.get('/admin/promotions'),

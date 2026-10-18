@@ -12,6 +12,8 @@ import { useDebounce } from '@/lib/hooks/shared/useDebounce';
 import { changelogApi, type ChangelogAdminEntry, type ChangelogInput, type ChangelogRole, type ChangelogType } from '@/lib/services/changelog-api';
 import { isBlankHtml, stripHtml } from '@/lib/utils/html';
 import { useConfirm } from '@/lib/context/ConfirmContext';
+import { PageHeader, useGate } from '@/components/platform/PlatformShell';
+import { btn, TableSkeleton } from '@/components/platform/primitives';
 
 const RichTextEditor = dynamic(() => import('@/components/shared/RichTextEditor'), { ssr: false });
 
@@ -31,8 +33,9 @@ const TYPE_ICON: Record<string, typeof Rocket> = { feature: Rocket, improvement:
 
 const EMPTY: ChangelogInput = { title: '', body: '', type: 'feature', audience: ['admin', 'mentor', 'mentee'], isMajor: false, actionUrl: '', actionLabel: '' };
 
-export default function AdminChangelogPage() {
+export default function PlatformUpdatesPage() {
   const confirm = useConfirm();
+  const canWrite = useGate('support');
   const [entries, setEntries] = useState<ChangelogAdminEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -170,22 +173,20 @@ export default function AdminChangelogPage() {
 
   return (
     <div>
-      <div className="admin-page-heading flex items-start justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-700 flex items-center gap-2">
-            <PackageOpen className="w-6 h-6 text-brand-600" /> What's New
-          </h1>
-          <p className="text-slate-500 mt-1">Post product updates. Users see a role-filtered feed with an unread badge; major items pop a one-time modal.</p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <button onClick={() => setImportOpen(true)} className="inline-flex items-center gap-2 px-4 py-2.5 border border-slate-200 hover:border-brand-300 text-slate-700 text-sm font-semibold rounded-xl transition-colors">
-            <Upload className="w-4 h-4" /> Import JSON
-          </button>
-          <button onClick={openNew} className="inline-flex items-center gap-2 px-4 py-2.5 bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold rounded-xl transition-colors">
-            <Plus className="w-4 h-4" /> New update
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="What's new"
+        description="Product updates for EVERY workspace: users see a role-filtered feed with an unread badge; major items pop a one-time modal."
+        actions={canWrite ? (
+          <div className="flex items-center gap-2">
+            <button onClick={() => setImportOpen(true)} className={btn.ghost}>
+              <Upload className="h-4 w-4" aria-hidden /> Import JSON
+            </button>
+            <button onClick={openNew} className={btn.primary}>
+              <Plus className="h-4 w-4" aria-hidden /> New update
+            </button>
+          </div>
+        ) : undefined}
+      />
 
       {/* Search + filters */}
       <div className="flex flex-col sm:flex-row gap-2 mb-4">
@@ -212,9 +213,9 @@ export default function AdminChangelogPage() {
       </div>
 
       {loading ? (
-        <div className="text-slate-400 text-sm py-12 text-center">Loading…</div>
+        <div className="overflow-hidden rounded-3xl border border-border bg-card"><TableSkeleton rows={6} /></div>
       ) : entries.length === 0 ? (
-        <div className="border border-dashed border-slate-200 dark:border-slate-700 rounded-2xl py-16 text-center">
+        <div className="border border-dashed border-border rounded-3xl py-16 text-center">
           <PackageOpen className="w-8 h-8 text-slate-300 mx-auto mb-2" />
           <p className="text-slate-500">{hasFilters ? 'No updates match your filters.' : 'No updates yet. Post your first one so users know what shipped.'}</p>
         </div>
@@ -223,7 +224,7 @@ export default function AdminChangelogPage() {
           {entries.map((e) => {
             const Icon = TYPE_ICON[e.type] || Rocket;
             return (
-              <div key={e.id} className="flex items-start gap-3 p-4 bg-card border border-slate-200 dark:border-slate-700 rounded-xl">
+              <div key={e.id} className="flex items-start gap-3 p-4 bg-card border border-border rounded-xl">
                 <div className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-700 flex items-center justify-center shrink-0 text-slate-500">
                   <Icon className="w-4 h-4" />
                 </div>
@@ -238,17 +239,19 @@ export default function AdminChangelogPage() {
                   <p className="text-sm text-slate-500 mt-0.5 line-clamp-1">{stripHtml(e.body)}</p>
                   <p className="text-xs text-slate-400 mt-1">{e.audience.join(' · ')}{e.author ? ` — ${e.author}` : ''}</p>
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <button onClick={() => togglePublish(e)} title={e.isDraft ? 'Publish' : 'Unpublish'} className="p-2 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg">
-                    {e.isDraft ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
-                  </button>
-                  <button onClick={() => openEdit(e)} title="Edit" className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg">
-                    <Pencil className="w-4 h-4" />
-                  </button>
-                  <button onClick={() => remove(e)} title="Delete" className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
+                {canWrite ? (
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => togglePublish(e)} title={e.isDraft ? 'Publish' : 'Unpublish'} className="p-2 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg">
+                      {e.isDraft ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                    </button>
+                    <button onClick={() => openEdit(e)} title="Edit" className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg">
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => remove(e)} title="Delete" className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : null}
               </div>
             );
           })}

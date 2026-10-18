@@ -65,6 +65,22 @@ router.post('/billing/requests/activate', authenticate, requirePlatform('billing
 router.post('/organizations/:id/plan', authenticate, requirePlatform('billing'), validateParams(s.idParam), validateBody(s.assignPlan), billing.assignPlan);
 router.patch('/organizations/:id/subscription', authenticate, requirePlatform('billing'), validateParams(s.idParam), validateBody(s.subscriptionPatch), billing.patchSubscription);
 
+const storage = require('../controllers/storageController');
+
+// ── Storage & retention (the WHOLE database, so an operator concern) ─────────
+router.get('/storage', authenticate, requirePlatform('read'), storage.overview);
+router.post('/storage/sweep', authenticate, requirePlatform('owner'), storage.sweep);
+
+const updates = require('../controllers/platformUpdateController');
+const { listQuery: updatesListQuery } = require('../validations/changelogValidation');
+
+// ── "What's New" authoring (entries are global - every workspace's feed) ─────
+router.get('/updates', authenticate, requirePlatform('read'), validateQuery(updatesListQuery), updates.list);
+router.post('/updates', authenticate, requirePlatform('support'), updates.create);
+router.post('/updates/import', authenticate, requirePlatform('support'), updates.importMany);
+router.patch('/updates/:id', authenticate, requirePlatform('support'), validateParams(s.idParam), updates.update);
+router.delete('/updates/:id', authenticate, requirePlatform('support'), validateParams(s.idParam), updates.remove);
+
 const apps = require('../controllers/platformAppController');
 const { externalAppSchemas } = require('../validations/externalAppValidation');
 

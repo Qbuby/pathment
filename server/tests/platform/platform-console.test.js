@@ -389,6 +389,38 @@ describe('platform console', () => {
     });
   });
 
+  describe('storage and product updates', () => {
+    it('storage reads for any operator, sweeps only for owner; updates author here, not in the workspace', async () => {
+      const report = await request(app).get('/api/platform/storage').set(authed(tokens.readonly));
+      expect(report.status).toBe(200);
+      expect(report.body.data.totalBytes).toBeGreaterThan(0);
+      expect(report.body.data).toHaveProperty('prunable');
+
+      const refusedSweep = await request(app).post('/api/platform/storage/sweep').set(authed(tokens.readonly));
+      expect(refusedSweep.status).toBe(403);
+
+      const created = await request(app).post('/api/platform/updates').set(authed(tokens.operator))
+        .send({ title: 'Console-authored update', body: '<p>Hello every workspace</p>', type: 'feature', audience: ['admin'], publish: true });
+      expect(created.status).toBe(201);
+      const updateId = created.body.data.update.id;
+
+      const listed = await request(app).get('/api/platform/updates').set(authed(tokens.readonly));
+      expect(listed.status).toBe(200);
+      expect(listed.body.data.updates.some((row) => row.id === updateId)).toBe(true);
+
+      // The workspace authoring surface is gone; the user feed is untouched.
+      const oldAuthor = await request(app).post('/api/changelog').set(authed(tokens.tenant))
+        .send({ title: 'nope', body: 'x' });
+      expect(oldAuthor.status).toBe(404);
+      const feed = await request(app).get('/api/changelog?role=admin').set(authed(tokens.tenant));
+      expect(feed.status).toBe(200);
+      expect(feed.body.data.updates.some((row) => row.id === updateId)).toBe(true);
+
+      const removed = await request(app).delete(`/api/platform/updates/${updateId}`).set(authed(tokens.operator));
+      expect(removed.status).toBe(200);
+    });
+  });
+
   describe('feature usage', () => {
     it('moved to the console: operator reads it per workspace, the old tenant route is gone', async () => {
       const response = await request(app).post('/api/platform/organizations').set(authed(tokens.operator)).send({

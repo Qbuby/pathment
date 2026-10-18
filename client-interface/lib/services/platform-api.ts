@@ -274,6 +274,29 @@ export interface CatalogAppInput {
   isActive?: boolean;
 }
 
+// ── Storage & retention (the whole database) ──────────────────────────────────
+
+export interface StorageTableRow {
+  table: string;
+  totalBytes: number;
+  heapBytes: number;
+  indexBytes: number;
+  liveRows: number;
+  deadRows: number;
+  lastAutovacuum: string | null;
+}
+
+export interface StorageOverview {
+  totalBytes: number;
+  tableBytes: number;
+  indexBytes: number;
+  liveRows: number;
+  deadRows: number;
+  tableCount: number;
+  tables: StorageTableRow[];
+  prunable: Record<string, number>;
+}
+
 const data = <T,>(response: { data: T }) => response.data;
 
 export const platformApi = {
@@ -312,6 +335,12 @@ export const platformApi = {
     featureUsage: (id: string, days: number) =>
       apiClient.get<{ data: FeatureUsageResponse }>(`/platform/organizations/${id}/feature-usage`, { params: { days } }).then(data),
   },
+  storage: {
+    overview: () => apiClient.get<{ data: StorageOverview }>('/platform/storage').then(data),
+    sweep: () =>
+      apiClient.post<{ data: { removed: Record<string, number>; reclaimsDiskSpace: boolean } }>('/platform/storage/sweep', {}).then(data),
+  },
+
   apps: {
     list: (params?: { search?: string; type?: CatalogAppType }) =>
       apiClient.get<{ data: { apps: CatalogApp[]; integrations: CatalogIntegration[] } }>('/platform/apps', { params }).then(data),

@@ -102,6 +102,15 @@ the marketing pricing page reads it live, and the editor says so.
   navigation registry so never-opened screens fall out as zeroes. Moved here
   from the workspace admin surface (`/admin/feature-usage`, removed): "what
   can we delete" is the operator's question, not a tenant's.
+- Storage (`/platform/storage`, moved from `/admin/storage`): what the WHOLE
+  database's size is made of and what the standing retention policies would
+  remove; the sweep (owner-gated, audited) runs exactly what the daily worker
+  runs. It always reported the entire server, so it was never a tenant screen.
+- "What's New" authoring (`/platform/updates`, moved from `/admin/changelog`):
+  product updates are global - migration 135 lifted the workspace stamp 114
+  put on `product_updates` - so one published entry reaches every workspace's
+  role-filtered feed (which stays at `/api/changelog` for all users). Writes
+  are support-gated and audited; JSON import keeps its old payload contract.
 - App catalog (`/platform/apps`): CRUD over the global external-app catalog
   that every workspace's admins see on their Apps page (read tier lists;
   owner writes, all audited). Rows carry a cross-workspace connection count —

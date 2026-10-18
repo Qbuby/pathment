@@ -50,7 +50,8 @@ export const changelogApi = {
     await apiClient.post('/changelog/seen');
   },
 
-  // Admin authoring — server-side search + filters + pagination.
+  // Authoring - a PLATFORM operator surface (/platform/updates): entries are
+  // global, one row reaches every workspace's feed. Used by /platform/updates.
   async listAll(params: { search?: string; type?: string; status?: string; page?: number; limit?: number } = {}): Promise<{ updates: ChangelogAdminEntry[]; total: number; page: number; limit: number }> {
     const qs = new URLSearchParams();
     if (params.search) qs.set('search', params.search);
@@ -58,27 +59,27 @@ export const changelogApi = {
     if (params.status) qs.set('status', params.status);
     if (params.page) qs.set('page', String(params.page));
     if (params.limit) qs.set('limit', String(params.limit));
-    const res = await apiClient.get<any>(`/changelog/manage?${qs.toString()}`);
+    const res = await apiClient.get<any>(`/platform/updates?${qs.toString()}`);
     return res.data || { updates: [], total: 0, page: 1, limit: 20 };
   },
 
   async create(input: ChangelogInput): Promise<ChangelogEntry> {
-    const res = await apiClient.post<any>('/changelog', input);
+    const res = await apiClient.post<any>('/platform/updates', input);
     return res.data?.update;
   },
 
   async update(id: string, input: Partial<ChangelogInput>): Promise<ChangelogEntry> {
-    const res = await apiClient.patch<any>(`/changelog/${id}`, input);
+    const res = await apiClient.patch<any>(`/platform/updates/${id}`, input);
     return res.data?.update;
   },
 
   async remove(id: string): Promise<void> {
-    await apiClient.delete(`/changelog/${id}`);
+    await apiClient.delete(`/platform/updates/${id}`);
   },
 
   // Bulk import from a pasted JSON array (or { updates, publish }).
   async importMany(payload: ChangelogInput[] | { updates: ChangelogInput[]; publish?: boolean }): Promise<{ created: number; total: number; errors: { index: number; title: string | null; message: string }[] }> {
-    const res = await apiClient.post<any>('/changelog/import', payload);
+    const res = await apiClient.post<any>('/platform/updates/import', payload);
     return res.data;
   },
 };

@@ -197,6 +197,7 @@ export const qk = {
     user: (id: string) => ['platform', 'user', id] as const,
     ops: ['platform', 'ops'] as const,
     apps: ['platform', 'apps'] as const,
+    storage: ['platform', 'storage'] as const,
     featureUsage: (id: string, days: number) => ['platform', 'organization', id, 'feature-usage', days] as const,
     slugCheck: (slug: string) => ['platform', 'slug-check', slug] as const,
   },

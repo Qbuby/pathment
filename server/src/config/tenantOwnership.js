@@ -4,7 +4,9 @@ const WORKSPACE_MODELS = {
   StandingClanRequest: 'standing_clan_requests',
   Skill: 'skills',
   OpenSourceOrg: 'open_source_orgs',
-  ProductUpdate: 'product_updates',
+  // ProductUpdate deliberately absent: "What's New" entries describe the
+  // PRODUCT and are authored from the platform console for every workspace
+  // (migration 135 relaxed the NOT NULL the 114 stamp required).
   ActivitySession: 'activity_sessions',
   AdaptiveRecommendation: 'adaptive_recommendations',
   AnalyticsEvent: 'analytics_events',

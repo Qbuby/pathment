@@ -20,7 +20,7 @@ const logger = require('../utils/logger');
  * problem than a large database.
  */
 
-/** GET /api/admin/storage → sizes, and what each policy would remove now. */
+/** GET /api/platform/storage → sizes, and what each policy would remove now. */
 const overview = catchAsync(async (req, res) => {
   const [size, prunable] = await Promise.all([
     retention.sizeReport(sequelize, { limit: req.query.limit }),
@@ -37,7 +37,7 @@ const overview = catchAsync(async (req, res) => {
 });
 
 /**
- * POST /api/admin/storage/sweep → run the retention policies now.
+ * POST /api/platform/storage/sweep → run the retention policies now.
  *
  * Deliberately the same code the daily worker runs, in the same batches with
  * the same lock and statement timeouts. This button does not do anything the
@@ -48,7 +48,11 @@ const overview = catchAsync(async (req, res) => {
  */
 const sweep = catchAsync(async (req, res) => {
   const removed = await retention.apply(sequelize);
-  logger.info('Data retention run from the admin screen', { userId: req.user.id, removed });
+  logger.info('Data retention run from the platform console', { userId: req.user.id, removed });
+  await require('../services/platformAuditService').record({
+    action: 'PLATFORM_RETENTION_SWEEP', targetType: 'Database',
+    newValues: removed, actor: req.user,
+  });
 
   res.status(200).json(successResponse('Retention sweep complete', {
     removed,
