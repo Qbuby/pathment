@@ -15,6 +15,7 @@ const Joi = require('joi');
 
 const PLATFORMS = ['web', 'android', 'ios'];
 const TYPES = ['bug', 'suggestion', 'other'];
+const LANES = ['product', 'workspace'];
 const STATUSES = ['open', 'in_review', 'planned', 'fixed', 'added', 'declined'];
 const PRIORITIES = ['low', 'normal', 'high'];
 
@@ -54,9 +55,25 @@ const feedbackSchemas = {
     status: Joi.string().valid(...STATUSES),
     type: Joi.string().valid(...TYPES),
     platform: Joi.string().valid(...PLATFORMS),
+    // A workspace admin may narrow to one lane; they read both either way.
+    lane: Joi.string().valid(...LANES),
+    page: Joi.number().integer().min(1),
+    limit: Joi.number().integer().min(1).max(100)
+  }),
+
+  /**
+   * The platform inbox. Same shape plus a workspace filter and `lane: 'all'`,
+   * which the per-workspace board has no use for.
+   */
+  platformListQuery: Joi.object({
+    status: Joi.string().valid(...STATUSES),
+    type: Joi.string().valid(...TYPES),
+    platform: Joi.string().valid(...PLATFORMS),
+    lane: Joi.string().valid(...LANES, 'all'),
+    organizationId: Joi.string().uuid(),
     page: Joi.number().integer().min(1),
     limit: Joi.number().integer().min(1).max(100)
   })
 };
 
-module.exports = { feedbackSchemas, PLATFORMS, TYPES, STATUSES, PRIORITIES };
+module.exports = { feedbackSchemas, PLATFORMS, TYPES, LANES, STATUSES, PRIORITIES };

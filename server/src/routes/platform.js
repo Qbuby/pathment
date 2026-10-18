@@ -81,6 +81,20 @@ router.post('/updates/import', authenticate, requirePlatform('support'), updates
 router.patch('/updates/:id', authenticate, requirePlatform('support'), validateParams(s.idParam), updates.update);
 router.delete('/updates/:id', authenticate, requirePlatform('support'), validateParams(s.idParam), updates.remove);
 
+const feedback = require('../controllers/feedbackReportController');
+const { feedbackSchemas } = require('../validations/feedbackValidation');
+
+/**
+ * Product feedback, from every workspace.
+ *
+ * The other half of "What's New" above. Updates flow out of here to every
+ * workspace; bug reports and suggestions flow back in. Until this existed they
+ * flowed back only as far as the reporting workspace's own admin board, where
+ * nobody could set a bug to `fixed` and the person who could never saw it.
+ */
+router.get('/feedback', authenticate, requirePlatform('read'), validateQuery(feedbackSchemas.platformListQuery), feedback.platformList);
+router.patch('/feedback/:id', authenticate, requirePlatform('support'), validateParams(s.idParam), validateBody(feedbackSchemas.updateStatus), feedback.platformUpdateStatus);
+
 const apps = require('../controllers/platformAppController');
 const { externalAppSchemas } = require('../validations/externalAppValidation');
 

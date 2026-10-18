@@ -193,6 +193,7 @@ export const qk = {
     billingRequests: ['platform', 'billing-requests'] as const,
     overridesReport: ['platform', 'overrides-report'] as const,
     leads: (params: Record<string, unknown>) => ['platform', 'leads', params] as const,
+    feedback: (params: Record<string, unknown>) => ['platform', 'feedback', params] as const,
     users: (q: string) => ['platform', 'users', q] as const,
     user: (id: string) => ['platform', 'user', id] as const,
     ops: ['platform', 'ops'] as const,

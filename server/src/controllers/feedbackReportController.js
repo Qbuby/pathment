@@ -39,4 +39,19 @@ const updateStatus = catchAsync(async (req, res) => {
   res.status(200).json(successResponse('Feedback updated', { report }));
 });
 
-module.exports = { create, listMine, listAll, updateStatus };
+/**
+ * GET /api/platform/feedback — product feedback from every workspace.
+ * Behind requirePlatform; no workspace role can reach it.
+ */
+const platformList = catchAsync(async (req, res) => {
+  const data = await svc.platformList(req.query || {});
+  res.status(200).json(successResponse('Feedback reports', data));
+});
+
+/** PATCH /api/platform/feedback/:id { status?, resolutionNote?, priority? } */
+const platformUpdateStatus = catchAsync(async (req, res) => {
+  const report = await svc.platformUpdateStatus(req.user, req.params.id, req.body || {});
+  res.status(200).json(successResponse('Feedback updated', { report }));
+});
+
+module.exports = { create, listMine, listAll, updateStatus, platformList, platformUpdateStatus };

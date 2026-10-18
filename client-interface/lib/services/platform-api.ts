@@ -1,5 +1,8 @@
 import { apiClient } from './api-client';
 import type { FeatureUsageResponse } from '@/lib/types/activity';
+// The report shape is shared with the per-workspace board on purpose: the same
+// row is read in both places, and only the owner of its lane may write it.
+import type { FeedbackReport, FeedbackStatus, FeedbackType, FeedbackLane } from './feedback-api';
 
 /**
  * The platform console API - the OPERATOR surface (/api/platform/*).
@@ -148,6 +151,28 @@ export interface PlatformMetrics {
   leads: { new: number };
 }
 
+
+export interface PlatformFeedbackQuery {
+  status?: FeedbackStatus;
+  type?: FeedbackType;
+  platform?: 'web' | 'android' | 'ios';
+  /** 'all' includes the workspace lane, which is support work, not product work. */
+  lane?: FeedbackLane | 'all';
+  organizationId?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface PlatformFeedbackPage {
+  reports: FeedbackReport[];
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+  openCount: number;
+  byStatus: Record<string, number>;
+  byPlatform: Record<string, number>;
+}
 
 export interface ProvisionInput {
   name: string;
@@ -405,6 +430,16 @@ export const platformApi = {
       apiClient.get<{ data: Paged & { leads: BuyerLeadRow[]; countsByStatus: Record<string, number> } }>('/platform/leads', { params }).then(data),
     update: (id: string, input: { status?: LeadStatus; notes?: string }) =>
       apiClient.patch<{ data: { lead: BuyerLeadRow } }>(`/platform/leads/${id}`, input).then((r) => r.data.lead),
+  },
+  /**
+   * Product feedback from every workspace - the other half of "What's new".
+   * Updates flow out to every workspace; bug reports flow back here.
+   */
+  feedback: {
+    list: (params: PlatformFeedbackQuery) =>
+      apiClient.get<{ data: PlatformFeedbackPage }>('/platform/feedback', { params }).then(data),
+    update: (id: string, input: { status?: FeedbackStatus; resolutionNote?: string; priority?: 'low' | 'normal' | 'high' }) =>
+      apiClient.patch<{ data: { report: FeedbackReport } }>(`/platform/feedback/${id}`, input).then((r) => r.data.report),
   },
   users: {
     search: (q: string) =>

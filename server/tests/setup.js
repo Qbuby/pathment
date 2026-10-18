@@ -29,6 +29,11 @@ jest.mock('../src/services/notificationOrchestrator', () => {
 
 // ─── Mock email service ───────────────────────────────────────────────────────
 jest.mock('../src/services/emailService', () => ({
+  // The queue is how everything is mailed now (a Postgres-backed queue with
+  // retries and a dead letter), so a suite that exercises any notifying path
+  // reaches for `enqueue`. Without it on the mock the call throws, and every
+  // caller wraps mail in a non-fatal try/catch, so it threw unnoticed.
+  enqueue: jest.fn().mockResolvedValue({ queued: true, id: 'mock-queued-id' }),
   sendEmail: jest.fn().mockResolvedValue({ id: 'mock-email-id' }),
   sendVerificationEmail: jest.fn().mockResolvedValue({ id: 'mock-email-id' }),
   sendPasswordResetEmail: jest.fn().mockResolvedValue({ id: 'mock-email-id' }),
