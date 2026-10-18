@@ -27,6 +27,11 @@ export interface CommunityReportRow {
   targetAuthorRole?: string | null;
   targetAuthorAvatarUrl?: string | null;
   targetDeleted: boolean;
+  /** Which community space it happened in, and the programme behind it. */
+  scopeType?: 'clan' | 'cohort' | 'program' | 'global' | null;
+  scopeId?: string | null;
+  scopeLabel?: string | null;
+  programId?: string | null;
 }
 
 /** One reported post or comment, with every report made against it. */
@@ -41,6 +46,8 @@ export interface ReportedItem {
   targetAuthorRole?: string | null;
   targetAuthorAvatarUrl?: string | null;
   targetDeleted: boolean;
+  scopeLabel?: string | null;
+  programId?: string | null;
   /** Newest first. */
   reports: CommunityReportRow[];
 }
@@ -74,7 +81,11 @@ export function useModeration() {
           key, targetType: r.targetType, targetId: r.targetId, status: r.status, preview: r.preview,
           targetAuthor: r.targetAuthor, targetAuthorId: r.targetAuthorId, targetAuthorRole: r.targetAuthorRole,
           targetAuthorAvatarUrl: r.targetAuthorAvatarUrl,
-          targetDeleted: r.targetDeleted, reports: [],
+          targetDeleted: r.targetDeleted,
+          // Carried up from the reports so the queue can be filtered and
+          // each card can say which space it came out of.
+          scopeLabel: r.scopeLabel ?? null, programId: r.programId ?? null,
+          reports: [],
         };
         map.set(key, item);
       }

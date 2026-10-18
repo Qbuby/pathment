@@ -1,6 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import { SelectMenu } from '@/components/shared/SelectMenu';
+import { useProgramClans } from '@/lib/hooks/shared/useProgramClans';
 import { ShieldAlert, ShieldCheck, Loader2, Trash2, CheckCircle2, XCircle, Flag } from 'lucide-react';
 import { Avatar } from '@/components/shared/Avatar';
 import { EmptyState } from '@/components/shared/EmptyState';
@@ -77,6 +79,15 @@ function Reporter({ report, isAuthor, targetType }: { report: CommunityReportRow
 
 export default function AdminModerationPage() {
   const { items, reports, status, setStatus, loading, resolveItem, removeItem } = useModeration();
+  /**
+   * The queue never said which SPACE a report came from, so an admin running
+   * several programmes could not tell one programme's reports from another's
+   * and had no way to work through their own. The scope travels with each
+   * report now; this narrows the queue to one programme's worth of it.
+   */
+  const { programs } = useProgramClans();
+  const [programFilter, setProgramFilter] = useState('');
+  const visible = programFilter ? items.filter((i) => i.programId === programFilter) : items;
   // "<item key>:<action>" while a decision is being saved.
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -95,7 +106,11 @@ export default function AdminModerationPage() {
   // thing is still one decision, so it is one card with everyone on it.
   const renderCard = (item: ReportedItem) => {
     const authorHref = profileHref(item.targetAuthorId, item.targetAuthorRole);
-    const authorMeta = [item.targetAuthorRole && ROLE_LABEL[item.targetAuthorRole], `Posted this ${item.targetType}`].filter(Boolean).join(' · ');
+    const authorMeta = [
+      item.targetAuthorRole && ROLE_LABEL[item.targetAuthorRole],
+      `Posted this ${item.targetType}`,
+      item.scopeLabel && `in ${item.scopeLabel}`,
+    ].filter(Boolean).join(' · ');
     const working = (action: string) => busy === `${item.key}:${action}`;
     const locked = !!busy && busy.startsWith(`${item.key}:`);
     const secondary = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-50';
@@ -159,18 +174,40 @@ export default function AdminModerationPage() {
         </div>
       </div>
 
+      {!loading && items.length > 0 && programs.length > 1 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-card p-4">
+          <div className="w-56 max-w-full">
+            <SelectMenu
+              value={programFilter}
+              onChange={setProgramFilter}
+              ariaLabel="Filter reports by program"
+              options={[{ value: '', label: 'All programs' }, ...programs.map((p) => ({ value: p.id, label: p.label }))]}
+            />
+          </div>
+          <p className="text-sm text-slate-500" aria-live="polite">
+            {visible.length === items.length
+              ? `${items.length} ${items.length === 1 ? 'item' : 'items'} flagged`
+              : `${visible.length} of ${items.length} flagged items`}
+          </p>
+        </div>
+      )}
+
       {loading ? (
         <div className="flex items-center justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-brand-600" /></div>
-      ) : items.length === 0 ? (
+      ) : visible.length === 0 ? (
         <div className="bg-card rounded-2xl border border-slate-200">
-          <EmptyState icon={<ShieldCheck className="h-6 w-6 text-muted-foreground" />} title={EMPTY_COPY[status].title} description={EMPTY_COPY[status].description} />
+          {items.length ? (
+            <EmptyState icon={<ShieldCheck className="h-6 w-6 text-muted-foreground" />} title="Nothing in this program" description="No flagged content from this program's spaces. Clear the filter to see the rest." />
+          ) : (
+            <EmptyState icon={<ShieldCheck className="h-6 w-6 text-muted-foreground" />} title={EMPTY_COPY[status].title} description={EMPTY_COPY[status].description} />
+          )}
         </div>
       ) : (
         <div className="space-y-3">
           {reports.length !== items.length && (
             <p className="text-sm text-slate-500">{reports.length} reports on {items.length} {items.length === 1 ? 'item' : 'items'}</p>
           )}
-          {items.map(renderCard)}
+          {visible.map(renderCard)}
         </div>
       )}
     </div>

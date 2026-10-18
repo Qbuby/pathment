@@ -620,6 +620,57 @@ class CommunityService {
     const postMap = new Map(posts.map((p) => [p.id, p]));
     const commentMap = new Map(comments.map((c) => [c.id, c]));
 
+    /**
+     * Where each report came from.
+     *
+     * The queue said what was reported and who reported it, and never which
+     * SPACE it happened in — so an admin running several programmes could not
+     * tell a report in one from a report in another, and had no way to work
+     * through their own. A post carries its scope; a comment carries a post,
+     * so its scope is one hop away.
+     */
+    const parentIds = [...new Set(comments.map((c) => c.postId).filter(Boolean))];
+    const parents = parentIds.length
+      ? await models.CommunityPost.findAll({
+        where: { id: { [Op.in]: parentIds } },
+        attributes: ['id', 'scopeType', 'scopeId'], paranoid: false, raw: true,
+      })
+      : [];
+    const parentMap = new Map(parents.map((p) => [p.id, p]));
+    const scopeOf = (target, type) => {
+      if (!target) return null;
+      if (type === 'post') return { scopeType: target.scopeType, scopeId: target.scopeId };
+      const parent = parentMap.get(target.postId);
+      return parent ? { scopeType: parent.scopeType, scopeId: parent.scopeId } : null;
+    };
+
+    // Names and owning programmes for every scope in the queue, in two queries.
+    const scopes = reports.map((r) => scopeOf(
+      r.targetType === 'post' ? postMap.get(r.targetId) : commentMap.get(r.targetId),
+      r.targetType,
+    )).filter(Boolean);
+    const clanIds = [...new Set(scopes.filter((s) => s.scopeType === 'clan').map((s) => s.scopeId).filter(Boolean))];
+    const programIds = [...new Set(scopes.filter((s) => s.scopeType === 'program').map((s) => s.scopeId).filter(Boolean))];
+    const [clanRows, programRows] = await Promise.all([
+      clanIds.length ? models.Clan.findAll({ where: { id: { [Op.in]: clanIds } }, attributes: ['id', 'name', 'programId'], raw: true }) : [],
+      programIds.length ? models.Program.findAll({ where: { id: { [Op.in]: programIds } }, attributes: ['id', 'name'], raw: true }) : [],
+    ]);
+    const clanById = new Map(clanRows.map((c) => [c.id, c]));
+    const programById = new Map(programRows.map((p) => [p.id, p]));
+    const describeScope = (scope) => {
+      if (!scope) return { scopeType: null, scopeId: null, scopeLabel: null, programId: null };
+      if (scope.scopeType === 'clan') {
+        const clan = clanById.get(scope.scopeId);
+        return { ...scope, scopeLabel: clan?.name || 'Clan', programId: clan?.programId || null };
+      }
+      if (scope.scopeType === 'program') {
+        return { ...scope, scopeLabel: programById.get(scope.scopeId)?.name || 'Program', programId: scope.scopeId };
+      }
+      // A cohort belongs to a programme too, but the queue only needs to group
+      // by programme — and global is the Lounge, which belongs to none.
+      return { ...scope, scopeLabel: scope.scopeType === 'global' ? 'Lounge' : 'Cohort', programId: null };
+    };
+
     return reports.map((r) => {
       const t = r.targetType === 'post' ? postMap.get(r.targetId) : commentMap.get(r.targetId);
       const preview = t ? `${t.title ? `${t.title} - ` : ''}${t.body || ''}`.slice(0, 240) : '(content removed)';
@@ -638,7 +689,8 @@ class CommunityService {
         targetAuthorId: t?.author?.id || null,
         targetAuthorRole: t?.author?.role || null,
         targetAuthorAvatarUrl: t ? photo(t.author) : null,
-        targetDeleted: t ? Boolean(t.deletedAt) : true
+        targetDeleted: t ? Boolean(t.deletedAt) : true,
+        ...describeScope(scopeOf(t, r.targetType))
       };
     });
   }
