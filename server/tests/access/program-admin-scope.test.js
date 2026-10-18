@@ -89,6 +89,62 @@ describe('an admin scoped to one programme', () => {
     });
   });
 
+  /**
+   * The state a programme admin is actually granted in.
+   *
+   * Somebody is given a brand-new fellowship to set up: draft, private, no
+   * clans, no enrolments. `loadWorkspaceRole` returns 'admin' only for an
+   * org-wide super admin — correctly, a programme role is not workspace
+   * administration — so this person was treated as the public and served the
+   * published-and-public view, which a draft programme is not in. They opened
+   * Programs to an empty list, and could not create the programme's first
+   * clan either, because that form reads the same list. Nothing they
+   * administered existed anywhere in the product.
+   */
+  describe('an admin of a draft programme with nothing in it yet', () => {
+    let draft;
+
+    beforeEach(async () => {
+      draft = await createProgram({ createdBy: orgAdmin.id, name: 'Qantara Fellowship' });
+      await draft.update({ status: 'draft', visibility: 'private' });
+      await models.RoleAssignment.create({
+        userId: scopedAdmin.id, role: 'program_admin', scopeType: 'program', scopeId: draft.id,
+      });
+    });
+
+    it('lists it, even though it is a draft and they are not an org admin', async () => {
+      const scope = await authzService.adminProgramScope(scopedAdmin);
+      expect(scope).toEqual(expect.arrayContaining([draft.id]));
+      // The role the server actually resolves for them — never 'admin'.
+      const { programs } = await programService.getPrograms({ limit: 50 }, scopedAdmin.id, 'mentor', scope);
+      expect(programs.map((p) => p.id)).toEqual(expect.arrayContaining([draft.id]));
+    });
+
+    it('opens it by id', async () => {
+      const scope = await authzService.adminProgramScope(scopedAdmin);
+      const program = await programService.getProgramById(draft.id, scopedAdmin.id, 'mentor', scope);
+      expect(program.id).toBe(draft.id);
+    });
+
+    /** The grant is still a boundary, not a key to the catalogue. */
+    it('still cannot see a draft programme it was not granted', async () => {
+      const otherDraft = await createProgram({ createdBy: orgAdmin.id, name: 'Not theirs' });
+      await otherDraft.update({ status: 'draft', visibility: 'private' });
+      const scope = await authzService.adminProgramScope(scopedAdmin);
+
+      const { programs } = await programService.getPrograms({ limit: 50 }, scopedAdmin.id, 'mentor', scope);
+      expect(programs.map((p) => p.id)).not.toContain(otherDraft.id);
+      await expect(programService.getProgramById(otherDraft.id, scopedAdmin.id, 'mentor', scope))
+        .rejects.toThrow();
+    });
+
+    /** And an ordinary member is still the public. */
+    it('shows a plain member nothing but published, public programmes', async () => {
+      const { programs } = await programService.getPrograms({ limit: 50 }, myMentor.id, 'mentor', []);
+      expect(programs.map((p) => p.id)).not.toContain(draft.id);
+    });
+  });
+
   describe('a programme fetched directly by id', () => {
     it('opens the one they administer', async () => {
       const program = await programService.getProgramById(mine.id, scopedAdmin.id, 'admin', [mine.id]);

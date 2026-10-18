@@ -11,9 +11,29 @@ const CROSS_KIND_LABEL = { cover: 'cover for', specialist: 'specialist help in',
 
 /** Admin clan operations: change requests, cross-clan assignments, policies. */
 class ClanRequestsService {
-  async overview() {
+  /**
+   * The queue, bounded by what this admin administers.
+   *
+   * It took no scope at all, so a programme admin opened it to every move
+   * request and cover assignment in the workspace — other programmes' people,
+   * clans and mentors, named. The rows already carry the programme (it is how
+   * the screen filters), so the bound is the same fact applied earlier.
+   *
+   * @param {string[]|null} programIds  null = unrestricted (an org-tier admin).
+   */
+  async overview(programIds = null) {
+    const scoped = Array.isArray(programIds);
+    // A request names two clans; it belongs to either. Empty scope → no rows.
+    const inScope = scoped
+      ? { [Op.or]: [
+        { '$fromClan.program_id$': { [Op.in]: programIds } },
+        { '$toClan.program_id$': { [Op.in]: programIds } },
+      ] }
+      : {};
+
     const [requests, crossClan] = await Promise.all([
       models.ClanChangeRequest.findAll({
+        where: inScope,
         order: [['status', 'ASC'], ['created_at', 'DESC']],
         include: [
           { model: models.User, as: 'mentee', attributes: ['firstName', 'lastName'] },
@@ -26,6 +46,7 @@ class ClanRequestsService {
         ]
       }),
       models.CrossClanAssignment.findAll({
+        where: inScope,
         order: [['created_at', 'DESC']],
         include: [
           { model: models.User, as: 'user', attributes: ['firstName', 'lastName'] },

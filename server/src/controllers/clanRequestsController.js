@@ -3,9 +3,12 @@ const { requestedClanId } = require('../middlewares/portalScope');
 const { successResponse } = require('../utils/responses');
 const clanRequestsService = require('../services/clanRequestsService');
 const standingClanService = require('../services/standingClanService');
+const authzService = require('../services/authzService');
 
 const overview = catchAsync(async (req, res) => {
-  const data = await clanRequestsService.overview();
+  const data = await clanRequestsService.overview(
+    await authzService.adminProgramScope(req.user),
+  );
   res.status(200).json(successResponse('Clan requests retrieved', data));
 });
 

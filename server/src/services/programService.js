@@ -138,10 +138,27 @@ class ProgramService {
 
     const where = {};
 
+    /**
+     * An admin of SOME programmes is still an admin.
+     *
+     * `userRole` is 'admin' only for an org-wide super admin — `loadWorkspaceRole`
+     * says so explicitly, and it is right to: a programme role must not become
+     * workspace administration. But this test then treated a programme admin as
+     * a member of the public and served them the published-and-public view, so
+     * somebody granted a DRAFT programme could not see the one programme they
+     * had been given. Which is what happened: a program_admin on a draft
+     * fellowship opened Programs to an empty list, and then could not create a
+     * clan in it either, because the clan form's programme picker reads this.
+     *
+     * A non-empty scope means admin rights over exactly those ids, and the
+     * `where.id` filter below is what keeps it to those.
+     */
+    const scopedAdmin = Array.isArray(programScope) && programScope.length > 0;
+
     // Filter by status - admins and creators can see all, others only public+published.
     // Privacy is enforced here at the API: a non-admin/non-creator can never list
     // a private program, regardless of any query params they send.
-    if (userRole === 'admin' || (createdBy && createdBy === userId)) {
+    if (userRole === 'admin' || scopedAdmin || (createdBy && createdBy === userId)) {
       if (status) where.status = status;
     } else {
       where.status = 'published';
@@ -265,7 +282,12 @@ class ProgramService {
      * through to the ordinary relationship checks below like anybody else.
      */
     const outOfScope = Array.isArray(programScope) && !programScope.includes(program.id);
-    const isPrivileged = (userRole === 'admin' && !outOfScope) || program.createdBy === userId;
+    // …and an admin of THIS programme sees it whatever its status, which is
+    // the whole point of granting somebody a draft one to set up.
+    const scopedAdminHere = Array.isArray(programScope) && programScope.includes(program.id);
+    const isPrivileged = (userRole === 'admin' && !outOfScope)
+      || scopedAdminHere
+      || program.createdBy === userId;
     if (!isPrivileged) {
       let allowed = program.status === 'published' && program.visibility === 'public';
 
