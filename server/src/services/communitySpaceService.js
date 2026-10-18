@@ -173,6 +173,55 @@ class CommunitySpaceService {
       }
     }
 
+    /**
+     * Every space an admin administers, not only the ones they joined.
+     *
+     * An admin's spaces came from their own memberships and enrolments, same
+     * as anybody's — so somebody who runs the workspace but is not in a clan
+     * saw the Lounge and nothing else, and the one person responsible for
+     * moderating these conversations had no way to read them. They could
+     * already OPEN any space by id (see getSpaceContext below); they just
+     * could not find one.
+     *
+     * Bounded by their programme scope, so a programme-scoped admin gets
+     * their programmes' clans and not the workspace's. `add` is idempotent on
+     * the key, so a space they are genuinely a member of keeps the richer
+     * entry built above rather than being replaced by this one.
+     */
+    if (isAdmin(user)) {
+      const scope = await require('./authzService').adminProgramScope(user);
+      const where = Array.isArray(scope) ? { programId: { [Op.in]: scope } } : {};
+      const [adminClans, adminPrograms] = await Promise.all([
+        models.Clan.findAll({
+          where, attributes: ['id', 'name', 'programId', 'kind', 'frozenAt'],
+          include: [{ model: models.Program, as: 'program', attributes: ['id', 'name'], required: false }],
+        }),
+        models.Program.findAll({
+          where: Array.isArray(scope) ? { id: { [Op.in]: scope } } : {},
+          attributes: ['id', 'name'],
+        }),
+      ]);
+      for (const c of adminClans) {
+        add({
+          key: `clan:${c.id}`,
+          type: 'clan',
+          id: c.id,
+          name: c.name,
+          subtitle: c.program?.name || 'Clan',
+          role: 'admin',
+          isModerator: true,
+          readOnly: isSpaceArchived(),
+          workClosed: c.kind !== 'standing' && Boolean(c.frozenAt),
+        });
+      }
+      for (const prog of adminPrograms) {
+        add({
+          key: `program:${prog.id}`, type: 'program', id: prog.id,
+          name: prog.name, subtitle: 'Program', role: 'admin', isModerator: true,
+        });
+      }
+    }
+
     // Global lounge - everyone.
     add({
       key: 'global',

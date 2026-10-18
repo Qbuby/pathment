@@ -15,6 +15,8 @@ import { MenuPanel } from '@/components/shared/MenuPanel';
 import { ReportPostDialog } from '@/components/community/ReportPostDialog';
 import { toExternalHref } from '@/lib/utils/url';
 import { Avatar } from '@/components/shared/Avatar';
+import { SelectMenu } from '@/components/shared/SelectMenu';
+import { useProgramClans } from '@/lib/hooks/shared/useProgramClans';
 
 /* ── Mention picker ─────────────────────────────────────────────────────── */
 function MentionPicker({ people, value, onChange }: { people: CommunityPerson[]; value: string[]; onChange: (ids: string[]) => void }) {
@@ -428,8 +430,28 @@ const SPACE_ICON: Record<string, typeof Users> = { clan: Users, cohort: Messages
  */
 function SpaceSwitcher({ hub }: { hub: ReturnType<typeof useCommunityHub> }) {
   const [showFinished, setShowFinished] = useState(false);
-  const live = hub.spaces.filter((s) => !s.workClosed);
-  const finished = hub.spaces.filter((s) => s.workClosed);
+  /**
+   * Narrowing the list by programme.
+   *
+   * A mentee is in two or three spaces and never needs this. An admin is now
+   * shown every space they administer — forty-eight clans on this workspace —
+   * and a sidebar of forty-eight names is not a sidebar. It appears only once
+   * the list is long enough to be worth cutting down.
+   */
+  const { programs, programOf } = useProgramClans();
+  const [programId, setProgramId] = useState('');
+  const inProgram = (s: CommunitySpace) => {
+    if (!programId) return true;
+    if (s.type === 'program') return s.id === programId;
+    if (s.type === 'clan') return programOf(s.id) === programId;
+    // The Lounge and cohort spaces belong to no single programme, so a
+    // programme filter should not pretend to have an opinion about them.
+    return false;
+  };
+  const scoped = hub.spaces.filter(inProgram);
+  const live = scoped.filter((s) => !s.workClosed);
+  const finished = scoped.filter((s) => s.workClosed);
+  const showFilter = programs.length > 1 && hub.spaces.length > 6;
 
   const row = (s: CommunitySpace) => {
     const Icon = SPACE_ICON[s.type] || Users;
@@ -449,8 +471,24 @@ function SpaceSwitcher({ hub }: { hub: ReturnType<typeof useCommunityHub> }) {
 
   return (
     <div className="bg-card rounded-2xl border border-slate-200 p-3">
-      <p className="px-2 pt-1 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Spaces</p>
+      <p className="px-2 pt-1 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+        Spaces
+        {showFilter && <span className="ml-1.5 font-normal normal-case tracking-normal text-slate-300">{scoped.length} of {hub.spaces.length}</span>}
+      </p>
+      {showFilter && (
+        <div className="mb-2 px-0.5">
+          <SelectMenu
+            value={programId}
+            onChange={setProgramId}
+            ariaLabel="Filter spaces by program"
+            options={[{ value: '', label: 'All programs' }, ...programs.map((p) => ({ value: p.id, label: p.label }))]}
+          />
+        </div>
+      )}
       <div className="space-y-1">{live.map(row)}</div>
+      {scoped.length === 0 && (
+        <p className="px-2.5 py-3 text-xs text-slate-400">No spaces in this program.</p>
+      )}
 
       {finished.length > 0 && (
         <div className="mt-2 border-t border-border pt-2">
