@@ -1,22 +1,14 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { SelectMenu } from '@/components/shared/SelectMenu';
-import { clanApi } from '@/lib/services/clan-api';
+import { useProgramClans } from '@/lib/hooks/shared/useProgramClans';
 
 export interface ProgramClanValue {
   /** '' = every programme this admin may see. */
   programId: string;
   /** '' = every clan within the chosen programme. */
   clanId: string;
-}
-
-interface ClanLite {
-  id: string;
-  name: string;
-  programId: string | null;
-  programName: string | null;
-  programStatus: string | null;
 }
 
 /**
@@ -53,46 +45,12 @@ export function ProgramClanFilter({
   clanWidth?: string;
   programWidth?: string;
 }) {
-  const [clans, setClans] = useState<ClanLite[]>([]);
+  const { clans, programs } = useProgramClans();
 
-  useEffect(() => {
-    let live = true;
-    clanApi.list()
-      .then((r: unknown) => {
-        const body = r as { data?: { clans?: unknown[] } | unknown[] };
-        const raw = (Array.isArray(body?.data) ? body.data : body?.data?.clans ?? []) as Record<string, unknown>[];
-        if (!live) return;
-        setClans(raw.map((c) => {
-          const program = c.program as { id?: string; name?: string; status?: string } | undefined;
-          return {
-            id: String(c.id),
-            name: String(c.name ?? 'Clan'),
-            programId: (c.programId as string) ?? program?.id ?? null,
-            programName: program?.name ?? null,
-            programStatus: program?.status ?? null,
-          };
-        }));
-      })
-      .catch(() => { if (live) setClans([]); });
-    return () => { live = false; };
-  }, []);
-
-  const programOptions = useMemo(() => {
-    const seen = new Map<string, string>();
-    for (const c of clans) {
-      if (!c.programId || seen.has(c.programId)) continue;
-      // The status matters here: a workspace accumulates finished programmes
-      // and "Full Stack 2025" reads identically to the live one without it.
-      const status = c.programStatus === 'completed' ? 'Completed'
-        : c.programStatus === 'published' ? 'Live'
-          : c.programStatus;
-      seen.set(c.programId, `${c.programName || 'Program'}${status ? ` · ${status}` : ''}`);
-    }
-    return [
-      { value: '', label: 'All programs' },
-      ...[...seen].map(([v, label]) => ({ value: v, label })).sort((a, b) => a.label.localeCompare(b.label)),
-    ];
-  }, [clans]);
+  const programOptions = useMemo(
+    () => [{ value: '', label: 'All programs' }, ...programs.map((p) => ({ value: p.id, label: p.label }))],
+    [programs],
+  );
 
   const clanOptions = useMemo(() => [
     { value: '', label: value.programId ? 'All clans in this program' : 'All clans' },
