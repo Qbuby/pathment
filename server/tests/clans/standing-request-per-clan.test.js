@@ -583,16 +583,20 @@ describe('work carries over automatically on join', () => {
   });
 
   /**
-   * The constraint that mattered most: a standing clan approved BEFORE this
-   * shipped must not suddenly generate assignments. Migration 126 set exactly
-   * this flag false on every clan that already existed.
+   * `autoContinueOnJoin` no longer decides whether work comes across.
+   *
+   * It governed the old carry, which ASSIGNED the next roadmap step — new
+   * work, so an opt-out made sense and migration 126 set it false on every
+   * clan that already existed. Copying somebody's existing record into the
+   * clan they are now in is not new work, and the opt-out is what left
+   * production with 2,151 stranded tasks: the flag was false on every clan
+   * whose roster was adopted, so nothing followed anybody.
    */
-  it('carries nothing when the clan was approved before this existed', async () => {
+  it('carries their work even on a clan that never opted in', async () => {
     await standing3.update({ autoContinueOnJoin: false });
     await standingClanService.addMenteesToStandingClan(standing3.id, [joiner.id], lead3);
 
-    expect(await carriedInto(standing3.id)).toBe(0);
-    // They still joined — the opt-out is about work, not membership.
+    expect(await carriedInto(standing3.id)).toBeGreaterThan(0);
     expect(await m.ClanMembership.count({
       where: { clanId: standing3.id, userId: joiner.id, role: 'mentee', status: 'active' },
     })).toBe(1);
@@ -633,70 +637,56 @@ describe('work carries over automatically on join', () => {
    * feedback behind it. It stays available on the manual button, which is
    * exactly what `continuationPreview` still offering it means.
    */
-  describe('only work whose mentor came too', () => {
+  /**
+   * Every mentor's work comes, not only the team's.
+   *
+   * This used to carry work ONLY when the mentor who set it had come across
+   * too, and hold the rest behind a manual button for a person who might
+   * never arrive. That was the right call while the carry meant "assign them
+   * the next step" — somebody has to own new work. It is the wrong call for
+   * a clan that is simply continuing: production ended up with 2,151 tasks
+   * stranded in frozen cohort clans and 103 mentees looking at an empty
+   * screen, because the gate held and nobody pressed the button.
+   *
+   * So everything comes. What the gate protected is kept in a different way:
+   * a copy whose mentor did NOT come across is re-pointed at this clan's
+   * lead, so it is still somebody's to review rather than belonging to a
+   * stranger and appearing in nobody's queue.
+   */
+  describe('whose work comes across', () => {
     beforeEach(async () => {
       await seedRoadmapWorkBy(strangerMentor, 'Held');
     });
 
-    it('carries the team\'s work and leaves the stranger\'s behind', async () => {
+    it('carries the stranger\'s work too, re-pointed at the lead', async () => {
       await standingClanService.addMenteesToStandingClan(standing3.id, [joiner.id], lead3);
       const carried = await m.AssignedTask.findAll({
         where: { clanId: standing3.id, menteeId: joiner.id, continuedFromTaskId: { [require('sequelize').Op.ne]: null } },
         attributes: ['mentorId'],
       });
       expect(carried.length).toBeGreaterThan(0);
+      // The stranger never joined, so none of it is left owned by them.
       expect(carried.some((row) => row.mentorId === strangerMentor.id)).toBe(false);
-      for (const row of carried) expect(row.mentorId).toBe(otherMentor.id);
+      // Their work is here, under the lead who is now responsible for it.
+      expect(carried.some((row) => row.mentorId === lead3.id)).toBe(true);
+      // And the team's own work keeps the mentor who set it.
+      expect(carried.some((row) => row.mentorId === otherMentor.id)).toBe(true);
     });
 
-    it('still offers the held work on the manual button', async () => {
-      await standingClanService.addMenteesToStandingClan(standing3.id, [joiner.id], lead3);
-      const preview = await standingClanService.continuationPreview(standing3.id, joiner.id, lead3);
-      // The carried roadmap is gone from the preview because it is already
-      // here; the held one is still on offer, which IS the button appearing.
-      expect(preview.roadmaps.length).toBe(1);
-      expect(preview.roadmaps[0].sourceMentorId).toBe(strangerMentor.id);
-    });
-
-    it('carries nothing at all when no mentor came across', async () => {
+    it('carries it even when no mentor came across at all', async () => {
       await m.AssignedTask.update(
         { mentorId: strangerMentor.id },
         { where: { clanId: cohort3.id, menteeId: joiner.id } },
       );
       await standingClanService.addMenteesToStandingClan(standing3.id, [joiner.id], lead3);
 
-      expect(await carriedInto(standing3.id)).toBe(0);
-      // And they are still in the clan, with the button waiting for the mentor.
+      expect(await carriedInto(standing3.id)).toBeGreaterThan(0);
       expect(await m.ClanMembership.count({
         where: { clanId: standing3.id, userId: joiner.id, role: 'mentee', status: 'active' },
       })).toBe(1);
-      const preview = await standingClanService.continuationPreview(standing3.id, joiner.id, lead3);
-      expect(preview.roadmaps.length).toBe(2);
     });
 
-    /**
-     * The resume step is often the step they never reached, so it has no
-     * assignment of its own to read a mentor off. The roadmap's mentor is still
-     * the person who set the steps before it.
-     */
-    it('keeps the previous mentor even when the resume step was never assigned', async () => {
-      // Drop the unfinished step's assignment: step 1 is completed, step 2 was
-      // never given out, so the carry resumes at a step with no source row.
-      await m.AssignedTask.destroy({
-        where: { clanId: cohort3.id, menteeId: joiner.id, mentorId: otherMentor.id, status: 'in_progress' },
-      });
-      await standingClanService.addMenteesToStandingClan(standing3.id, [joiner.id], lead3);
-
-      const carried = await m.AssignedTask.findAll({
-        where: { clanId: standing3.id, menteeId: joiner.id },
-        attributes: ['mentorId'],
-      });
-      expect(carried.length).toBeGreaterThan(0);
-      // otherMentor set the roadmap, lead3 did the adding.
-      for (const row of carried) expect(row.mentorId).toBe(otherMentor.id);
-    });
-
-    it('carries work the standing clan\'s own lead set', async () => {
+    it('keeps the mentor who set the work when they are on this team', async () => {
       await m.AssignedTask.update(
         { mentorId: lead3.id },
         { where: { clanId: cohort3.id, menteeId: joiner.id, mentorId: strangerMentor.id } },
@@ -707,7 +697,8 @@ describe('work carries over automatically on join', () => {
         where: { clanId: standing3.id, menteeId: joiner.id, continuedFromTaskId: { [require('sequelize').Op.ne]: null } },
         attributes: ['mentorId'],
       });
-      expect(carried.map((row) => row.mentorId).sort()).toEqual([lead3.id, otherMentor.id].sort());
+      const owners = [...new Set(carried.map((row) => row.mentorId))].sort();
+      expect(owners).toEqual([lead3.id, otherMentor.id].sort());
     });
   });
 });
@@ -814,7 +805,12 @@ describe('approving a standing-clan request brings the unfinished work with it',
    * ...and the rule it does NOT change: one mentee added by hand still only
    * gets the work whose mentor came with them.
    */
-  it('still holds a departed mentor\'s work when one mentee is added by hand', async () => {
+  /**
+   * It used to be held back for a mentor who had left. Nobody arrives to
+   * press the button, so the work simply stayed invisible; it comes across
+   * now with the lead as its owner.
+   */
+  it('carries a departed mentor\'s work when one mentee is added by hand', async () => {
     await seedWorkBy(stranger4, menteeA, 'Departed');
     await m.ClanMembership.update(
       { status: 'removed' },
@@ -828,10 +824,18 @@ describe('approving a standing-clan request brings the unfinished work with it',
 
     await standingClanService.addMenteesToStandingClan(standing.id, [menteeA.id], lead4);
 
-    expect(await carried(standing.id, menteeA.id)).toHaveLength(0);
+    const rows = await carried(standing.id, menteeA.id);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect(row.mentorId).toBe(lead4.id);
   });
 
-  it('leaves the completed work where it was earned', async () => {
+  /**
+   * The original is what matters here. A copy of completed work now appears
+   * in the standing clan — that is the point, the mentee should see what
+   * they did — but the row the finished programme's record and its
+   * certificate read must still be sitting in the cohort clan, untouched.
+   */
+  it('leaves the completed work where it was earned, and copies it across', async () => {
     await seedWorkBy(lead4, menteeA, 'Lead');
     const saved = await approve();
 
@@ -843,7 +847,7 @@ describe('approving a standing-clan request brings the unfinished work with it',
     const movedCompleted = await m.AssignedTask.count({
       where: { clanId: saved.createdClanId, menteeId: menteeA.id, status: 'completed' },
     });
-    expect(movedCompleted).toBe(0);
+    expect(movedCompleted).toBe(1);
   });
 
   it('gives the mentee something they can actually submit', async () => {
@@ -851,11 +855,15 @@ describe('approving a standing-clan request brings the unfinished work with it',
     const saved = await approve();
 
     const rows = await carried(saved.createdClanId, menteeA.id);
-    // Carried work must be live work in the new clan, not a read-only trace:
-    // open status, stamped with this clan, and owned by this mentee.
-    expect(rows.every((r) => ['assigned', 'in_progress'].includes(r.status))).toBe(true);
+    // Every copy is stamped with this clan and owned by this mentee…
     expect(rows.every((r) => r.clanId === saved.createdClanId)).toBe(true);
     expect(rows.every((r) => r.menteeId === menteeA.id)).toBe(true);
+    // …and the unfinished ones arrive live, not as a read-only trace. The
+    // finished ones keep the status they earned, which is the whole point of
+    // copying rather than re-assigning.
+    const live = rows.filter((r) => r.status !== 'completed');
+    expect(live.length).toBeGreaterThan(0);
+    expect(live.every((r) => ['assigned', 'in_progress'].includes(r.status))).toBe(true);
   });
 
   /**
@@ -870,7 +878,9 @@ describe('approving a standing-clan request brings the unfinished work with it',
   it('and the mentee can submit it, and the mentor can see it waiting', async () => {
     await seedWorkBy(lead4, menteeA, 'Lead');
     const saved = await approve();
-    const [task] = await carried(saved.createdClanId, menteeA.id);
+    // The unfinished one — a completed copy is not meant to be submittable.
+    const task = (await carried(saved.createdClanId, menteeA.id))
+      .find((r) => r.status !== 'completed');
     expect(task).toBeTruthy();
 
     const taskService = require('../../src/services/taskService');

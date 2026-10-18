@@ -10,6 +10,7 @@ const { HISTORICAL_MEMBERSHIP_STATUSES } = require('../config/membership');
 const { NOTIFICATION_EVENTS } = require('../config/notificationMatrix');
 const { getRequestContext } = require('../utils/auditContext');
 const logger = require('../utils/logger');
+const { mirrorPriorWork } = require('./standingWorkMirror');
 const { NotFoundError, ForbiddenError, ValidationError, ConflictError } = require('../utils/errors/errorTypes');
 
 // clanService requires this module at load time — keep lazy to avoid the cycle.
@@ -1099,8 +1100,36 @@ class StandingClanService {
      * And only the work whose mentor is on this clan's team — `_autoContinueFor`
      * explains why the rest waits for a person.
      */
-    if (clan.autoContinueOnJoin && joined.length) {
-      await Promise.all(joined.map((menteeId) => this.carryWorkOnJoin(clanId, menteeId, actor, { carryAll })));
+    /**
+     * And bring the rest of their record with them.
+     *
+     * This REPLACES the old `carryWorkOnJoin` on this path, and the two must
+     * never both run: that one resumes a roadmap by assigning the step the
+     * mentee had reached, while this copies that same task across, so a
+     * mentee would get the step twice.
+     *
+     * Unconditional, where the old one was opt-in per clan. Every clan-scoped
+     * read filters on `clan_id`, so a mentee who joins without this lands in
+     * an empty clan however the clan is configured — which is the state
+     * production was found in. `continueWork` stays as the mentor's manual
+     * "pick up where we left off" button.
+     *
+     * Idempotent: `mirrorPriorWork` skips anything already mirrored, so a
+     * second add is a no-op rather than a second copy.
+     *
+     * Deliberately not fatal: somebody added to a clan stays added even if
+     * their history could not be copied. The copy is re-runnable; the
+     * membership decision is not something to undo over it.
+     */
+    for (const menteeId of joined) {
+      try {
+        const moved = await mirrorPriorWork(sequelize, { clanId, menteeId });
+        if (moved.tasks) {
+          logger.info('[standingClan] carried prior work into the continuation', { clanId, menteeId, ...moved });
+        }
+      } catch (error) {
+        logger.warn(`[standingClan] could not carry prior work for ${menteeId} into ${clanId}: ${error.message}`);
+      }
     }
     return rows;
   }
