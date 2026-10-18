@@ -16,7 +16,15 @@ const mockModels = {
 
 jest.mock('../../src/db', () => ({ models: mockModels, sequelize: {} }));
 jest.mock('../../src/utils/auditContext', () => ({ getRequestContext: () => mockContext }));
-jest.mock('../../src/services/authzService', () => ({ getCapabilities: jest.fn(), adminProgramScope: jest.fn() }));
+jest.mock('../../src/services/authzService', () => ({
+  getCapabilities: jest.fn(),
+  adminProgramScope: jest.fn(),
+  getAssignments: jest.fn(async () => []),
+  // The one shared resolver every scoped read now asks (see programScopeFor).
+  programScopeFor: jest.fn(),
+  clanIdsInPrograms: jest.fn(async () => []),
+  adminUserIdsFor: jest.fn(async () => []),
+}));
 jest.mock('../../src/services/schedulingService', () => ({ getMenteeMentorIds: jest.fn() }));
 
 const authzService = require('../../src/services/authzService');
@@ -37,6 +45,10 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockContext = { organizationId: 'organization' };
   mockModels.OrganizationMembership.findAll.mockResolvedValue(memberships);
+  authzService.programScopeFor.mockResolvedValue({ unrestricted: false, programIds: [], clanIds: [] });
+  authzService.clanIdsInPrograms.mockResolvedValue([]);
+  authzService.adminUserIdsFor.mockResolvedValue([]);
+  mockModels.MentorProfile.findAll.mockResolvedValue([]);
 });
 
 it('gives a mentee only their clan, assigned mentor and admins', async () => {
@@ -79,8 +91,8 @@ it('gives an ORG admin every other active workspace member', async () => {
   mockContext.portalRole = 'admin';
   mockModels.User.findByPk.mockResolvedValue({ id: 'admin', role: 'admin' });
   authzService.getCapabilities.mockResolvedValue(['admin']);
-  // null scope = unrestricted, which is what an org-tier admin resolves to.
-  authzService.adminProgramScope.mockResolvedValue(null);
+  // unrestricted is what an org-tier admin resolves to: no bound at all.
+  authzService.programScopeFor.mockResolvedValue({ unrestricted: true, programIds: null, clanIds: null });
 
   await expect(messagingService.getAllowedRecipientIds('admin')).resolves.toEqual([
     'mentor',
@@ -102,14 +114,65 @@ it('bounds a PROGRAMME admin to their programmes, keeping org admins reachable',
   mockContext.portalRole = 'admin';
   mockModels.User.findByPk.mockResolvedValue({ id: 'scoped', role: 'mentor' });
   authzService.getCapabilities.mockResolvedValue(['admin']);
-  authzService.adminProgramScope.mockResolvedValue(['prog-1']);
-  mockModels.Clan.findAll.mockResolvedValue([{ id: 'in-scope-clan' }]);
+  authzService.programScopeFor.mockResolvedValue({
+    unrestricted: false, programIds: ['prog-1'], clanIds: ['in-scope-clan'],
+  });
   mockModels.ClanMembership.findAll.mockResolvedValue([{ userId: 'mentee' }, { userId: 'peer' }]);
 
   const visible = await messagingService.getAllowedRecipientIds('scoped');
   expect(visible).toEqual(expect.arrayContaining(['mentee', 'peer', 'admin']));
   expect(visible).not.toContain('outside-mentee');
   expect(visible).not.toContain('other-mentor');
+});
+
+/**
+ * A mentor's peers are the mentors of their own programmes.
+ *
+ * The branch was `MentorProfile.findAll({ attributes: ['userId'] })` - no
+ * filter of any kind - so a mentor running one clan of one fellowship had
+ * every mentor in the workspace in their directory, from programmes they have
+ * nothing to do with.
+ */
+it('bounds a MENTOR to the mentors of their own programmes', async () => {
+  mockContext.portalRole = 'mentor';
+  mockModels.User.findByPk.mockResolvedValue({ id: 'mentor', role: 'mentor' });
+  authzService.getCapabilities.mockResolvedValue(['mentor']);
+  authzService.programScopeFor.mockResolvedValue({
+    unrestricted: false, programIds: ['prog-1'], clanIds: ['own-clan'],
+  });
+  authzService.clanIdsInPrograms.mockResolvedValue(['own-clan', 'sibling-clan']);
+  // Asked for the clans of their programme, never for every MentorProfile.
+  mockModels.ClanMembership.findAll
+    .mockResolvedValueOnce([{ userId: 'mentor' }, { userId: 'other-mentor' }])
+    .mockResolvedValueOnce([{ clanId: 'own-clan' }])
+    .mockResolvedValueOnce([{ userId: 'mentee' }]);
+  mockModels.MentorMenteeMatch.findAll.mockResolvedValue([]);
+
+  const visible = await messagingService.getAllowedRecipientIds('mentor');
+  expect(visible).toEqual(expect.arrayContaining(['other-mentor', 'mentee', 'admin']));
+  expect(visible).not.toContain('outside-mentee');
+  expect(mockModels.MentorProfile.findAll).not.toHaveBeenCalled();
+});
+
+/**
+ * A mentor who belongs to no programme at all keeps the workspace's mentors.
+ * Bounding somebody to programmes they do not have would hand them an empty
+ * directory, and mentor-to-mentor messaging has never needed a clan between
+ * them. The bound narrows a real scope; it does not invent one.
+ */
+it('falls back to every mentor when the mentor has no programme', async () => {
+  mockContext.portalRole = 'mentor';
+  mockModels.User.findByPk.mockResolvedValue({ id: 'mentor', role: 'mentor' });
+  authzService.getCapabilities.mockResolvedValue(['mentor']);
+  authzService.clanIdsInPrograms.mockResolvedValue([]);
+  mockModels.MentorProfile.findAll.mockResolvedValue([
+    { userId: 'mentor' }, { userId: 'other-mentor' },
+  ]);
+  mockModels.ClanMembership.findAll.mockResolvedValue([]);
+  mockModels.MentorMenteeMatch.findAll.mockResolvedValue([]);
+
+  const visible = await messagingService.getAllowedRecipientIds('mentor');
+  expect(visible).toEqual(expect.arrayContaining(['other-mentor']));
 });
 
 it('puts allowed ids into the query so forbidden users are never fetched', async () => {

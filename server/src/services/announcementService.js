@@ -2,10 +2,19 @@ const { Op } = require('sequelize');
 const { models } = require('../db');
 const { NotFoundError, ValidationError, ForbiddenError } = require('../utils/errors/errorTypes');
 const authzService = require('./authzService');
+const { VISIBLE_MEMBERSHIP_STATUSES } = require('../config/membership');
 
 const AUDIENCE_TYPES = ['all', 'mentors', 'mentees', 'program', 'clan'];
 /** Clan roles that mean "I mentor this clan" — mirrors the client's picker. */
 const MENTOR_CLAN_ROLES = ['lead_mentor', 'co_mentor', 'core_team'];
+
+/**
+ * Enrolment statuses that mean this person's run of the programme is over, so
+ * the window on its announcements closes. 'program_completed' is in here: an
+ * alumnus keeps what they could already read and stops receiving what is
+ * posted after they finished.
+ */
+const ENDED_ENROLMENT_STATUSES = ['rejected', 'dropped', 'program_completed'];
 
 /**
  * Announcements with audience targeting + per-viewer visibility.
@@ -52,29 +61,160 @@ class AnnouncementService {
     return null; // no portal stated: every membership counts, as before
   }
 
-  /** Clans + programs the viewer belongs to (for visibility filtering). */
+  /**
+   * Clans + programmes the viewer belongs to, and WHEN they joined each.
+   *
+   * The dates are the point of this. Visibility used to be pure set membership
+   * - "are you in programme X right now?" - so somebody who enrolled this
+   * morning opened Announcements onto eight months of another cohort's
+   * logistics, "Demo Day is complete, well done everyone" included. The same
+   * query had no status filter at all, so a mentee who dropped out kept
+   * receiving new posts for ever.
+   *
+   * A programme's anchor is the EARLIEST moment this person was connected to
+   * it. A clan reads on its programme's anchor, never on the clan join date: a
+   * mentee moved into a standing clan gets a fresh clan_memberships row, so
+   * anchoring on the clan would hide months of their own clan's history on the
+   * day an admin approves the move.
+   */
   async _scope(user, portalRole = null) {
     const caps = await this._caps(user);
     const roles = this._membershipRolesFor(portalRole);
     const memberships = await models.ClanMembership.findAll({
-      where: { userId: user.id, status: 'active', ...(roles ? { role: { [Op.in]: roles } } : {}) },
-      include: [{ model: models.Clan, as: 'clan', attributes: ['programId'] }]
+      // A PAUSED member still belongs to the clan - the whole point of a pause
+      // is that somebody brings them back - so they keep reading its posts.
+      where: {
+        userId: user.id,
+        status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES },
+        ...(roles ? { role: { [Op.in]: roles } } : {}),
+      },
+      include: [{ model: models.Clan, as: 'clan', attributes: ['id', 'programId'] }]
     });
-    const clanIds = memberships.map((m) => m.clanId);
-    const programIds = new Set(memberships.map((m) => m.clan?.programId).filter(Boolean));
+
+    const programFrom = new Map();
+    const programTo = new Map();
+    const clanFrom = new Map();
+    const clanJoinedAt = new Map();
+    const programIds = new Set();
+    // Which clans, kept separate from WHEN they joined each. A membership row
+    // with no join date on record still puts them in the clan - folding the
+    // two together dropped those clans out of the result entirely.
+    const clanIds = new Set();
+    const earliest = (map, key, at) => {
+      if (!key || !at) return;
+      const when = new Date(at);
+      const prev = map.get(key);
+      if (!prev || when < prev) map.set(key, when);
+    };
+
+    for (const m of memberships) {
+      if (m.clanId) clanIds.add(m.clanId);
+      earliest(clanJoinedAt, m.clanId, m.joinedAt || m.createdAt);
+      if (m.clan?.programId) {
+        programIds.add(m.clan.programId);
+        earliest(programFrom, m.clan.programId, m.joinedAt || m.createdAt);
+      }
+    }
 
     if (caps.includes('mentee') && portalRole !== 'mentor') {
-      const enrollments = await models.Enrollment.findAll({ where: { menteeId: user.id }, attributes: ['programId'] });
-      enrollments.forEach((e) => programIds.add(e.programId));
+      const enrollments = await models.Enrollment.findAll({
+        where: { menteeId: user.id },
+        attributes: ['programId', 'status', 'enrolledAt', 'completedAt', 'droppedAt', 'createdAt', 'updatedAt']
+      });
+      const byProgram = new Map();
+      for (const e of enrollments) {
+        if (!e.programId) continue;
+        if (!byProgram.has(e.programId)) byProgram.set(e.programId, []);
+        byProgram.get(e.programId).push(e);
+      }
+      for (const [programId, rows] of byProgram) {
+        programIds.add(programId);
+        rows.forEach((r) => earliest(programFrom, programId, r.enrolledAt || r.createdAt));
+        /**
+         * A ceiling, and only when EVERY enrolment in the programme has ended.
+         * One live enrolment means they are current, whatever the older rows
+         * say: somebody who dropped a cohort and joined the next one is not an
+         * alumnus.
+         *
+         * Their CLAN posts are deliberately unaffected. A standing clan is
+         * where alumni live, and membership of it is a live relationship that
+         * has nothing to do with an enrolment's status.
+         */
+        if (!rows.some((r) => !ENDED_ENROLMENT_STATUSES.includes(r.status))) {
+          const ends = rows
+            .map((r) => r.droppedAt || r.completedAt || r.updatedAt)
+            .filter(Boolean)
+            .map((d) => new Date(d).getTime());
+          if (ends.length) programTo.set(programId, new Date(Math.max(...ends)));
+        }
+      }
     }
+
     if (caps.includes('mentor') && portalRole !== 'mentee') {
       const matches = await models.MentorMenteeMatch.findAll({
         where: { mentorId: user.id, status: 'active' },
         include: [{ model: models.Enrollment, as: 'enrollment', attributes: ['programId'] }]
       });
-      matches.forEach((m) => m.enrollment?.programId && programIds.add(m.enrollment.programId));
+      matches.forEach((m) => {
+        const programId = m.enrollment?.programId;
+        if (!programId) return;
+        programIds.add(programId);
+        earliest(programFrom, programId, m.createdAt);
+      });
     }
-    return { caps, clanIds, programIds: [...programIds] };
+
+    for (const m of memberships) {
+      const viaProgram = m.clan?.programId ? programFrom.get(m.clan.programId) : null;
+      clanFrom.set(m.clanId, viaProgram || clanJoinedAt.get(m.clanId) || null);
+    }
+
+    return {
+      caps,
+      clanIds: [...clanIds],
+      programIds: [...programIds],
+      programFrom,
+      programTo,
+      clanFrom,
+      orgFrom: await this._orgJoinedAt(user),
+    };
+  }
+
+  /**
+   * When this person joined the workspace: the floor for the org-wide
+   * audiences. An announcement to "Everyone" from last March is no more
+   * relevant to somebody who signed up in October than a programme one is.
+   *
+   * Null when neither date is on record, which leaves the org-wide audiences
+   * unbounded - the behaviour before any of this, and the safe way to fail.
+   */
+  async _orgJoinedAt(user) {
+    const membership = await models.OrganizationMembership.findOne({
+      where: { userId: user.id },
+      attributes: ['joinedAt']
+    });
+    const at = membership?.joinedAt || user.createdAt || null;
+    return at ? new Date(at) : null;
+  }
+
+  /**
+   * One audience branch, bounded to the viewer's own window on that audience.
+   *
+   * `pinned` escapes the floor, and that is the whole design. The pin already
+   * exists, already sorts first and already means "this outlives the moment",
+   * so it is what carries the handbook posts - code of conduct, how to submit
+   * work, office hours are on Thursdays - to everybody who joins later, while
+   * the perishable ones stay with the cohort they were written for. No new
+   * field, no new column, and nothing new for an admin to learn.
+   *
+   * The ceiling is not escapable: somebody whose run of the programme has ended
+   * should not receive what was posted afterwards, pinned or not.
+   */
+  _within(match, from, to) {
+    const and = [];
+    if (from) and.push({ [Op.or]: [{ pinned: true }, { createdAt: { [Op.gte]: from } }] });
+    if (to) and.push({ createdAt: { [Op.lte]: to } });
+    if (!and.length) return match;
+    return { ...match, [Op.and]: and };
   }
 
   /**
@@ -87,6 +227,11 @@ class AnnouncementService {
    *
    * Returns undefined in the ADMIN portal, where everything is visible for
    * oversight.
+   *
+   * Every non-admin branch is also bounded in TIME, by the viewer's own join
+   * date for that audience - see `_scope` and `_within`. Membership alone was
+   * the wrong question: it handed a mentee who enrolled this morning every
+   * announcement the programme has ever had.
    *
    * It used to return undefined for anyone who merely *held* admin, whatever
    * screen they were on. A mentor who also administers the workspace therefore
@@ -109,37 +254,52 @@ class AnnouncementService {
        * and "all mentees" reached this programme's people too, so hiding
        * them would misreport what their own members have been told.
        */
-      const scope = await authzService.adminProgramScope(user);
-      if (!Array.isArray(scope)) return undefined;
-      const clansInScope = scope.length
-        ? await models.Clan.findAll({ where: { programId: { [Op.in]: scope } }, attributes: ['id'], raw: true })
-        : [];
+      const scope = await authzService.programScopeFor(user, 'admin');
+      if (scope.unrestricted) return undefined;
+      /**
+       * No join-date window for an admin, on purpose. A mentee reads
+       * announcements to know what is happening; an admin reads them to know
+       * what their programme's people have been told, and that is a record,
+       * which means all of it.
+       */
       return {
         [Op.or]: [
           { authorId: user.id },
           { audience: { [Op.in]: ['all', 'mentors', 'mentees'] } },
-          { audience: 'program', audienceId: { [Op.in]: scope } },
-          { audience: 'clan', audienceId: { [Op.in]: clansInScope.map((c) => c.id) } },
+          { audience: 'program', audienceId: { [Op.in]: scope.programIds } },
+          { audience: 'clan', audienceId: { [Op.in]: scope.clanIds } },
         ],
       };
     }
 
-    const caps = await this._caps(user);
-    const { clanIds, programIds } = await this._scope(user, portalRole);
+    const { caps, clanIds, programIds, programFrom, programTo, clanFrom, orgFrom } =
+      await this._scope(user, portalRole);
 
     // A clan selected in the sidebar narrows the clan-targeted announcements to
     // that clan. It can only ever subtract: a clan they are not in cannot widen
     // this, because the intersection with their own memberships is empty.
     const visibleClanIds = clanId ? clanIds.filter((id) => id === clanId) : clanIds;
 
-    const or = [
-      { authorId: user.id },      // you always see your own
-      { audience: 'all' }
-    ];
-    if (caps.includes('mentor') && portalRole !== 'mentee') or.push({ audience: 'mentors' });
-    if (caps.includes('mentee') && portalRole !== 'mentor') or.push({ audience: 'mentees' });
-    if (programIds.length) or.push({ audience: 'program', audienceId: { [Op.in]: programIds } });
-    if (visibleClanIds.length) or.push({ audience: 'clan', audienceId: { [Op.in]: visibleClanIds } });
+    // One branch per audience this person can see, each carrying its own
+    // window, rather than one list of audiences with no sense of time.
+    const or = [{ authorId: user.id }]; // you always see your own, whenever it was
+    or.push(this._within({ audience: 'all' }, orgFrom, null));
+    if (caps.includes('mentor') && portalRole !== 'mentee') {
+      or.push(this._within({ audience: 'mentors' }, orgFrom, null));
+    }
+    if (caps.includes('mentee') && portalRole !== 'mentor') {
+      or.push(this._within({ audience: 'mentees' }, orgFrom, null));
+    }
+    for (const programId of programIds) {
+      or.push(this._within(
+        { audience: 'program', audienceId: programId },
+        programFrom.get(programId) || null,
+        programTo.get(programId) || null
+      ));
+    }
+    for (const id of visibleClanIds) {
+      or.push(this._within({ audience: 'clan', audienceId: id }, clanFrom.get(id) || null, null));
+    }
 
     return { [Op.or]: or };
   }

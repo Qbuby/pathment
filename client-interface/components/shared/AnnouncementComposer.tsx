@@ -166,6 +166,17 @@ export function AnnouncementComposer({
               {AUDIENCE_LABEL[audience].label} — {AUDIENCE_LABEL[audience].description}
             </p>
           )}
+          {/*
+            * Worth saying once, where it is being written: an announcement
+            * reaches the people who are there at the time. Somebody who joins
+            * next month does not inherit this one, which is the point — they
+            * were reading "Demo Day is complete" from a cohort they were never
+            * in. Pinning is the way to carry something past its moment.
+            */}
+          <p className="text-xs text-muted-foreground">
+            Goes to whoever is in this audience now. People who join later will not see it —
+            pin it from the feed if they should.
+          </p>
         </div>
 
         {needsTarget && (

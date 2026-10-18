@@ -32,6 +32,21 @@ const ADMIN_TIER_ROLES = new Set(['super_admin', 'program_admin', 'intake_manage
 // Scope hierarchy for "minimum scope" checks (org is broadest).
 const SCOPE_RANK = { org: 3, program: 2, clan: 1, self: 0 };
 
+// The three hats somebody can be wearing, which decide what a scoped read
+// returns (see programScopeFor).
+const PORTAL_HATS = ['admin', 'mentor', 'mentee'];
+
+// Enrolment statuses that mean the connection to the programme is over, so it
+// no longer puts the person inside that programme's scope. Mirrors the same
+// list in getCapabilities, which decides whether somebody is a mentee at all.
+//
+// 'program_completed' is deliberately NOT here. An alumnus is still OF that
+// programme and still belongs to its standing clan, so it stays in their
+// scope. announcementService closes a narrower window on completion — it
+// stops them receiving NEW posts — and that is a different question from
+// whether the programme is theirs.
+const DEAD_ENROLMENT_STATUSES = ['rejected', 'dropped'];
+
 const roleExists = (key, custom) => Boolean(ROLES[key] || (custom && custom[key]));
 const grants = (key, perm, custom) => {
   if (ROLES[key]) return roleGrants(key, perm);
@@ -334,6 +349,130 @@ class AuthzService {
       throw new AuthorizationError('That program is outside your program scope');
     }
     return true;
+  }
+
+  /**
+   * The programmes and clans this person's reads are bounded to, in the portal
+   * they currently have open. ONE answer, asked by every surface.
+   *
+   * Every scope leak this codebase has had was the same mistake: a service
+   * asking "is this person an admin?" and never "an admin of WHAT?", each one
+   * re-deriving "my programmes" slightly differently. There were three
+   * divergent implementations at the last count, so fixing one left the others
+   * leaking, and they leaked one at a time for weeks.
+   *
+   *   { unrestricted: true }              an ORG-tier admin wearing the admin hat
+   *   { programIds: [], clanIds: [] }     everybody else, already deduped
+   *
+   * The hat decides which memberships count, exactly as `actsAsAdmin` does:
+   * somebody who administers one programme, mentors two clans and learns in a
+   * third gets a different bound on each screen, and all three are true. With
+   * no hat stated anywhere the answer is the union of everything they hold,
+   * which is what a background job or a legacy caller means.
+   *
+   * `clanIds` is NOT "the clans of programIds", except for an admin. An admin
+   * OF a programme oversees every clan in it; a mentee enrolled in the same
+   * programme does not, and expanding their programme back into clans would
+   * hand them every sibling clan's clan-targeted content.
+   */
+  async programScopeFor(user, portalRole = null, opts = {}) {
+    const none = { unrestricted: false, programIds: [], clanIds: [] };
+    if (!user) return none;
+
+    const contextHat = getRequestContext().portalRole;
+    const hat = PORTAL_HATS.includes(portalRole)
+      ? portalRole
+      : (PORTAL_HATS.includes(contextHat) ? contextHat : null);
+    const wears = (role) => hat === null || hat === role;
+
+    const programIds = new Set();
+    const clanIds = new Set();
+
+    if (wears('admin')) {
+      // Resolved here rather than up front: only the admin hat needs them, and
+      // this runs on the chat directory, which is a hot path.
+      const assignments = opts.assignments || (await this.getAssignments(user));
+      const adminScope = await this.adminProgramScope(user, { assignments });
+      // Unrestricted beats every other hat: there is nothing left to bound.
+      if (adminScope === null) return { unrestricted: true, programIds: null, clanIds: null };
+      adminScope.forEach((id) => programIds.add(id));
+      (await this.clanIdsInPrograms(adminScope)).forEach((id) => clanIds.add(id));
+    }
+
+    if (wears('mentor')) {
+      (await this.mentoredClanIds(user.id)).forEach((id) => clanIds.add(id));
+      // A 1:1 match with no clan behind it still places the mentor in that
+      // mentee's programme.
+      if (models.MentorMenteeMatch) {
+        const matches = await models.MentorMenteeMatch.findAll({
+          where: { mentorId: user.id, status: 'active' },
+          include: [{ model: models.Enrollment, as: 'enrollment', attributes: ['programId'] }],
+        });
+        matches.forEach((m) => m.enrollment?.programId && programIds.add(m.enrollment.programId));
+      }
+    }
+
+    if (wears('mentee')) {
+      const mine = await models.ClanMembership.findAll({
+        where: { userId: user.id, status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES }, role: 'mentee' },
+        attributes: ['clanId'],
+      });
+      mine.forEach((m) => m.clanId && clanIds.add(m.clanId));
+      const enrolments = await models.Enrollment.findAll({
+        where: { menteeId: user.id, status: { [Op.notIn]: DEAD_ENROLMENT_STATUSES } },
+        attributes: ['programId'],
+      });
+      enrolments.forEach((e) => e.programId && programIds.add(e.programId));
+    }
+
+    // A clan in scope brings its own programme with it. Never the reverse.
+    if (clanIds.size && models.Clan) {
+      const clans = await models.Clan.findAll({
+        where: { id: { [Op.in]: [...clanIds] } },
+        attributes: ['programId'],
+        raw: true,
+        paranoid: false,
+      });
+      clans.forEach((c) => c.programId && programIds.add(c.programId));
+    }
+
+    return { unrestricted: false, programIds: [...programIds], clanIds: [...clanIds] };
+  }
+
+  /** Every clan belonging to any of `programIds`. */
+  async clanIdsInPrograms(programIds) {
+    if (!Array.isArray(programIds) || programIds.length === 0 || !models.Clan) return [];
+    const clans = await models.Clan.findAll({
+      where: { programId: { [Op.in]: programIds } },
+      attributes: ['id'],
+      raw: true,
+      paranoid: false,
+    });
+    return clans.map((c) => c.id);
+  }
+
+  /**
+   * The admin user ids reachable from a programme bound: every org-tier admin,
+   * plus the admins OF those programmes.
+   *
+   * Org admins are reachable from every scope deliberately. Being limited to
+   * one programme is a reason to NEED an org admin, not a reason to be cut off
+   * from one. What must not come too is the admins of other programmes, which
+   * is what put the people running unrelated fellowships in a mentee's chat
+   * directory.
+   */
+  async adminUserIdsFor(programIds = []) {
+    if (!models.RoleAssignment) return [];
+    const custom = await loadCustomRoles();
+    const isAdminRole = (role) => ADMIN_TIER_ROLES.has(role) || Boolean(custom[role]);
+    const bounded = Array.isArray(programIds) && programIds.length > 0;
+    const rows = await models.RoleAssignment.findAll({
+      where: bounded
+        ? { [Op.or]: [{ scopeType: 'org' }, { scopeType: 'program', scopeId: { [Op.in]: programIds } }] }
+        : { scopeType: 'org' },
+      attributes: ['userId', 'role'],
+    });
+    return [...new Set(rows.filter((r) => isAdminRole(r.role)).map((r) => r.userId))];
   }
 
   /** Called by accessService when custom roles change. */

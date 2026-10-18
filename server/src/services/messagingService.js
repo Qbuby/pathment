@@ -6,7 +6,7 @@ const {
   ValidationError
 } = require('../utils/errors/errorTypes');
 const schedulingService = require('./schedulingService');
-const { VISIBLE_MEMBERSHIP_STATUSES } = require('../config/membership');
+const { VISIBLE_MEMBERSHIP_STATUSES, HISTORICAL_MEMBERSHIP_STATUSES } = require('../config/membership');
 const { getRequestContext } = require('../utils/auditContext');
 const logger = require('../utils/logger');
 
@@ -33,7 +33,11 @@ class MessagingService {
 
     const context = getRequestContext();
     const organizationId = context.organizationId || null;
-    const caps = await require('./authzService').getCapabilities(user);
+    // One resolution of the role assignments, shared by both questions below:
+    // this runs on every send, every directory search and every new thread.
+    const authzService = require('./authzService');
+    const assignments = await authzService.getAssignments(user);
+    const caps = await authzService.getCapabilities(user, { assignments });
     const requestedPortal = ['admin', 'mentor', 'mentee'].includes(context.portalRole)
       ? context.portalRole
       : null;
@@ -54,6 +58,21 @@ class MessagingService {
         .map((membership) => membership.userId);
     }
 
+    const scope = await authzService.programScopeFor(user, portal, { assignments });
+    /**
+     * The admins this person may always reach.
+     *
+     * Every org admin stayed reachable from every hat, which is right: being
+     * limited to one programme is a reason to NEED an org admin, not a reason
+     * to be cut off from one. What was wrong is that the admins of OTHER
+     * programmes came with them, so a mentee in one fellowship had the people
+     * running three others in their directory.
+     */
+    const reachableAdminIds = [...new Set([
+      ...adminIds,
+      ...(await authzService.adminUserIdsFor(scope.programIds || [])),
+    ])];
+
     if (portal === 'admin') {
       if (workspaceUserIds === null) return null;
       /**
@@ -61,23 +80,15 @@ class MessagingService {
        *
        * This returned the whole workspace to anybody wearing the admin hat,
        * so somebody granted a single fellowship could open a chat with all
-       * 1,089 members of the organisation — and the picker listed them.
-       *
-       * Bounded to the people in their programmes' clans, plus the workspace's
-       * own admins, who must stay reachable: being scoped to one programme is
-       * a reason to need an org admin, not a reason to be cut off from one.
+       * 1,089 members of the organisation - and the picker listed them.
        */
-      const scope = await require('./authzService').adminProgramScope(user);
-      if (!Array.isArray(scope)) return workspaceUserIds.filter((id) => id !== userId);
+      if (scope.unrestricted) return workspaceUserIds.filter((id) => id !== userId);
 
-      const clansInScope = scope.length
-        ? await models.Clan.findAll({ where: { programId: { [Op.in]: scope } }, attributes: ['id'], raw: true })
-        : [];
-      const inScope = new Set(adminIds);
-      if (clansInScope.length) {
+      const inScope = new Set(reachableAdminIds);
+      if (scope.clanIds.length) {
         const members = await models.ClanMembership.findAll({
           where: {
-            clanId: { [Op.in]: clansInScope.map((c) => c.id) },
+            clanId: { [Op.in]: scope.clanIds },
             status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES },
           },
           attributes: ['userId'],
@@ -89,15 +100,44 @@ class MessagingService {
       return [...inScope].filter((id) => id !== userId && workspaceSet.has(id));
     }
 
-    const allowed = new Set();
-    adminIds.forEach((id) => allowed.add(id));
+    const allowed = new Set(reachableAdminIds);
 
     if (portal === 'mentor') {
-      const mentorProfiles = await models.MentorProfile.findAll({ attributes: ['userId'] });
-      const workspaceSet = workspaceUserIds === null ? null : new Set(workspaceUserIds);
-      mentorProfiles.forEach((profile) => {
-        if (!workspaceSet || workspaceSet.has(profile.userId)) allowed.add(profile.userId);
-      });
+      /**
+       * The mentors of this mentor's OWN programmes.
+       *
+       * This was `MentorProfile.findAll({ attributes: ['userId'] })` - no
+       * filter of any kind - so a mentor running one clan of one fellowship
+       * had every mentor in the workspace in their directory.
+       */
+      const clansInMyPrograms = await authzService.clanIdsInPrograms(scope.programIds || []);
+      if (clansInMyPrograms.length) {
+        const peerMentors = await models.ClanMembership.findAll({
+          where: {
+            clanId: { [Op.in]: clansInMyPrograms },
+            status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES },
+            role: { [Op.in]: MENTOR_CLAN_ROLES },
+          },
+          attributes: ['userId'],
+          raw: true,
+        });
+        peerMentors.forEach((m) => allowed.add(m.userId));
+      } else {
+        /**
+         * A mentor who belongs to no programme at all gets the workspace's
+         * mentors, as before.
+         *
+         * Bounding somebody to programmes they do not have produces an empty
+         * directory, which is not what scoping is for - and mentor-to-mentor
+         * messaging has never needed a clan or a match between them. The bound
+         * narrows a real scope; it does not invent one.
+         */
+        const mentorProfiles = await models.MentorProfile.findAll({ attributes: ['userId'] });
+        const workspaceSet = workspaceUserIds === null ? null : new Set(workspaceUserIds);
+        mentorProfiles.forEach((profile) => {
+          if (!workspaceSet || workspaceSet.has(profile.userId)) allowed.add(profile.userId);
+        });
+      }
 
       const [mentoredMemberships, directMatches] = await Promise.all([
         models.ClanMembership.findAll({
@@ -234,6 +274,124 @@ class MessagingService {
 
     const keep = contacts(keepClanIds, keepMatches);
     return [...contacts(hideClanIds, hideMatches)].filter((id) => !keep.has(id));
+  }
+
+  /**
+   * Direct-thread counterparts who sit outside the programmes this person's
+   * access currently covers.
+   *
+   * Scope is resolved on every read and written down nowhere, because it moves:
+   * somebody can be an org admin at nine and an admin of one programme at ten,
+   * and the inbox has to tell the truth at ten. Nothing is deleted and nothing
+   * about the thread is touched, so restoring the access brings every thread
+   * straight back.
+   *
+   * Bounded by the size of the INBOX, not of the organisation. It asks who this
+   * person actually has direct threads with - tens of people - and then which
+   * of those share a programme. Materialising every member of every clan in
+   * scope would be thousands of ids fetched to filter a dozen threads.
+   *
+   * The test is "shares a programme with me", deliberately looser than the
+   * directory `getAllowedRecipientIds` builds. A mentee who finished and left
+   * the clan is no longer somebody you may START a chat with, and the thread
+   * you already had with them must still be in your inbox: an inbox that
+   * quietly drops history is worse than one showing a thread you cannot reply
+   * to. Group and system threads are never hidden, for the reason given in
+   * #hiddenContactIds - there is no single counterpart to attribute them to.
+   */
+  async #outOfProgramContactIds(userId, scope) {
+    if (!scope || scope.unrestricted) return [];
+    const mine = new Set(Array.isArray(scope.programIds) ? scope.programIds : []);
+    // No programmes of our own is no basis on which to judge anybody else's.
+    if (mine.size === 0) return [];
+
+    const counterparts = await sequelize.query(
+      `SELECT DISTINCT other.user_id AS id
+         FROM conversation_participants mine
+         JOIN conversations c ON c.id = mine.conversation_id AND c.type = 'direct'
+         JOIN conversation_participants other
+           ON other.conversation_id = mine.conversation_id
+          AND other.user_id <> mine.user_id
+        WHERE mine.user_id = :userId
+          AND mine.left_at IS NULL
+          AND other.left_at IS NULL`,
+      { replacements: { userId }, type: sequelize.QueryTypes.SELECT }
+    );
+    const ids = counterparts.map((row) => row.id).filter(Boolean);
+    if (!ids.length) return [];
+
+    // Which programmes each counterpart belongs to, from every source that
+    // places somebody in one.
+    const theirPrograms = new Map();
+    const note = (id, programId) => {
+      if (!id || !programId) return;
+      if (!theirPrograms.has(id)) theirPrograms.set(id, new Set());
+      theirPrograms.get(id).add(programId);
+    };
+    const alwaysKeep = new Set();
+
+    const [viaClan, viaEnrolment, grants, orgAdmins] = await Promise.all([
+      models.ClanMembership.findAll({
+        where: { userId: { [Op.in]: ids }, status: { [Op.in]: HISTORICAL_MEMBERSHIP_STATUSES } },
+        attributes: ['userId'],
+        include: [{ model: models.Clan, as: 'clan', attributes: ['programId'], required: true }],
+      }),
+      models.Enrollment.findAll({
+        where: { menteeId: { [Op.in]: ids } },
+        attributes: ['menteeId', 'programId'],
+      }),
+      models.RoleAssignment
+        ? models.RoleAssignment.findAll({
+          where: { userId: { [Op.in]: ids } },
+          attributes: ['userId', 'scopeType', 'scopeId'],
+        })
+        : Promise.resolve([]),
+      models.OrganizationMembership
+        ? models.OrganizationMembership.findAll({
+          where: { userId: { [Op.in]: ids }, status: 'active', role: { [Op.in]: ['owner', 'admin'] } },
+          attributes: ['userId'],
+        })
+        : Promise.resolve([]),
+    ]);
+
+    viaClan.forEach((m) => note(m.userId, m.clan?.programId));
+    viaEnrolment.forEach((e) => note(e.menteeId, e.programId));
+    orgAdmins.forEach((m) => alwaysKeep.add(m.userId));
+
+    const clanScopedGrants = [];
+    grants.forEach((g) => {
+      if (g.scopeType === 'org') alwaysKeep.add(g.userId);
+      else if (g.scopeType === 'program') note(g.userId, g.scopeId);
+      else if (g.scopeType === 'clan' && g.scopeId) clanScopedGrants.push(g);
+    });
+    if (clanScopedGrants.length && models.Clan) {
+      const clans = await models.Clan.findAll({
+        where: { id: { [Op.in]: [...new Set(clanScopedGrants.map((g) => g.scopeId))] } },
+        attributes: ['id', 'programId'],
+        raw: true,
+        paranoid: false,
+      });
+      const programOfClan = new Map(clans.map((c) => [c.id, c.programId]));
+      clanScopedGrants.forEach((g) => note(g.userId, programOfClan.get(g.scopeId)));
+    }
+
+    return ids.filter((id) => {
+      if (alwaysKeep.has(id)) return false;
+      const theirs = theirPrograms.get(id);
+      /**
+       * Nobody we cannot place is ever hidden.
+       *
+       * Stated as "hide the ones we can PROVE belong elsewhere", not "keep the
+       * ones we can prove belong here", for the same reason #hiddenContactIds
+       * is an exclusion: an inclusion list silently drops every contact the
+       * relationship model cannot classify - an admin on a legacy base role, a
+       * platform user, somebody with no clan and no enrolment - and an inbox
+       * that quietly loses threads is worse than one showing a few extra.
+       */
+      if (!theirs || theirs.size === 0) return false;
+      for (const programId of theirs) if (mine.has(programId)) return false;
+      return true;
+    });
   }
 
   async findDirectConversationsByKey(directKey, transaction = null) {
@@ -388,7 +546,18 @@ class MessagingService {
     // happens HERE rather than after the fetch because the list is paged: a
     // filter applied to an already-limited page would return short pages and
     // hide older threads entirely.
-    const hiddenContactIds = await this.#hiddenContactIds(userId, options.portal);
+    // Two independent reasons a direct thread does not belong in THIS list:
+    // it belongs to the other hat, or its counterpart is outside the
+    // programmes this person can currently see. Both resolve to a set of
+    // counterpart ids, so they are unioned and excluded in one pass.
+    const scopeUser = await models.User.findByPk(userId, { attributes: ['id', 'role', 'capabilities'] });
+    const scope = scopeUser
+      ? await require('./authzService').programScopeFor(scopeUser, options.portal?.role || null)
+      : null;
+    const hiddenContactIds = [...new Set([
+      ...(await this.#hiddenContactIds(userId, options.portal)),
+      ...(await this.#outOfProgramContactIds(userId, scope)),
+    ])];
     const portalFilter = hiddenContactIds.length
       ? {
         conversationId: {

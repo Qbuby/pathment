@@ -175,12 +175,27 @@ function AnnouncementRow({
           >
             {(close) => (
               <>
+                {/*
+                  * A pin does two things now: it sorts first, and it keeps the
+                  * announcement visible to people who join after it was posted.
+                  * That second meaning is invisible unless the control says it.
+                  */}
                 <button
                   onClick={() => { close(); onAct(a.id, () => announcementsApi.togglePin(a.id)); }}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-muted"
+                  title={a.pinned
+                    ? 'Stop showing this first, and stop showing it to people who join later'
+                    : 'Show this first, and keep showing it to people who join later'}
+                  className="flex w-full items-start gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-muted"
                 >
-                  {a.pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
-                  {a.pinned ? 'Unpin' : 'Pin to top'}
+                  {a.pinned
+                    ? <PinOff className="mt-0.5 h-4 w-4 shrink-0" />
+                    : <Pin className="mt-0.5 h-4 w-4 shrink-0" />}
+                  <span>
+                    {a.pinned ? 'Unpin' : 'Pin to top'}
+                    <span className="block text-xs text-muted-foreground">
+                      {a.pinned ? 'New joiners stop seeing it' : 'Also shown to new joiners'}
+                    </span>
+                  </span>
                 </button>
                 <button
                   onClick={() => { close(); onAct(a.id, () => announcementsApi.remove(a.id), a.title); }}
