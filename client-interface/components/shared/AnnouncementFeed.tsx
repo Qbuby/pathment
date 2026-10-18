@@ -14,6 +14,8 @@ import {
   Search,
 } from 'lucide-react';
 import { announcementsApi } from '@/lib/services/announcements-api';
+import { SelectMenu } from '@/components/shared/SelectMenu';
+import { useProgramClans } from '@/lib/hooks/shared/useProgramClans';
 import type { Announcement } from '@/lib/hooks/shared/useAnnouncements';
 import { Avatar } from '@/components/shared/Avatar';
 import { Dropdown } from '@/components/shared/Dropdown';
@@ -248,6 +250,7 @@ export function AnnouncementFeed({
   const [busy, setBusy] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [audience, setAudience] = useState<string>('all-audiences');
+  const [programFilter, setProgramFilter] = useState('');
   const confirm = useConfirm();
 
   const act = async (id: string, fn: () => Promise<unknown>, confirmLabel?: string) => {
@@ -271,6 +274,20 @@ export function AnnouncementFeed({
     }
   };
 
+  /**
+   * Which programme an announcement belongs to.
+   *
+   * A programme-targeted one says so directly; a clan-targeted one belongs to
+   * its clan's programme, which is why this needs the clan list at all. The
+   * org-wide audiences — everyone, all mentors, all mentees — belong to no
+   * programme and are deliberately kept visible under every filter: they
+   * reach the people in that programme too, so hiding them would misreport
+   * what a programme's members have actually been told.
+   */
+  const { programs, programOf } = useProgramClans();
+  const programOfAnnouncement = (a: Announcement) =>
+    (a.audience === 'program' ? a.audienceId : a.audience === 'clan' ? programOf(a.audienceId) : null);
+
   // Which audience chips to offer — only the ones actually present, so the
   // filter never advertises a category with nothing behind it.
   const audiences = useMemo(() => {
@@ -283,10 +300,17 @@ export function AnnouncementFeed({
     const q = query.trim().toLowerCase();
     return announcements.filter((a) => {
       if (audience !== 'all-audiences' && a.audience !== audience) return false;
+      if (programFilter) {
+        const owner = programOfAnnouncement(a);
+        // Org-wide posts stay: they reached this programme's people as well.
+        const orgWide = ['all', 'mentors', 'mentees'].includes(a.audience);
+        if (!orgWide && owner !== programFilter) return false;
+      }
       if (!q) return true;
       return `${a.title} ${a.body} ${a.author?.name ?? ''}`.toLowerCase().includes(q);
     });
-  }, [announcements, query, audience]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [announcements, query, audience, programFilter, programOf]);
 
   const pinned = visible.filter((a) => a.pinned);
   const rest = visible.filter((a) => !a.pinned);
@@ -369,10 +393,20 @@ export function AnnouncementFeed({
               className="w-full rounded-xl border border-border bg-card py-2.5 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
           </div>
-          {audiences.length > 1 && (
-            <div className="flex flex-wrap gap-2">
+          {(audiences.length > 1 || programs.length > 1) && (
+            <div className="flex flex-wrap items-center gap-2">
               {chip('all-audiences', 'All')}
               {audiences.map(([value, label]) => chip(value, label))}
+              {programs.length > 1 && (
+                <div className="ml-auto w-56 max-w-full">
+                  <SelectMenu
+                    value={programFilter}
+                    onChange={setProgramFilter}
+                    ariaLabel="Filter by program"
+                    options={[{ value: '', label: 'All programs' }, ...programs.map((p) => ({ value: p.id, label: p.label }))]}
+                  />
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -382,7 +416,7 @@ export function AnnouncementFeed({
         <div className="rounded-2xl border border-border bg-card py-12 text-center">
           <p className="text-muted-foreground">Nothing matches that filter.</p>
           <button
-            onClick={() => { setQuery(''); setAudience('all-audiences'); }}
+            onClick={() => { setQuery(''); setAudience('all-audiences'); setProgramFilter(''); }}
             className="mt-2 text-sm font-medium text-brand-600 hover:text-brand-700"
           >
             Clear filters
