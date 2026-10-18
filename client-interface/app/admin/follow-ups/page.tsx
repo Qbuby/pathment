@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { apiClient } from "@/lib/services/api-client";
 import { Drawer } from "@/components/shared/Drawer";
 import { extractApiErrorMessage } from "@/lib/utils/api-error";
-import { useClanHealth } from "@/lib/hooks/admin/useClanHealth";
+import { ProgramClanFilter } from "@/components/shared/ProgramClanFilter";
 import { useDebounce } from "@/lib/hooks/shared/useDebounce";
 import { usePermissions } from "@/lib/hooks/usePermissions";
 import { Avatar } from "@/components/shared/Avatar";
@@ -32,7 +32,12 @@ interface FollowUpPage {
 function FollowUps() {
   const params = useSearchParams();
   const { can } = usePermissions();
-  const { programs } = useClanHealth();
+  /**
+   * Programme governs clan, and this screen only ever offered the clan —
+   * with its programmes as optgroup headings you could read but not pick.
+   * "How is Fellowship 2026 doing" meant selecting its clans one at a time.
+   */
+  const [programId, setProgramId] = useState(params.get("programId") || "");
   const [risk, setRisk] = useState(
     ["high", "watch"].includes(params.get("risk") || "")
       ? params.get("risk")!
@@ -65,6 +70,7 @@ function FollowUps() {
           page,
           limit: 20,
           risk: risk || undefined,
+          programId: programId || undefined,
           clanId: clanId || undefined,
           search: query || undefined,
         },
@@ -82,7 +88,7 @@ function FollowUps() {
     return () => {
       cancelled = true;
     };
-  }, [page, risk, clanId, query, retry]);
+  }, [page, risk, programId, clanId, query, retry]);
   return (
     <div className="space-y-5">
       <PageHeader
@@ -131,26 +137,15 @@ function FollowUps() {
           <option value="high">High priority</option>
           <option value="watch">Needs follow-up</option>
         </select>
-        <select
-          aria-label="Clan"
-          value={clanId}
-          onChange={(event) => {
-            setClanId(event.target.value);
+        <ProgramClanFilter
+          labels={false}
+          value={{ programId, clanId }}
+          onChange={(next) => {
+            setProgramId(next.programId);
+            setClanId(next.clanId);
             setPage(1);
           }}
-          className="max-w-full rounded-xl border bg-card px-3 py-2"
-        >
-          <option value="">All clans</option>
-          {programs.map((program) => (
-            <optgroup key={program.id} label={program.name}>
-              {program.clans.map((clan) => (
-                <option key={clan.id} value={clan.id}>
-                  {clan.name}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
+        />
         <button
           onClick={() => setRetry((value) => value + 1)}
           disabled={loading}
@@ -299,7 +294,9 @@ function FollowUps() {
                 try {
                   const res = await apiClient.post<{ message: string; data: { sent: number; skipped: number; capped: boolean } }>(
                     "/clans/follow-ups/nudge",
-                    { risk: risk || undefined, clanId: clanId || undefined, search: query || undefined, message: note.trim() || undefined },
+                    // Every filter the list is showing, or the send reaches
+                    // a wider group than the count on the button promised.
+                    { risk: risk || undefined, programId: programId || undefined, clanId: clanId || undefined, search: query || undefined, message: note.trim() || undefined },
                   );
                   const { sent, skipped, capped } = res.data;
                   toast.success(

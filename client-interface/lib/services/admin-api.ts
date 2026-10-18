@@ -8,6 +8,8 @@ export interface AdminPromotionCandidate {
   avatar: string;
   avatarUrl?: string | null;
   program: string | null;
+  /** For the programme filter — a name is not a reliable key. */
+  programId: string | null;
   level: string | null;
   absoluteProgress: number;
   onTimeRate: number;

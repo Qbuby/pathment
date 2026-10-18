@@ -421,6 +421,9 @@ class CohortService {
       phone: mentee.phone || null,
       profilePictureUrl: mentee.profilePictureUrl || null,
       program: enrollment?.program?.name || '-',
+      // The id as well as the name: a name cannot be filtered on reliably
+      // once two programmes share one, and admin lists filter by programme.
+      programId: enrollment?.program?.id || enrollment?.programId || null,
       level: '-',
       week,
       totalWeeks,

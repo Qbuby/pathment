@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { ProgramClanFilter, type ProgramClanValue } from '@/components/shared/ProgramClanFilter';
 import { toast } from 'sonner';
 import { Crown, Loader2, TrendingUp, X, UserCheck } from 'lucide-react';
 
@@ -105,13 +106,27 @@ export default function AdminPromotions() {
   };
   useEffect(load, []);
 
+  /**
+   * Nominations are org-wide, but "how many came out of Fellowship 2026" is
+   * the question an admin actually arrives with — a pool worth looking at a
+   * programme at a time. Filtered here rather than on the server: the list
+   * is small, already loaded whole, and the counts below have to agree with
+   * whatever is on screen.
+   */
+  const [scope, setScope] = useState<ProgramClanValue>({ programId: '', clanId: '' });
+  const inScope = useMemo(() => candidates.filter((c) =>
+    (!scope.programId || c.programId === scope.programId)
+    && (!scope.clanId || c.targetClanId === scope.clanId)), [candidates, scope]);
+  // The pool line: how many of what is in view actually became co-mentors.
+  const promotedCount = inScope.filter((c) => c.stage === 'promoted').length;
+
   // Awaiting-approval first (the admin's actionable queue), then in-flight, then closed.
   const { pending, closed } = useMemo(() => {
     const rank = (s: string) => (s === 'approved' ? 0 : s === 'interview' ? 1 : s === 'nominated' ? 2 : 3);
-    const open = candidates.filter((c) => !['promoted', 'rejected'].includes(c.stage)).sort((a, b) => rank(a.stage) - rank(b.stage));
-    const done = candidates.filter((c) => ['promoted', 'rejected'].includes(c.stage));
+    const open = inScope.filter((c) => !['promoted', 'rejected'].includes(c.stage)).sort((a, b) => rank(a.stage) - rank(b.stage));
+    const done = inScope.filter((c) => ['promoted', 'rejected'].includes(c.stage));
     return { pending: open, closed: done };
-  }, [candidates]);
+  }, [inScope]);
 
   const decline = async (c: AdminPromotionCandidate) => {
     if (!(await confirm({ title: `Decline the nomination for ${c.name}?`, description: `They stay a mentee.`, variant: 'danger', confirmLabel: 'Decline' }))) return;
@@ -177,6 +192,18 @@ export default function AdminPromotions() {
         <p className="text-slate-600">Invite experienced mentees to help a clan as co-mentors. Review mentor recommendations, readiness and willingness before granting the role. This is a responsibility change, not a performance award.</p>
       </div>
 
+      {!loading && !error && candidates.length > 0 && (
+        <div className="flex flex-wrap items-end justify-between gap-3 rounded-2xl border border-slate-200 bg-card p-4">
+          <ProgramClanFilter value={scope} onChange={setScope} />
+          <p className="pb-2 text-xs text-slate-500" aria-live="polite">
+            {inScope.length === candidates.length
+              ? `${candidates.length} ${candidates.length === 1 ? 'nomination' : 'nominations'} in this workspace`
+              : `${inScope.length} of ${candidates.length} nominations`}
+            {' · '}{promotedCount} promoted
+          </p>
+        </div>
+      )}
+
       {loading ? (
         <div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-brand-600" /></div>
       ) : error ? (
@@ -184,10 +211,14 @@ export default function AdminPromotions() {
           <p className="text-slate-600 mb-3">{error}</p>
           <button onClick={load} className="text-brand-600 hover:text-brand-700 text-sm font-medium">Try again</button>
         </div>
-      ) : candidates.length === 0 ? (
+      ) : inScope.length === 0 ? (
         <div className="bg-card rounded-2xl border border-slate-200 py-16 text-center">
           <UserCheck className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-          <p className="text-slate-600">No nominations yet. When a mentor nominates a mentee, they&apos;ll show up here.</p>
+          <p className="text-slate-600">
+            {candidates.length
+              ? 'No nominations match this program or clan.'
+              : 'No nominations yet. When a mentor nominates a mentee, they\u2019ll show up here.'}
+          </p>
         </div>
       ) : (
         <>

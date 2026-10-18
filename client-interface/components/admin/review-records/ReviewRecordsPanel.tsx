@@ -10,10 +10,10 @@ import {
 // Imports the leaf components through the barrel; the barrel deliberately does
 // NOT re-export this panel, which would make that a cycle.
 import { SelectMenu } from '@/components/shared/SelectMenu';
+import { ProgramClanFilter } from '@/components/shared/ProgramClanFilter';
 import { Drawer } from '@/components/shared/Drawer';
 import { Avatar } from '@/components/shared/Avatar';
 import { adminApi } from '@/lib/services/admin-api';
-import { clanApi } from '@/lib/services/clan-api';
 import { mentorApi } from '@/lib/services/mentor-api';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -36,7 +36,6 @@ const presetFrom = (days: number) => { const d = new Date(); d.setDate(d.getDate
  * the route it used to own redirects there.
  */
 export function ReviewRecordsPanel() {
-  const [clans, setClans] = useState<{ id: string; name: string; programId: string | null; programName: string | null; programStatus: string | null }[]>([]);
   const [mentors, setMentors] = useState<{ id: string; name: string }[]>([]);
   const [programId, setProgramId] = useState('');
   const [clanId, setClanId] = useState('');
@@ -55,7 +54,6 @@ export function ReviewRecordsPanel() {
 
   // Filter option lists.
   useEffect(() => {
-    clanApi.list().then((r: any) => setClans(((r.data?.clans) || r.data || []).map((c: any) => ({ id: c.id, name: c.name, programId: c.programId ?? c.program?.id ?? null, programName: c.program?.name ?? null, programStatus: c.program?.status ?? null })))).catch(() => setClans([]));
     mentorApi.getAll().then((r: any) => {
       const list = (r.data?.mentors || r.data || []) as any[];
       setMentors(list.map((m) => ({ id: m.id, name: `${m.firstName || ''} ${m.lastName || ''}`.trim() || m.name || m.email })));
@@ -89,22 +87,6 @@ export function ReviewRecordsPanel() {
     finally { setDetailLoading(false); }
   };
 
-  // Programs come from the clan list — every review session belongs to a clan.
-  const programOptions = useMemo(() => {
-    const seen = new Map<string, string>();
-    for (const c of clans) {
-      if (!c.programId || seen.has(c.programId)) continue;
-      const status = c.programStatus === 'completed' ? 'Completed' : c.programStatus === 'published' ? 'Live' : c.programStatus;
-      seen.set(c.programId, `${c.programName || 'Program'}${status ? ` · ${status}` : ''}`);
-    }
-    return [{ value: '', label: 'All programs' }, ...[...seen].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label))];
-  }, [clans]);
-  const clanOptions = useMemo(() => [{ value: '', label: 'All clans' }, ...clans.filter((c) => !programId || c.programId === programId).map((c) => ({ value: c.id, label: c.name }))], [clans, programId]);
-  // A clan picked under another program can't stay selected when the program changes.
-  const changeProgram = (id: string) => {
-    setProgramId(id);
-    if (id && clanId && clans.find((c) => c.id === clanId)?.programId !== id) setClanId('');
-  };
   const mentorOptions = useMemo(() => [{ value: '', label: 'All mentors' }, ...mentors.map((m) => ({ value: m.id, label: m.name }))], [mentors]);
   const hasFilters = programId || clanId || mentorId || from || to;
   // Roster entries across the sessions in view, and how many have no attendance marked.
@@ -115,17 +97,11 @@ export function ReviewRecordsPanel() {
     <div className="space-y-6">
       {/* Filters */}
       <div className="bg-card rounded-2xl border border-slate-200 p-4 flex flex-wrap items-end gap-3">
-        {/* Programme first: it is the widest scope and the clan menu is
-            derived from it, so choosing it the other way round meant picking
-            a clan and then watching it clear itself. */}
-        <div className="w-56 max-w-full">
-          <label className="block text-xs font-medium text-slate-600 mb-1">Program</label>
-          <SelectMenu value={programId} onChange={changeProgram} options={programOptions} ariaLabel="Filter by program" />
-        </div>
-        <div className="w-44">
-          <label className="block text-xs font-medium text-slate-600 mb-1">Clan</label>
-          <SelectMenu value={clanId} onChange={setClanId} options={clanOptions} ariaLabel="Filter by clan" />
-        </div>
+        {/* Programme then clan, from the one shared control. */}
+        <ProgramClanFilter
+          value={{ programId, clanId }}
+          onChange={(next) => { setProgramId(next.programId); setClanId(next.clanId); }}
+        />
         <div className="w-44">
           <label className="block text-xs font-medium text-slate-600 mb-1">Mentor</label>
           <SelectMenu value={mentorId} onChange={setMentorId} options={mentorOptions} ariaLabel="Filter by mentor" searchable />

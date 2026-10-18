@@ -38,10 +38,10 @@ const clanFollowUps = catchAsync(async (req, res) => {
  * anyone", and the admin's programme scope still applies.
  */
 const nudgeFollowUps = catchAsync(async (req, res) => {
-  const { risk, clanId, search, message } = req.body || {};
+  const { risk, programId, clanId, search, message } = req.body || {};
   const programScope = await authzService.adminProgramScope(req.user);
   const { ids, total, capped } = await clanHealthService.followUpRecipients(
-    { risk, clanId, search }, programScope,
+    { risk, programId, clanId, search }, programScope,
   );
   if (!ids.length) throw new ValidationError('Nobody matches these filters right now');
 
