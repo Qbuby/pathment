@@ -10,7 +10,7 @@ import { useGate } from '@/components/platform/PlatformShell';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { btn, KV, money, Pager, RelativeTime, SectionCard, StatusPill, TableSkeleton, UsageMeter } from '@/components/platform/primitives';
 import { useDebounce } from '@/lib/hooks/useDebounce';
-import { isEnforcedLimit, isShippedFeature, NOT_ENFORCED_HINT } from '@/lib/config/platform-entitlements';
+import { entitlementLabel, isEnforcedLimit, isShippedFeature, NOT_ENFORCED_HINT } from '@/lib/config/platform-entitlements';
 
 /** ── Overview ──────────────────────────────────────────────────────────────── */
 
@@ -212,7 +212,7 @@ export function PlanSummary({ detail }: { detail: WorkspaceDetail }) {
             return (
               <tr key={key} className={`border-t border-border/60 ${enforced ? '' : 'opacity-60'}`}>
                 <td className="py-1.5">
-                  {key}
+                  {entitlementLabel(key)}
                   {!enforced ? <span className="ml-1.5 rounded bg-muted px-1 py-px text-[9px] uppercase text-muted-foreground" title={NOT_ENFORCED_HINT}>not enforced</span> : null}
                 </td>
                 <td className="py-1.5 text-right tabular-nums">{fmt(published[key])}</td>
@@ -233,7 +233,7 @@ export function PlanSummary({ detail }: { detail: WorkspaceDetail }) {
             title={isShippedFeature(key) ? undefined : NOT_ENFORCED_HINT}
             className={`rounded-full px-2 py-0.5 text-[11px] ring-1 ring-inset ${!isShippedFeature(key) ? 'border-dashed bg-muted/50 text-muted-foreground ring-border' : enabled ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-slate-100 text-slate-500 ring-slate-500/20 dark:bg-slate-500/10 dark:text-slate-400 line-through'}`}
           >
-            {key}{!isShippedFeature(key) ? ' · not enforced' : ''}
+            {entitlementLabel(key)}{!isShippedFeature(key) ? ' · not enforced' : ''}
           </span>
         ))}
       </div>

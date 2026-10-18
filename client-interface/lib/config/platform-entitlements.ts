@@ -27,3 +27,21 @@ export const isShippedFeature = (key: string): boolean => SHIPPED_FEATURES.has(k
 
 /** Muted chip for a key that exists on the plan row but changes nothing yet. */
 export const NOT_ENFORCED_HINT = 'Seeded on the plan row but not enforced by the product yet — the pricing page does not advertise it.';
+
+/** Human names for the raw plan keys, so console screens never print camelCase. */
+export const ENTITLEMENT_LABELS: Record<string, string> = {
+  members: 'Members',
+  programs: 'Programs',
+  clans: 'Clans',
+  storageGb: 'Storage (GB)',
+  aiEvaluationsPerMonth: 'AI evaluations / month',
+  sso: 'SSO',
+  customDomain: 'Custom domain',
+  certificates: 'Certificates',
+  aiEvaluation: 'AI evaluation',
+  advancedAnalytics: 'Advanced analytics',
+  programCompletionStanding: 'Completion standing',
+  customBranding: 'Custom branding',
+};
+
+export const entitlementLabel = (key: string): string => ENTITLEMENT_LABELS[key] || key;
