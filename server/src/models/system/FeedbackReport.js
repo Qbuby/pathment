@@ -84,11 +84,21 @@ module.exports = (sequelize, DataTypes) => {
   FeedbackReport.associate = (models) => {
     FeedbackReport.belongsTo(models.User, { foreignKey: 'reporter_id', as: 'reporter' });
     FeedbackReport.belongsTo(models.User, { foreignKey: 'handled_by', as: 'handler' });
-    // Which workspace it came from. Noise inside one workspace, and the first
-    // column of the platform inbox: "which customer, which build".
-    if (models.Organization) {
-      FeedbackReport.belongsTo(models.Organization, { foreignKey: 'organization_id', as: 'organization' });
-    }
+    /**
+     * Deliberately NO belongsTo(Organization).
+     *
+     * `organization_id` is not declared here - it is injected for every
+     * workspace-owned model by the beforeDefine hook in
+     * db/workspaceModelAttributes.js. Declaring an association on it makes
+     * Sequelize add the column itself, which is invisible at runtime (the hook
+     * adds it anyway) and wrong everywhere the hook is absent: migration 114
+     * builds the pre-114 schema by loading the model factories WITHOUT that
+     * hook, and refused to run because feedback_reports already carried the
+     * column it exists to add.
+     *
+     * The platform inbox resolves workspace names with one explicit lookup
+     * instead.
+     */
   };
 
   return FeedbackReport;

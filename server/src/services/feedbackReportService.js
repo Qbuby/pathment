@@ -354,14 +354,32 @@ class FeedbackReportService {
       where,
       include: [
         { model: models.User, as: 'reporter', attributes: ['id', 'firstName', 'lastName', 'email'] },
-        ...(models.Organization
-          ? [{ model: models.Organization, as: 'organization', attributes: ['id', 'name', 'slug'], required: false, paranoid: false }]
-          : []),
       ],
       order: [['created_at', 'DESC']],
       limit: parsedLimit,
       offset: (parsedPage - 1) * parsedLimit,
     });
+
+    /**
+     * Which workspace each report came from - the first question anyone
+     * triaging asks, and unanswerable from inside a single workspace's board.
+     *
+     * Looked up rather than joined, because `organization_id` is injected by
+     * the beforeDefine hook rather than declared on the model, and declaring an
+     * association on it makes Sequelize create the column itself - which breaks
+     * migration 114, whose whole job is to add that column to a schema that
+     * does not have it yet.
+     */
+    const organizationIds = [...new Set(rows.map((r) => r.organizationId).filter(Boolean))];
+    const organizations = organizationIds.length && models.Organization
+      ? await models.Organization.findAll({
+        ...SKIP,
+        where: { id: { [Op.in]: organizationIds } },
+        attributes: ['id', 'name', 'slug'],
+        paranoid: false,
+      })
+      : [];
+    const organizationById = new Map(organizations.map((o) => [o.id, { id: o.id, name: o.name, slug: o.slug }]));
 
     const unresolved = { status: { [Op.in]: ['open', 'in_review'] } };
     const [openCount, byStatus, byPlatform] = await Promise.all([
@@ -371,7 +389,10 @@ class FeedbackReportService {
     ]);
 
     return {
-      reports: rows.map((r) => this._shape(r)),
+      reports: rows.map((r) => ({
+        ...this._shape(r),
+        organization: organizationById.get(r.organizationId) || null,
+      })),
       total: count,
       page: parsedPage,
       limit: parsedLimit,

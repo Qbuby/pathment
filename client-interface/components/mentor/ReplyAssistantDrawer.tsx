@@ -37,18 +37,6 @@ const STEP_ICON: Record<SetupStep['key'], typeof KeyRound> = {
   style: Sparkles,
 };
 
-/**
- * The features a Gemini key has to power for a draft to appear.
- *
- * Adding the key is not enough, and this is the trap the scattered setup hid:
- * `ragOrchestrator` resolves its model through feature ROUTING, and logs
- * "no generation key routed to rag_generation" and returns nothing when it
- * finds none. A mentor could finish every step on the checklist, switch the
- * toggle on, and still never see a draft. Connecting a key here routes these
- * three in the same breath.
- */
-const RAG_FEATURES = ['rag_generation', 'rag_grounding', 'rag_embedding'] as const;
-
 function StepShell({
   step, index, children,
 }: { step: SetupStep; index: number; children?: React.ReactNode }) {
@@ -117,9 +105,38 @@ function KeyStep({ step, index, onConnected }: { step: SetupStep; index: number;
     () => connections.filter((c) => c.provider === 'gemini' && c.status !== 'error'),
     [connections],
   );
-  // Having a key and having it DO anything are different questions.
-  const unrouted = geminiKeys.length > 0 && RAG_FEATURES.some((feature) => !routing[feature]);
+  /**
+   * Keys they already have that cannot do this job.
+   *
+   * Without naming them, this step reads as a flat contradiction: AI
+   * connections shows two keys marked Connected, and this says there is no
+   * key. Both are true - embeddings are Gemini-only and neither key is
+   * Gemini - but nothing on either screen said so, so the only reasonable
+   * conclusion was that one of them was broken.
+   */
+  const otherKeys = useMemo(
+    () => connections.filter((c) => c.provider !== 'gemini'),
+    [connections],
+  );
+  /**
+   * Having a key and having it DO anything are different questions.
+   *
+   * Embeddings are the one that must point at a Gemini key specifically, so
+   * that is what is checked: generation and grounding are happy on any
+   * provider and may legitimately be pointed elsewhere.
+   */
+  const embeddingRoutedToGemini = geminiKeys.some((c) => c.id === routing.rag_embedding);
+  const unrouted = geminiKeys.length > 0 && !embeddingRoutedToGemini;
 
+  /**
+   * Connecting the key and pointing it at the feature, in one step.
+   *
+   * Adding a key is not enough on its own: `ragOrchestrator` resolves its
+   * model through feature ROUTING and returns nothing when it finds none,
+   * logging "no generation key routed to rag_generation" where nobody looks.
+   * Doing both here is the difference between a key that exists and a key
+   * that works.
+   */
   const connect = async () => {
     if (!key.trim()) { toast.error('Paste the key first'); return; }
     setSaving(true);
@@ -131,10 +148,19 @@ function KeyStep({ step, index, onConnected }: { step: SetupStep; index: number;
       }) as { data?: { connection?: { id: string } } };
       const created = res?.data?.connection;
       if (created?.id) {
+        /**
+         * Embeddings move to the new key unconditionally - only Gemini can
+         * generate them, so whatever was there was not working.
+         *
+         * Generation and grounding run on any provider, so a choice already
+         * made is left alone: somebody who deliberately points drafting at
+         * their OpenRouter key should not have it silently reassigned because
+         * they added a key for embeddings. Only the empty ones are filled.
+         */
         await aiConnectionsApi.setRouting({
           ...routing,
-          rag_generation: created.id,
-          rag_grounding: created.id,
+          rag_generation: routing.rag_generation || created.id,
+          rag_grounding: routing.rag_grounding || created.id,
           rag_embedding: created.id,
         });
       }
@@ -155,7 +181,10 @@ function KeyStep({ step, index, onConnected }: { step: SetupStep; index: number;
     setSaving(true);
     try {
       await aiConnectionsApi.setRouting({
-        ...routing, rag_generation: id, rag_grounding: id, rag_embedding: id,
+        ...routing,
+        rag_generation: routing.rag_generation || id,
+        rag_grounding: routing.rag_grounding || id,
+        rag_embedding: id,
       });
       await refetch();
       onConnected();
@@ -195,6 +224,14 @@ function KeyStep({ step, index, onConnected }: { step: SetupStep; index: number;
         </div>
       ) : (
         <div className="space-y-2">
+          {otherKeys.length > 0 && (
+            <p className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs leading-5 text-foreground">
+              You have {otherKeys.length === 1 ? 'a key' : `${otherKeys.length} keys`} connected
+              ({otherKeys.map((c) => c.provider).join(', ')}), and {otherKeys.length === 1 ? 'it is' : 'none is'} Gemini.
+              Reply assistance searches your material with embeddings, which only Gemini can generate,
+              so it needs a Gemini key of its own. Your other keys keep doing what they already do.
+            </p>
+          )}
           <div className="flex flex-col gap-2 sm:flex-row">
             <input
               value={label}
