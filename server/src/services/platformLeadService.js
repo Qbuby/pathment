@@ -20,9 +20,26 @@ class PlatformLeadService {
     const organizationName = String(input.organizationName || '').trim();
     if (!email || !fullName || !organizationName) throw new ValidationError('Email, name and organization are required');
 
-    const botLike = Boolean(String(input.website || '').trim()) ||
-      (typeof input.startedAt === 'number' && Date.now() - input.startedAt < 2000);
-    if (botLike) return { received: true };
+    const honeypot = Boolean(String(input.website || '').trim());
+    const tooFast = typeof input.startedAt === 'number' && Date.now() - input.startedAt < 2000;
+    if (honeypot || tooFast) {
+      /**
+       * Dropped, and the caller is told it worked, because a bot that is told
+       * it failed tries something else.
+       *
+       * Logged because the cost of that silence falls on real people: a
+       * browser autofilling a hidden field called "website" makes somebody's
+       * enquiry disappear behind a success screen. With no record anywhere, a
+       * lost customer and a blocked bot were indistinguishable from both ends,
+       * which is exactly how a form can look like it works while delivering
+       * nothing. The line below is the recovery path.
+       */
+      console.warn('[leads] dropped as bot-like', {
+        reason: honeypot ? 'honeypot' : 'submitted-too-fast',
+        email, organizationName, source: input.source || 'marketing',
+      });
+      return { received: true };
+    }
 
     await models.BuyerLead.create({
       email, fullName, organizationName,

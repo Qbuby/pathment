@@ -1782,7 +1782,17 @@ export default function CohortReview() {
       {assigning && mentee && (
         <AssignTaskDrawer
           mode="single"
-          mentee={{ id: mentee.id, name: mentee.name }}
+          mentee={{
+            id: mentee.id,
+            name: mentee.name,
+            avatarUrl: mentee.profilePictureUrl,
+            clanName: mentee.clan?.name ?? null,
+            taskCount: mentee.taskCount,
+            pendingApprovals: mentee.pendingApprovals,
+            openBlockers: mentee.openBlockers,
+            risk: mentee.risk,
+            level: mentee.level,
+          }}
           onClose={() => setAssigning(false)}
           onAssigned={refresh}
         />

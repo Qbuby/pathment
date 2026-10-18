@@ -1160,6 +1160,9 @@ export default function MenteeDetail() {
             name:
               `${mentee?.firstName ?? ''} ${mentee?.lastName ?? ''}`.trim() ||
               'Mentee',
+            // Same photo the page header above already renders.
+            avatarUrl: (mentee as { profilePictureUrl?: string | null })
+              ?.profilePictureUrl ?? null,
           }}
           onClose={() => setAssigningTask(false)}
           onAssigned={fetchMenteeDetails}

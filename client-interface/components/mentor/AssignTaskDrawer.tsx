@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useDrawerMotion, drawerPanelClass, drawerBackdropClass } from '@/components/shared/drawerMotion';
 import { toast } from 'sonner';
 import { X, Loader2, Check, Plus, Trash2, Search, Route, FileText, Eye } from 'lucide-react';
+import { Avatar } from '@/components/shared/Avatar';
 import { taskApi } from '@/lib/services/task-api';
 import { tracksApi, type Track } from '@/lib/services/tracks-api';
 import { mentorApi } from '@/lib/services/mentor-api';
@@ -45,7 +46,36 @@ const ROADMAP_DUE_PRESETS: { label: string; days: number | null }[] = [
 ];
 const presetDateStr = (days: number) => { const d = new Date(); d.setDate(d.getDate() + days); return d.toISOString().split('T')[0]; };
 
-export interface AssignDrawerMentee { id: string; name: string; level?: string; risk?: string }
+/**
+ * Who the work is going to.
+ *
+ * This was `{ id, name, level, risk }` and the picker rendered a checkbox, a
+ * name and nothing else, so choosing between forty people meant recognising
+ * forty names in a scrolling list. Everything below is optional and every
+ * field is already loaded by the screens that open this drawer - they simply
+ * were not passing it.
+ *
+ * The extra facts are the ones that change WHO you pick: somebody with no
+ * work at all is the reason the bulk assign exists, somebody with a queue
+ * waiting on you probably should not get more, and a mentor in two clans
+ * needs to see which clan a name belongs to before assigning across them.
+ */
+export interface AssignDrawerMentee {
+  id: string;
+  name: string;
+  level?: string;
+  risk?: string;
+  /** Profile photo; falls back to initials. */
+  avatarUrl?: string | null;
+  /** Which clan this person is in - the mentor may lead several. */
+  clanName?: string | null;
+  /** Total tasks ever assigned. 0 is the single most useful signal here. */
+  taskCount?: number;
+  /** Submissions sitting in this mentor's review queue. */
+  pendingApprovals?: number;
+  /** Open roadblocks: a reason to talk before piling more on. */
+  openBlockers?: number;
+}
 
 /**
  * AssignTaskDrawer - accessible right-side drawer to assign a custom task to one
@@ -382,7 +412,13 @@ export function AssignTaskDrawer({
     return next;
   });
 
-  const filteredCohort = cohort.filter((m) => m.name.toLowerCase().includes(search.toLowerCase()));
+  // Matches the clan as well as the name: once a clan is on screen, typing it
+  // is the obvious way to narrow a roster that spans two of them.
+  const filteredCohort = cohort.filter((m) => {
+    const needle = search.trim().toLowerCase();
+    if (!needle) return true;
+    return m.name.toLowerCase().includes(needle) || (m.clanName || '').toLowerCase().includes(needle);
+  });
   // Send a date-only value (YYYY-MM-DD). The server anchors it to end-of-day in
   // the mentee's timezone, so "Today" means their whole day — not the current
   // instant (which would be instantly overdue and drift a day across timezones).
@@ -584,12 +620,25 @@ export function AssignTaskDrawer({
           aria-labelledby={titleId}
           className={`relative w-full max-w-lg h-full bg-card border-l border-slate-200 dark:border-slate-700 shadow-2xl dark:shadow-[-8px_0_30px_rgba(0,0,0,0.6)] flex flex-col ${drawerPanelClass(shown)}`}
         >
-          <div className="px-6 py-5 border-b border-slate-200 flex items-center justify-between">
-            <div>
-              <h2 id={titleId} className="font-semibold text-slate-900">Assign a task</h2>
-              <p className="text-sm text-slate-500">
-                {mode === 'bulk' ? `${selected.size} mentee${selected.size === 1 ? '' : 's'} selected` : `to ${mentee?.name ?? 'mentee'}`}
-              </p>
+          <div className="px-6 py-5 border-b border-slate-200 flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              {/* Who this is for, shown rather than spelled out. */}
+              {mode === 'single' && mentee && (
+                <Avatar name={mentee.name} src={mentee.avatarUrl ?? null} size="md" className="shrink-0" />
+              )}
+              <div className="min-w-0">
+                <h2 id={titleId} className="font-semibold text-slate-900">Assign a task</h2>
+                <p className="truncate text-sm text-slate-500">
+                  {mode === 'bulk'
+                    ? `${selected.size} mentee${selected.size === 1 ? '' : 's'} selected`
+                    : [
+                      `to ${mentee?.name ?? 'mentee'}`,
+                      mentee?.clanName || null,
+                      mentee?.taskCount === 0 ? 'no tasks yet' : null,
+                      mentee?.pendingApprovals ? `${mentee.pendingApprovals} awaiting review` : null,
+                    ].filter(Boolean).join(' · ')}
+                </p>
+              </div>
             </div>
             <button onClick={closeKeepingDraft} aria-label="Close" className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg"><X className="w-5 h-5" /></button>
           </div>
@@ -1125,17 +1174,43 @@ export function AssignTaskDrawer({
                       <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                       <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search mentees…" aria-label="Search mentees" className={`${field} pl-9`} />
                     </div>
-                    <div className="max-h-52 overflow-y-auto rounded-lg border border-slate-200 divide-y divide-slate-100">
+                    <div className="max-h-64 overflow-y-auto rounded-lg border border-slate-200 divide-y divide-slate-100">
                       {filteredCohort.length === 0 && <p className="text-xs text-slate-400 px-3 py-3">No mentees match.</p>}
                       {filteredCohort.map((m) => {
                         const blocked = blockSet.has(m.id);
+                        /**
+                         * The facts that change who you pick, in the order they
+                         * matter. "No tasks yet" comes first because it is the
+                         * reason bulk assign exists, and a review queue is a
+                         * reason to think twice before adding to it.
+                         */
+                        const facts = [
+                          m.clanName || null,
+                          m.taskCount === 0 ? 'No tasks yet' : null,
+                          m.pendingApprovals ? `${m.pendingApprovals} awaiting review` : null,
+                          m.openBlockers ? `${m.openBlockers} roadblock${m.openBlockers === 1 ? '' : 's'}` : null,
+                          m.level || null,
+                        ].filter(Boolean) as string[];
+
                         return (
                           <label key={m.id} className={`flex items-center gap-3 px-3 py-2 ${blocked ? 'opacity-60 cursor-not-allowed' : 'hover:bg-slate-50 cursor-pointer'}`}>
-                            <input type="checkbox" disabled={blocked} checked={!blocked && selected.has(m.id)} onChange={() => toggleMentee(m.id)} className="rounded border-slate-300 text-brand-600 focus:ring-brand-500 disabled:cursor-not-allowed" />
-                            <span className="min-w-0 flex-1 truncate text-sm text-slate-700">{m.name}</span>
-                            {blocked
-                              ? <span className="text-[11px] font-medium text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-md shrink-0">Assigned</span>
-                              : m.level && <span className="text-xs text-slate-400">{m.level}</span>}
+                            <input type="checkbox" disabled={blocked} checked={!blocked && selected.has(m.id)} onChange={() => toggleMentee(m.id)} className="rounded border-slate-300 text-brand-600 focus:ring-brand-500 disabled:cursor-not-allowed shrink-0" />
+                            <Avatar name={m.name} src={m.avatarUrl ?? null} size="sm" className="shrink-0" />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-sm text-slate-700">{m.name}</span>
+                              {facts.length > 0 && (
+                                <span className="block truncate text-[11px] text-slate-400">{facts.join(' · ')}</span>
+                              )}
+                            </span>
+                            {blocked && (
+                              <span className="text-[11px] font-medium text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-md shrink-0">Assigned</span>
+                            )}
+                            {!blocked && m.risk === 'high' && (
+                              <span title="At risk" className="text-[11px] font-medium text-red-600 bg-red-50 px-1.5 py-0.5 rounded-md shrink-0">At risk</span>
+                            )}
+                            {!blocked && m.risk === 'watch' && (
+                              <span title="Worth watching" className="text-[11px] font-medium text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded-md shrink-0">Watch</span>
+                            )}
                           </label>
                         );
                       })}

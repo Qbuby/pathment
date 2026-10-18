@@ -119,6 +119,12 @@ function MentorMentees() {
     id: m.id,
     name: m.name,
     risk: m.risk,
+    level: m.level,
+    avatarUrl: m.profilePictureUrl,
+    clanName: m.clan?.name ?? null,
+    taskCount: m.taskCount,
+    pendingApprovals: m.pendingApprovals,
+    openBlockers: m.openBlockers,
   }));
 
   return (

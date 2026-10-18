@@ -343,9 +343,14 @@ export function ReplyAssistantDrawer({
    * An admin sees the key step and nothing else.
    *
    * The other two are each mentor's own - their material, their writing - and
-   * an admin who does not mentor has neither. What an admin uniquely CAN do is
-   * add the workspace-wide key, which clears step one for every mentor at
-   * once, so that is the whole of their job here.
+   * an admin who does not mentor has neither.
+   *
+   * The key they add is the workspace's, and it is worth being exact about
+   * what that does: `aiConnectionService` enforces a strict BYOK rule and
+   * returns null for a mentor with no personal key rather than falling back to
+   * an org one, so a workspace key does NOT get mentors past step one. It
+   * powers the admin-side AI features. Saying otherwise would send an admin
+   * away believing they had solved something for everybody.
    */
   const allSteps = status?.steps ?? [];
   const steps = role === 'admin' ? allSteps.filter((step) => step.key === 'key') : allSteps;
@@ -383,11 +388,11 @@ export function ReplyAssistantDrawer({
       width="lg"
       title={role === 'admin' ? 'Reply assistance for your mentors' : 'Set up reply assistance'}
       subtitle={role === 'admin'
-        ? 'Add the key once and every mentor is past the first step.'
+        ? 'The workspace key for admin-side AI. Mentors each bring their own for reply assistance.'
         : 'Drafts in your own words, grounded in your own material. Nothing is sent without you.'}
       footer={role === 'admin' ? (
         <p className="text-[11px] text-muted-foreground">
-          Each mentor still adds their own material and turns it on for themselves.
+          Each mentor connects their own key, adds their own material and turns it on for themselves.
         </p>
       ) : (
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -418,8 +423,10 @@ export function ReplyAssistantDrawer({
           <div className="flex gap-2 rounded-xl border border-border bg-muted/40 p-3">
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
             <p className="text-xs leading-5 text-muted-foreground">
-              A key you add here belongs to the whole workspace, so it clears the first step for every
-              mentor at once. The material and the writing style are each mentor&apos;s own.
+              A key you add here belongs to the whole workspace and powers the admin-side AI features.
+              It does <span className="font-medium text-foreground">not</span> cover reply assistance:
+              that is strictly bring-your-own-key, so each mentor adds their own and the usage is
+              billed to them.
             </p>
           </div>
         )}

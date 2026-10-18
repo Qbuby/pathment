@@ -106,6 +106,13 @@ export default function MentorCockpit() {
             name: m.name,
             level: m.level,
             risk: m.risk,
+            // Already loaded for the roster above; the picker was simply
+            // never given it, so it listed forty bare names.
+            avatarUrl: m.profilePictureUrl,
+            clanName: m.clan?.name ?? null,
+            taskCount: m.taskCount,
+            pendingApprovals: m.pendingApprovals,
+            openBlockers: m.openBlockers,
           }))}
           onClose={() => setBulkAssign(false)}
           onAssigned={refetch}
