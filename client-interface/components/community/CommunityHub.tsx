@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Users, Loader2, PartyPopper, Trophy, HelpCircle, MessagesSquare, BookOpen, Smile, Sunrise,
   Heart, ThumbsUp, Lightbulb, Send, Search, MessageCircle, Pin, CheckCircle2, MoreHorizontal,
   Trash2, Flag, Link2, Hash, ChevronDown, ChevronRight, Shield, CornerDownRight,
-  AtSign, Paperclip, X, Check,
+  AtSign, Paperclip, X, Check, Plus,
 } from 'lucide-react';
 import { useCommunityHub, type CommunityPost, type CommunityComment, type CommunityPerson, type CommunitySpace } from '@/lib/hooks/community/useCommunityHub';
 import { communityApi, type PostType, type ReactionType } from '@/lib/services/community-api';
@@ -477,216 +477,360 @@ function SpaceSwitcher({ hub }: { hub: ReturnType<typeof useCommunityHub> }) {
   );
 }
 
+/* ── Space rail ──────────────────────────────────────────────────────────── */
+
+/**
+ * Everything that is true of the SPACE rather than of any one post.
+ *
+ * It used to be four separate cards in a column of their own, which only
+ * became a column at 2xl — 1536px. Below that the grid dropped to two and the
+ * four cards fell underneath the feed, so the common case was a long stack of
+ * nearly-empty boxes reading "Posts 1 / Open questions 0 / Shout-outs 0 /
+ * Cheers 0", then one contributor, then a members toggle. A lot of screen for
+ * almost no information.
+ *
+ * One component now, rendered in the rail on a wide screen and folded into a
+ * single disclosure below the feed on a narrow one, so it is never four boxes
+ * of zeroes.
+ */
+function SpaceRail({ hub, showMembers, onToggleMembers }: {
+  hub: ReturnType<typeof useCommunityHub>;
+  showMembers: boolean;
+  onToggleMembers: () => void;
+}) {
+  const stats = hub.stats;
+  return (
+    <div className="space-y-4">
+      {hub.shoutouts.length > 0 && (
+        <section className="rounded-2xl border border-border bg-card p-4">
+          <h3 className="mb-2.5 inline-flex items-center gap-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100">
+            <Heart className="h-4 w-4 text-pink-500" aria-hidden />Motivation for you
+          </h3>
+          <div className="space-y-2">
+            {hub.shoutouts.map((s) => (
+              <div key={s.id} className="rounded-xl border border-pink-100 bg-pink-50/70 p-3 dark:border-pink-500/20 dark:bg-pink-500/10">
+                <p className="text-sm text-slate-700 dark:text-slate-200">{s.body}</p>
+                <p className="mt-1 text-xs text-slate-400">from {s.author.name}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Four numbers as a grid, not as four rows of a table. */}
+      {stats && (
+        <section className="rounded-2xl border border-border bg-card p-4">
+          <h3 className="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">This space</h3>
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { label: 'Posts', value: stats.posts },
+              { label: 'Open questions', value: stats.openQuestions, warn: stats.openQuestions > 0 },
+              { label: 'Shout-outs given', value: stats.given },
+              { label: 'Cheers received', value: stats.cheersReceived },
+            ].map((s) => (
+              <div key={s.label} className="rounded-xl border border-border/70 px-3 py-2.5">
+                <p className={`text-lg font-semibold tabular-nums ${s.warn ? 'text-amber-600 dark:text-amber-400' : 'text-slate-900 dark:text-slate-100'}`}>{s.value}</p>
+                <p className="text-[11px] leading-tight text-muted-foreground">{s.label}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className="rounded-2xl border border-border bg-card p-4">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h3 className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100">
+            <Trophy className="h-4 w-4 text-amber-500" aria-hidden />Top contributors
+          </h3>
+          <div className="flex gap-0.5 rounded-lg border border-border p-0.5 text-xs">
+            {(['week', 'all'] as const).map((period) => (
+              <button key={period} onClick={() => hub.setLbPeriod(period)} aria-pressed={hub.lbPeriod === period}
+                className={`rounded-md px-2 py-0.5 ${hub.lbPeriod === period ? 'bg-brand-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}>
+                {period === 'week' ? 'Week' : 'All'}
+              </button>
+            ))}
+          </div>
+        </div>
+        {hub.leaderboard.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No contributions yet. Give kudos or answer a question to get on the board.</p>
+        ) : (
+          <ol className="space-y-1">
+            {hub.leaderboard.map((r) => (
+              <li key={r.userId} className={`flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 ${r.mine ? 'bg-brand-50 dark:bg-brand-500/15' : ''}`}>
+                <span className={`w-5 shrink-0 text-center text-xs font-semibold tabular-nums ${r.rank <= 3 ? 'text-amber-500' : 'text-slate-400'}`}>{r.rank}</span>
+                <Avatar name={r.name} src={r.avatarUrl} initials={r.avatar} size="sm" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm text-slate-800 dark:text-slate-200">{r.name}{r.mine && <span className="text-brand-500"> · you</span>}</p>
+                  <p className="text-[11px] text-slate-400">{r.tier}</p>
+                </div>
+                <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-900 dark:text-slate-100">{r.points}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+        {hub.myRank && !hub.leaderboard.some((r) => r.mine) && (
+          <p className="mt-2 border-t border-border pt-2 text-xs text-muted-foreground">
+            You: <span className="font-medium text-slate-700 dark:text-slate-300">{hub.myRank.tier}</span> · {hub.myRank.points} pts{hub.myRank.rank ? ` · #${hub.myRank.rank}` : ''}
+          </p>
+        )}
+      </section>
+
+      <section className="rounded-2xl border border-border bg-card p-4">
+        <button onClick={onToggleMembers} aria-expanded={showMembers} className="flex w-full items-center justify-between">
+          <h3 className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100">
+            <Users className="h-4 w-4 text-brand-600" aria-hidden />Members ({hub.memberTotal})
+          </h3>
+          <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${showMembers ? 'rotate-180' : ''}`} aria-hidden />
+        </button>
+        {showMembers && (
+          <div className="mt-3 space-y-3">
+            {/* Searched on the server: a programme space holds more people
+                than are ever downloaded, so filtering here would only ever
+                search the page already on screen. */}
+            <input
+              aria-label="Search members"
+              value={hub.memberQuery}
+              onChange={(e) => hub.searchMembers(e.target.value)}
+              placeholder="Search members…"
+              className="w-full rounded-xl border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+            <ul className="space-y-2">
+              {hub.members.map((m) => (
+                <li key={m.id} className="flex items-center gap-2.5">
+                  <Avatar name={m.name} initials={m.avatar} src={m.avatarUrl} size="sm" />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm text-slate-800 dark:text-slate-200">{m.name}</p>
+                    <p className="text-[11px] capitalize text-slate-400">{m.role.replace('_', ' ')}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            {hub.members.length === 0 && (
+              <p className="text-sm text-muted-foreground">{hub.memberQuery ? 'Nobody matches that name.' : 'No members listed.'}</p>
+            )}
+            {hub.hasMoreMembers && (
+              <button onClick={hub.showMoreMembers} className="w-full rounded-xl border border-border px-3 py-2 text-sm font-medium text-brand-700 hover:bg-muted">
+                Show more ({hub.memberTotal - hub.members.length} more)
+              </button>
+            )}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 /* ── Hub ─────────────────────────────────────────────────────────────────── */
-export default function CommunityHub({ mentor = false }: { mentor?: boolean }) {
+
+/** How the feed is ordered. All three sort what is already loaded. */
+const SORTS = [
+  { key: 'latest', label: 'Latest activity' },
+  { key: 'reactions', label: 'Most reactions' },
+  { key: 'unanswered', label: 'Unanswered first' },
+] as const;
+type SortKey = (typeof SORTS)[number]['key'];
+
+/**
+ * The community, for whoever is looking at it.
+ *
+ * One component for all three portals. What differs between a mentee, a
+ * mentor and an admin is never the layout — it is which SPACES they are in,
+ * and that is decided on the server from their clan memberships and
+ * enrolments. An admin moderates everywhere they can see; a lead mentor
+ * moderates their clan; a mentee moderates nothing. Rendering three versions
+ * of this screen would mean three places for them to drift apart.
+ */
+export default function CommunityHub() {
   const hub = useCommunityHub();
   const [showMembers, setShowMembers] = useState(false);
-  /**
-   * The composer used to live inside a collapsed `<details>` labelled "Write a
-   * post →". Every community product people are used to — Slack, Discord,
-   * Circle, Discourse — puts the box in front of you, because a community
-   * that asks you to open a drawer before you can say anything gets said in
-   * less. It opens on click rather than rendering the whole form unprompted,
-   * so the feed still starts near the top.
-   */
   const [composing, setComposing] = useState(false);
+  const [sort, setSort] = useState<SortKey>('latest');
+  /** Questions nobody has answered — the only backlog this screen has. */
+  const [unsolvedOnly, setUnsolvedOnly] = useState(false);
   const canModerate = Boolean(hub.active?.isModerator && !hub.active?.readOnly);
 
+  const reactionTotal = (p: CommunityPost) =>
+    Object.values(p.reactions || {}).reduce((sum, n) => sum + (n || 0), 0);
+
+  /**
+   * Pinned first, always. After that the chosen order, applied to what the
+   * server already sent — the feed is one page, so this is a reorder rather
+   * than a different query, and it says "Latest activity" rather than
+   * promising a ranking it cannot compute.
+   */
+  const feed = useMemo(() => {
+    const rows = unsolvedOnly
+      ? hub.feed.filter((p) => p.type === 'question' && !p.resolved)
+      : hub.feed;
+    const ordered = [...rows];
+    if (sort === 'reactions') ordered.sort((a, b) => reactionTotal(b) - reactionTotal(a));
+    else if (sort === 'unanswered') ordered.sort((a, b) => Number(a.commentCount > 0) - Number(b.commentCount > 0));
+    return ordered.sort((a, b) => Number(b.pinned) - Number(a.pinned));
+  }, [hub.feed, sort, unsolvedOnly]);
+
   if (hub.loadingSpaces) {
-    return <div className="flex items-center justify-center py-24"><Loader2 className="w-8 h-8 animate-spin text-brand-600" /></div>;
+    return <div className="flex items-center justify-center py-24"><Loader2 className="h-8 w-8 animate-spin text-brand-600" /></div>;
   }
 
+  const space = hub.active;
+  const openQuestions = hub.stats?.openQuestions ?? 0;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/*
-          A full-width marketing panel sat here and pushed the feed below the
-          fold on every single visit. People come back to a community to read
-          it, not to be told what it is for, so the strapline stays as one
-          line and the conversation starts where the eye lands.
+          The space, named. The old header said "Community" over every space
+          alike, so the one piece of context that changes as you move around —
+          which clan you are reading — was only visible as a highlight in a
+          sidebar that disappears on a narrow screen.
       */}
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h1 className="inline-flex items-center gap-2 text-2xl font-semibold tracking-tight text-slate-900">
-          <Users className="h-5 w-5 text-brand-600" aria-hidden />Community
-        </h1>
-        <p className="text-sm text-slate-500">Collaborate with your clan, get unstuck, and cheer each other on.</p>
-      </div>
-
-      <div className="grid lg:grid-cols-[200px_minmax(0,1fr)] 2xl:grid-cols-[220px_minmax(0,1fr)_260px] gap-5">
-        {/* Left - spaces */}
-        <div className="space-y-4 order-1"><SpaceSwitcher hub={hub} /></div>
-
-        {/* Center - composer + feed */}
-        <div className="min-w-0 space-y-4 order-2">
-          {/* Filters */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-1.5 bg-card border border-slate-200 rounded-lg px-2.5 flex-1 min-w-[180px]">
-              <Search className="w-4 h-4 text-slate-400 shrink-0" />
-              <input value={hub.query} onChange={(e) => hub.setQuery(e.target.value)} aria-label="Search community posts" placeholder={`Search ${hub.active?.name ?? ''}…`} className="w-full py-2 text-sm focus:outline-none" />
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className="mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-500/10">
+            <Users className="h-5 w-5" aria-hidden />
+          </span>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="truncate text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl">
+                {space?.name ?? 'Community'}
+              </h1>
+              {space?.subtitle && (
+                <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">{space.subtitle}</span>
+              )}
+              {space?.workClosed && (
+                <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">Programme finished</span>
+              )}
             </div>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Collaborate with your clan, get unstuck, and cheer each other on.
+            </p>
           </div>
-          <div className="flex items-center gap-1.5 flex-wrap">
+        </div>
+        {!space?.readOnly && (
+          <button
+            type="button"
+            onClick={() => setComposing(true)}
+            className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-700"
+          >
+            <Plus className="h-4 w-4" aria-hidden />Create post
+          </button>
+        )}
+      </header>
+
+      {/*
+          Three columns from xl rather than 2xl. The rail used to need a
+          1536px window to exist at all, which is wider than most laptops —
+          so for nearly everybody it fell under the feed.
+      */}
+      <div className="grid gap-5 xl:grid-cols-[232px_minmax(0,1fr)_300px]">
+        <div className="min-w-0 xl:order-1"><SpaceSwitcher hub={hub} /></div>
+
+        <div className="order-2 min-w-0 space-y-4">
+          {/* Search, order and the unsolved backlog on one line. */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex min-w-[200px] flex-1 items-center gap-1.5 rounded-xl border border-border bg-card px-2.5">
+              <Search className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+              <input value={hub.query} onChange={(e) => hub.setQuery(e.target.value)} aria-label="Search community posts"
+                placeholder={`Search ${space?.name ?? ''}…`} className="w-full bg-transparent py-2 text-sm focus:outline-none" />
+            </div>
+            <select
+              aria-label="Sort posts"
+              value={sort}
+              onChange={(e) => setSort(e.target.value as SortKey)}
+              className="rounded-xl border border-border bg-card px-3 py-2 text-sm"
+            >
+              {SORTS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+            <button
+              type="button"
+              aria-pressed={unsolvedOnly}
+              onClick={() => setUnsolvedOnly((v) => !v)}
+              className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition-colors ${
+                unsolvedOnly
+                  ? 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300'
+                  : 'border-border text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <HelpCircle className="h-4 w-4" aria-hidden />
+              Unanswered{openQuestions ? ` (${openQuestions})` : ''}
+            </button>
+          </div>
+
+          {/* Scrolls sideways on a phone instead of wrapping to three rows. */}
+          <div className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5">
             {FILTER_TYPES.map((t) => (
               <button key={t ?? 'all'} aria-pressed={hub.typeFilter === t} onClick={() => hub.setTypeFilter(t)}
-                className={`px-3 py-1 rounded-full text-xs font-medium border ${hub.typeFilter === t ? 'border-brand-400 bg-brand-50 text-brand-700' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}>
+                className={`shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                  hub.typeFilter === t
+                    ? 'border-brand-400 bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300'
+                    : 'border-border text-muted-foreground hover:text-foreground'
+                }`}>
                 {t ? TYPE_META[t].label : 'All'}
               </button>
             ))}
             {hub.tagFilter && (
-              <button onClick={() => hub.setTagFilter(null)} className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium border border-brand-300 bg-brand-50 text-brand-700">
-                <Hash className="w-3 h-3" />{hub.tagFilter} ✕
+              <button onClick={() => hub.setTagFilter(null)} className="inline-flex shrink-0 items-center gap-1 rounded-full border border-brand-300 bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700">
+                <Hash className="h-3 w-3" aria-hidden />{hub.tagFilter} ✕
               </button>
             )}
           </div>
 
-          {hub.active?.readOnly ? (
+          {space?.readOnly ? (
             <p className="rounded-2xl border border-border bg-card p-4 text-sm text-muted-foreground">
               This space has been archived by an administrator.
             </p>
-          ) : (
+          ) : composing ? (
             <div className="rounded-2xl border border-border bg-card p-4">
-              {composing ? (
-                <Composer hub={hub} onDone={() => setComposing(false)} />
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setComposing(true)}
-                  className="flex w-full items-center gap-3 rounded-xl border border-slate-200 px-4 py-3 text-left text-sm text-slate-500 transition-colors hover:border-brand-300 hover:bg-brand-50/40 dark:border-slate-700"
-                >
-                  <MessagesSquare className="h-5 w-5 shrink-0 text-brand-600" aria-hidden />
-                  Share a win, ask a question, or help your clan
-                  <span className="ml-auto shrink-0 text-xs font-medium text-brand-700">Post</span>
-                </button>
-              )}
+              <Composer hub={hub} onDone={() => setComposing(false)} />
             </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setComposing(true)}
+              className="flex w-full items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 text-left text-sm text-muted-foreground transition-colors hover:border-brand-300 hover:bg-brand-50/40"
+            >
+              <MessagesSquare className="h-5 w-5 shrink-0 text-brand-600" aria-hidden />
+              Share a win, ask a question, or help your clan
+              <span className="ml-auto shrink-0 text-xs font-medium text-brand-700">Post</span>
+            </button>
           )}
 
           {hub.loadingFeed ? (
-            <div className="flex items-center justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-brand-600" /></div>
+            <div className="flex items-center justify-center py-16"><Loader2 className="h-7 w-7 animate-spin text-brand-600" /></div>
           ) : hub.error ? (
-            <div className="bg-card rounded-2xl border border-slate-200 py-12 text-center">
-              <p className="text-slate-600 mb-3">{hub.error}</p>
-              <button onClick={hub.refetch} className="text-brand-600 hover:text-brand-700 text-sm font-medium">Try again</button>
+            <div className="rounded-2xl border border-border bg-card py-12 text-center">
+              <p className="mb-3 text-muted-foreground">{hub.error}</p>
+              <button onClick={hub.refetch} className="text-sm font-medium text-brand-600 hover:text-brand-700">Try again</button>
             </div>
-          ) : hub.feed.length === 0 ? (
-            <div className="bg-card rounded-2xl border border-slate-200 py-12 text-center">
-              <Users className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-              <p className="text-slate-600">Nothing here yet - be the first to post in {hub.active?.name}.</p>
+          ) : feed.length === 0 ? (
+            <div className="rounded-2xl border border-border bg-card py-12 text-center">
+              <Users className="mx-auto mb-3 h-10 w-10 text-slate-300" aria-hidden />
+              <p className="text-muted-foreground">
+                {unsolvedOnly ? 'No unanswered questions here — the clan is keeping up.'
+                  : hub.query || hub.typeFilter || hub.tagFilter ? 'Nothing matches these filters.'
+                    : `Nothing here yet — be the first to post in ${space?.name ?? 'this space'}.`}
+              </p>
             </div>
           ) : (
-            hub.feed.map((p) => <PostCard key={p.id} post={p} canModerate={canModerate} hub={hub} />)
+            feed.map((p: CommunityPost) => <PostCard key={p.id} post={p} canModerate={canModerate} hub={hub} />)
           )}
         </div>
 
-        {/* Right - context */}
-        <div className="space-y-4 order-3 lg:col-start-2 2xl:col-start-auto">
-          {hub.shoutouts.length > 0 && (
-            <div className="bg-card rounded-2xl border border-slate-200 p-5">
-              <h3 className="font-semibold text-slate-900 mb-3">Motivation for you</h3>
-              <div className="space-y-2">
-                {hub.shoutouts.map((s) => (
-                  <div key={s.id} className="p-3 rounded-xl bg-pink-50 border border-pink-100">
-                    <p className="text-sm text-slate-700">{s.body}</p>
-                    <p className="text-xs text-slate-400 mt-1">from {s.author.name}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {hub.stats && (
-            <div className="bg-card rounded-2xl border border-slate-200 p-5">
-              <h3 className="font-semibold text-slate-900 mb-3">This space</h3>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between"><span className="text-slate-500">Posts</span><span className="font-semibold text-slate-900">{hub.stats.posts}</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Open questions</span><span className="font-semibold text-slate-900">{hub.stats.openQuestions}</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Shout-outs given</span><span className="font-semibold text-slate-900">{hub.stats.given}</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Cheers received</span><span className="font-semibold text-slate-900">{hub.stats.cheersReceived}</span></div>
-              </div>
-            </div>
-          )}
-
-          {/* Top contributors - recognition right where it's earned */}
-          <div className="bg-card rounded-2xl border border-slate-200 p-5">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold text-slate-900 flex items-center gap-1.5"><Trophy className="w-4 h-4 text-amber-500" />Top contributors</h3>
-              <div className="flex gap-1 text-xs">
-                {(['week', 'all'] as const).map((p) => (
-                  <button key={p} onClick={() => hub.setLbPeriod(p)}
-                    className={`px-2 py-0.5 rounded-md ${hub.lbPeriod === p ? 'bg-brand-50 text-brand-700 font-medium' : 'text-slate-500 hover:bg-slate-50'}`}>
-                    {p === 'week' ? 'This week' : 'All time'}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {hub.leaderboard.length === 0 ? (
-              <p className="text-sm text-slate-500">No contributions yet. Give kudos or answer a question to get on the board.</p>
-            ) : (
-              <div className="space-y-1">
-                {hub.leaderboard.map((r) => (
-                  <div key={r.userId} className={`flex items-center gap-2.5 px-1.5 py-1.5 rounded-lg ${r.mine ? 'bg-brand-50 dark:bg-brand-500/15' : ''}`}>
-                    <span className={`w-5 text-center text-xs font-semibold tabular-nums shrink-0 ${r.rank <= 3 ? 'text-amber-500' : 'text-slate-400'}`}>{r.rank}</span>
-                    <Avatar name={r.name} src={r.avatarUrl} initials={r.avatar} size="sm" />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm text-slate-800 truncate">{r.name}{r.mine && <span className="text-brand-500"> · you</span>}</p>
-                      <p className="text-[11px] text-slate-400">{r.tier}</p>
-                    </div>
-                    <span className="text-sm font-semibold text-slate-900 tabular-nums shrink-0">{r.points}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {hub.myRank && !hub.leaderboard.some((r) => r.mine) && (
-              <p className="mt-2 pt-2 border-t border-slate-100 text-xs text-slate-500">
-                You: <span className="font-medium text-slate-700">{hub.myRank.tier}</span> · {hub.myRank.points} pts{hub.myRank.rank ? ` · #${hub.myRank.rank}` : ''} - climb by giving kudos &amp; answering questions.
-              </p>
-            )}
+        {/* Sticky on a wide screen so it stays with you down a long feed. */}
+        <aside className="order-3 hidden min-w-0 xl:block">
+          <div className="sticky top-4">
+            <SpaceRail hub={hub} showMembers={showMembers} onToggleMembers={() => setShowMembers((v) => !v)} />
           </div>
+        </aside>
 
-          <div className="bg-card rounded-2xl border border-slate-200 p-5">
-            <button onClick={() => setShowMembers((s) => !s)} aria-expanded={showMembers} className="w-full flex items-center justify-between">
-              <h3 className="font-semibold text-slate-900">Members ({hub.memberTotal})</h3>
-              {showMembers ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
-            </button>
-            {showMembers && (
-              <div className="mt-3 space-y-3">
-                {/* Searched on the server: a programme space holds more people
-                    than are ever downloaded, so filtering here would only ever
-                    search the page already on screen. */}
-                <input
-                  aria-label="Search members"
-                  value={hub.memberQuery}
-                  onChange={(e) => hub.searchMembers(e.target.value)}
-                  placeholder="Search members…"
-                  className="w-full rounded-xl border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-                <div className="space-y-2">
-                  {hub.members.map((m) => (
-                    <div key={m.id} className="flex items-center gap-2.5">
-                      <Avatar name={m.name} initials={m.avatar} src={m.avatarUrl} size="md" />
-                      <div className="min-w-0">
-                        <p className="text-sm text-slate-800 truncate">{m.name}</p>
-                        <p className="text-[11px] text-slate-400 capitalize">{m.role.replace('_', ' ')}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                {hub.members.length === 0 && (
-                  <p className="text-sm text-slate-400">
-                    {hub.memberQuery ? 'Nobody matches that name.' : 'No members listed.'}
-                  </p>
-                )}
-                {hub.hasMoreMembers && (
-                  <button
-                    onClick={hub.showMoreMembers}
-                    className="w-full rounded-xl border border-border px-3 py-2 text-sm font-medium text-brand-700 hover:bg-muted"
-                  >
-                    Show more ({hub.memberTotal - hub.members.length} more)
-                  </button>
-                )}
-              </div>
-            )}
+        {/* …and one disclosure below the feed when there is no room for it. */}
+        <details className="order-4 rounded-2xl border border-border bg-card xl:hidden">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
+            About this space{hub.memberTotal ? ` · ${hub.memberTotal} members` : ''}
+          </summary>
+          <div className="border-t border-border p-3">
+            <SpaceRail hub={hub} showMembers={showMembers} onToggleMembers={() => setShowMembers((v) => !v)} />
           </div>
-        </div>
+        </details>
       </div>
     </div>
   );

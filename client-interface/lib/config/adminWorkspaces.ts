@@ -111,6 +111,11 @@ export const adminWorkspaces: { label: string; tabs: AdminWorkspaceTab[] }[] = [
     label: "Community",
     tabs: [
       {
+        href: "/admin/community",
+        label: "Conversations",
+        permission: "community.moderate",
+      },
+      {
         href: "/admin/announcements",
         label: "Announcements",
         permission: "community.moderate",
