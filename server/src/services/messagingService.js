@@ -56,7 +56,37 @@ class MessagingService {
 
     if (portal === 'admin') {
       if (workspaceUserIds === null) return null;
-      return workspaceUserIds.filter((id) => id !== userId);
+      /**
+       * An admin of one programme may write to that programme.
+       *
+       * This returned the whole workspace to anybody wearing the admin hat,
+       * so somebody granted a single fellowship could open a chat with all
+       * 1,089 members of the organisation — and the picker listed them.
+       *
+       * Bounded to the people in their programmes' clans, plus the workspace's
+       * own admins, who must stay reachable: being scoped to one programme is
+       * a reason to need an org admin, not a reason to be cut off from one.
+       */
+      const scope = await require('./authzService').adminProgramScope(user);
+      if (!Array.isArray(scope)) return workspaceUserIds.filter((id) => id !== userId);
+
+      const clansInScope = scope.length
+        ? await models.Clan.findAll({ where: { programId: { [Op.in]: scope } }, attributes: ['id'], raw: true })
+        : [];
+      const inScope = new Set(adminIds);
+      if (clansInScope.length) {
+        const members = await models.ClanMembership.findAll({
+          where: {
+            clanId: { [Op.in]: clansInScope.map((c) => c.id) },
+            status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES },
+          },
+          attributes: ['userId'],
+          raw: true,
+        });
+        members.forEach((m) => inScope.add(m.userId));
+      }
+      const workspaceSet = new Set(workspaceUserIds);
+      return [...inScope].filter((id) => id !== userId && workspaceSet.has(id));
     }
 
     const allowed = new Set();

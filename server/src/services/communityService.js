@@ -143,8 +143,8 @@ class CommunityService {
   }
 
   // ── spaces ────────────────────────────────────────────────────────────
-  async listSpaces(user) {
-    return spaceService.listSpaces(user);
+  async listSpaces(user, options = {}) {
+    return spaceService.listSpaces(user, options);
   }
 
   /**

@@ -233,6 +233,37 @@ class ClanHealthService {
       for (const row of rows) programEntry.rows.set(row.id, row);
     }
 
+    /**
+     * Programmes that have no clans yet still exist.
+     *
+     * This map is built by walking the CLANS, so a programme with none in it
+     * never appears — which is every programme on the day it is created. An
+     * admin granted a new fellowship opened the dashboard to "No programs
+     * yet" with their own programme missing from the scope selector, and no
+     * way to pick it. They are added here with empty counts, which is the
+     * truth about them.
+     */
+    const known = (Array.isArray(programIds) && models.Program)
+      ? await models.Program.findAll({
+        where: { id: { [Op.in]: programIds } },
+        attributes: ['id', 'name', 'status', 'startDate', 'endDate', 'closedAt'],
+        raw: true,
+      })
+      : [];
+    for (const program of known || []) {
+      if (programs.has(program.id)) continue;
+      programs.set(program.id, {
+        id: program.id,
+        name: program.name,
+        status: program.status || null,
+        startDate: program.startDate || null,
+        endDate: program.endDate || null,
+        closedAt: program.closedAt || null,
+        rows: new Map(),
+        clans: [],
+      });
+    }
+
     // Sort clans within each program worst-first; sort programs by attention need.
     const statusRank = { red: 0, amber: 1, green: 2 };
     const programList = [...programs.values()].map((p) => {

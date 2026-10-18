@@ -18,7 +18,9 @@ const uploadAttachments = catchAsync(async (req, res) => {
 
 // ── spaces ────────────────────────────────────────────────────────────────
 const listSpaces = catchAsync(async (req, res) => {
-  const spaces = await communityService.listSpaces(req.user);
+  // The hat they are wearing decides whether this is "what I administer"
+  // or "what I am in" — see communitySpaceService.listSpaces.
+  const spaces = await communityService.listSpaces(req.user, { portalRole: req.portal?.role ?? null });
   res.status(200).json(successResponse('Spaces retrieved', { spaces }));
 });
 

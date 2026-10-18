@@ -75,8 +75,18 @@ class CommunitySpaceService {
   }
 
   /** The full set of spaces a user can browse, clan-first. */
-  async listSpaces(user) {
+  async listSpaces(user, { portalRole = null } = {}) {
     const userId = user.id;
+    /**
+     * Resolved, not read off the account.
+     *
+     * The local `isAdmin` helper reads `user.capabilities`, which the rest of
+     * the codebase is explicit about being legacy and not authoritative. A
+     * program_admin has no stored capability, so every admin branch in this
+     * file skipped them: they got their own memberships and nothing they
+     * administer. `actsAsAdmin` derives it from real grants.
+     */
+    const administers = await require('./authzService').actsAsAdmin(user);
     const [memberships, enrollments] = await Promise.all([
       this._myClanMemberships(userId),
       this._myEnrollments(userId)
@@ -188,7 +198,7 @@ class CommunitySpaceService {
      * the key, so a space they are genuinely a member of keeps the richer
      * entry built above rather than being replaced by this one.
      */
-    if (isAdmin(user)) {
+    if (administers) {
       const scope = await require('./authzService').adminProgramScope(user);
       const where = Array.isArray(scope) ? { programId: { [Op.in]: scope } } : {};
       const [adminClans, adminPrograms] = await Promise.all([
@@ -232,6 +242,34 @@ class CommunitySpaceService {
       role: isAdmin(user) ? 'admin' : 'member',
       isModerator: isAdmin(user)
     });
+
+    /**
+     * In the ADMIN portal, show what they administer — not what they are in.
+     *
+     * The same person can administer one programme and mentor a clan in
+     * another; both are true, and which one applies is the hat they are
+     * wearing. Under Admin, a programme-scoped admin was shown their own
+     * clans from a programme they have no admin rights over, which reads as
+     * the admin surface leaking another programme.
+     *
+     * Only ever narrows, and only in that portal: switch to Mentor and their
+     * own clans are all there, which is the view those memberships are for.
+     * The Lounge stays — it is everybody's and belongs to no programme.
+     */
+    if (portalRole === 'admin' && administers) {
+      const scope = await require('./authzService').adminProgramScope(user);
+      if (Array.isArray(scope)) {
+        const allowedClans = scope.length
+          ? await models.Clan.findAll({ where: { programId: { [Op.in]: scope } }, attributes: ['id'], raw: true })
+          : [];
+        const clanIds = new Set(allowedClans.map((c) => c.id));
+        return spaces.filter((space) => (
+          space.type === 'global'
+          || (space.type === 'program' && scope.includes(space.id))
+          || (space.type === 'clan' && clanIds.has(space.id))
+        ));
+      }
+    }
 
     return spaces;
   }

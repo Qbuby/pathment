@@ -98,7 +98,31 @@ class AnnouncementService {
    * decides the scope while their abilities stay intact.
    */
   async _visibilityWhere(user, { portalRole = null, clanId = null } = {}) {
-    if (await authzService.actsAsAdmin(user)) return undefined;
+    if (await authzService.actsAsAdmin(user)) {
+      /**
+       * An admin saw everything, full stop — `undefined` is no WHERE clause.
+       * That is right for an org-tier admin and wrong for a programme one:
+       * somebody granted a single fellowship was shown every clan broadcast
+       * in the workspace, other programmes' mentors and clans named in them.
+       *
+       * Org-wide posts stay visible deliberately. "Everyone", "all mentors"
+       * and "all mentees" reached this programme's people too, so hiding
+       * them would misreport what their own members have been told.
+       */
+      const scope = await authzService.adminProgramScope(user);
+      if (!Array.isArray(scope)) return undefined;
+      const clansInScope = scope.length
+        ? await models.Clan.findAll({ where: { programId: { [Op.in]: scope } }, attributes: ['id'], raw: true })
+        : [];
+      return {
+        [Op.or]: [
+          { authorId: user.id },
+          { audience: { [Op.in]: ['all', 'mentors', 'mentees'] } },
+          { audience: 'program', audienceId: { [Op.in]: scope } },
+          { audience: 'clan', audienceId: { [Op.in]: clansInScope.map((c) => c.id) } },
+        ],
+      };
+    }
 
     const caps = await this._caps(user);
     const { clanIds, programIds } = await this._scope(user, portalRole);

@@ -1438,12 +1438,31 @@ class CertificateService {
       whereClause.programId = queryProgramId;
     }
 
+    /**
+     * An admin of some programmes sees those programmes' templates.
+     *
+     * The admin branch below returned everything, so a programme admin was
+     * shown another programme's certificate collections — designs they
+     * cannot issue and should not be redesigning. The bound is the same
+     * programme scope every other admin list uses; an org-tier admin has
+     * none and keeps seeing all of them.
+     */
+    const adminScope = (await authzService.actsAsAdmin(user))
+      ? await authzService.adminProgramScope(user)
+      : undefined;
+    if (Array.isArray(adminScope)) {
+      const allowed = queryProgramId
+        ? (adminScope.includes(queryProgramId) ? [queryProgramId] : [])
+        : adminScope;
+      whereClause.programId = { [Op.in]: allowed };
+    }
+
     // Non-admins see the templates of programmes they mentor in, plus any
     // shared directly with them. Keyed on what they mentor rather than on
     // `user.role`, which says only what their account was created as — a
     // co-mentor promoted from a mentee account was falling past this branch
     // and listing every template in the org.
-    if (!(await authzService.actsAsAdmin(user))) {
+    if (adminScope === undefined) {
       const mentoredClanIds = await authzService.clansWhereCan(user, PERMISSIONS.MENTEE_VIEW);
       const mentoredClans = mentoredClanIds.length
         ? await models.Clan.findAll({

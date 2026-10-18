@@ -20,9 +20,27 @@ class ReviewRecordsService {
   async orgReviewRecords(f = {}) {
     const where = {};
     if (f.clanId) where.clanId = f.clanId;
-    if (f.programId && models.Clan) {
+    /**
+     * The programme filter, and the programme BOUND.
+     *
+     * `f.programId` is what the admin picked on the page; `f.programScope` is
+     * what they are allowed to see at all — null for an org-tier admin, a
+     * list for a programme-scoped one. Only the first existed, so the default
+     * "All programs" meant all of them: a programme admin opened this to 300
+     * sessions across 35 clans and 36 mentors from a programme they have no
+     * access to, with every mentee's attendance in it.
+     *
+     * Intersected, so picking a programme can only ever narrow the bound.
+     */
+    const scope = Array.isArray(f.programScope) ? f.programScope : null;
+    const programIds = f.programId
+      ? (scope && !scope.includes(f.programId) ? [] : [f.programId])
+      : scope;
+    if (programIds && models.Clan) {
       // Sessions hang off clans, so a program filter is "any clan in that program".
-      const clans = await models.Clan.findAll({ where: { programId: f.programId }, attributes: ['id'], paranoid: false });
+      const clans = programIds.length
+        ? await models.Clan.findAll({ where: { programId: { [Op.in]: programIds } }, attributes: ['id'], paranoid: false })
+        : [];
       const clanIds = clans.map((c) => c.id);
       where.clanId = f.clanId ? { [Op.in]: clanIds.filter((id) => id === f.clanId) } : { [Op.in]: clanIds };
     }
@@ -68,7 +86,8 @@ class ReviewRecordsService {
       include: [
         { model: models.CohortReviewEntry, as: 'entries', include: [{ model: models.User, as: 'mentee', attributes: ['id', 'firstName', 'lastName', 'profilePictureUrl'] }] },
         { model: models.User, as: 'mentor', attributes: ['id', 'firstName', 'lastName'] },
-        ...(models.Clan ? [{ model: models.Clan, as: 'clan', attributes: ['id', 'name'] }] : []),
+        // programId so the caller can check this session is one they may read.
+        ...(models.Clan ? [{ model: models.Clan, as: 'clan', attributes: ['id', 'name', 'programId'] }] : []),
       ],
     });
     if (!s) return null;
@@ -83,7 +102,7 @@ class ReviewRecordsService {
       contributionPoints: e.contributionPoints || 0,
       secondsPresent: e.secondsPresent || 0,
     })).sort((a, b) => a.menteeName.localeCompare(b.menteeName));
-    return { ...row, note: s.note || null, entries };
+    return { ...row, programId: s.clan?.programId ?? null, note: s.note || null, entries };
   }
 
   // ── helpers ────────────────────────────────────────────────────────────────

@@ -10,11 +10,13 @@ const mockModels = {
   MentorProfile: { findAll: jest.fn() },
   ClanMembership: { findAll: jest.fn() },
   MentorMenteeMatch: { findAll: jest.fn() },
+  // Resolving a programme scope to its clans, for the bounded admin case.
+  Clan: { findAll: jest.fn() },
 };
 
 jest.mock('../../src/db', () => ({ models: mockModels, sequelize: {} }));
 jest.mock('../../src/utils/auditContext', () => ({ getRequestContext: () => mockContext }));
-jest.mock('../../src/services/authzService', () => ({ getCapabilities: jest.fn() }));
+jest.mock('../../src/services/authzService', () => ({ getCapabilities: jest.fn(), adminProgramScope: jest.fn() }));
 jest.mock('../../src/services/schedulingService', () => ({ getMenteeMentorIds: jest.fn() }));
 
 const authzService = require('../../src/services/authzService');
@@ -73,10 +75,12 @@ it('gives a mentor assigned mentees, every mentor and admins', async () => {
   expect(visible).not.toContain('outside-mentee');
 });
 
-it('gives an admin every other active workspace member', async () => {
+it('gives an ORG admin every other active workspace member', async () => {
   mockContext.portalRole = 'admin';
   mockModels.User.findByPk.mockResolvedValue({ id: 'admin', role: 'admin' });
   authzService.getCapabilities.mockResolvedValue(['admin']);
+  // null scope = unrestricted, which is what an org-tier admin resolves to.
+  authzService.adminProgramScope.mockResolvedValue(null);
 
   await expect(messagingService.getAllowedRecipientIds('admin')).resolves.toEqual([
     'mentor',
@@ -85,6 +89,27 @@ it('gives an admin every other active workspace member', async () => {
     'peer',
     'outside-mentee',
   ]);
+});
+
+/**
+ * An admin granted one programme could open a chat with all 1,089 members of
+ * the organisation, because the admin branch returned the workspace and
+ * stopped. Bounded to their programmes' clans — plus the workspace's own
+ * admins, who must stay reachable: being scoped to one programme is a reason
+ * to need an org admin, not a reason to be cut off from one.
+ */
+it('bounds a PROGRAMME admin to their programmes, keeping org admins reachable', async () => {
+  mockContext.portalRole = 'admin';
+  mockModels.User.findByPk.mockResolvedValue({ id: 'scoped', role: 'mentor' });
+  authzService.getCapabilities.mockResolvedValue(['admin']);
+  authzService.adminProgramScope.mockResolvedValue(['prog-1']);
+  mockModels.Clan.findAll.mockResolvedValue([{ id: 'in-scope-clan' }]);
+  mockModels.ClanMembership.findAll.mockResolvedValue([{ userId: 'mentee' }, { userId: 'peer' }]);
+
+  const visible = await messagingService.getAllowedRecipientIds('scoped');
+  expect(visible).toEqual(expect.arrayContaining(['mentee', 'peer', 'admin']));
+  expect(visible).not.toContain('outside-mentee');
+  expect(visible).not.toContain('other-mentor');
 });
 
 it('puts allowed ids into the query so forbidden users are never fetched', async () => {
