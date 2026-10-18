@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowUpLeft, Maximize2, Minimize2, PhoneOff } from 'lucide-react';
+import { ArrowUpLeft, Maximize2, Minimize2, PhoneOff, Video, VideoOff, X } from 'lucide-react';
 import { JitsiRoom, type JitsiParticipant } from '@/components/shared/JitsiRoom';
 import type { CallSpec } from '@/lib/context/CallContext';
 
@@ -35,6 +35,7 @@ export function PersistentCall({
 }) {
   const router = useRouter();
   const [rect, setRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+  const [cameraPref, setCameraPref] = useState<'on' | 'off' | null>(null);
 
   // Track the dock placeholder's geometry. A fixed overlay has to be told where
   // its target is, and that target moves with scroll, resize, sidebar collapse
@@ -110,24 +111,84 @@ export function PersistentCall({
       )}
 
       <div className={isDocked ? 'w-full h-full' : 'flex-1 min-h-0'}>
-        <JitsiRoom
-          key={reloadKey}
-          domain={call.domain}
-          room={call.room}
-          displayName={call.displayName}
-          avatarUrl={call.avatarUrl}
-          role={call.role}
-          privateChat={call.privateChat}
-          polls={call.polls}
-          onJoined={onJoined}
-          onParticipantJoined={onParticipantJoined}
-          onDominantSpeaker={onDominantSpeaker}
-          onSelfDominantChange={onSelfDominantChange}
-          // The user hung up inside Jitsi's own toolbar — treat it exactly like
-          // pressing our End/Leave button. This is the ONLY path (besides those
-          // buttons) that may end a call; navigation no longer reaches it.
-          onReadyToClose={onEnd}
-        />
+        {call.role === 'guest' && !cameraPref ? (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-background/80 backdrop-blur-md p-4 animate-in fade-in duration-150">
+            <div className="bg-card text-card-foreground rounded-2xl shadow-2xl max-w-lg w-full p-6 sm:p-7 border border-border relative animate-in zoom-in-95 duration-150">
+              {/* Close button */}
+              <button
+                onClick={onEnd}
+                className="absolute top-5 right-5 p-1 rounded-md text-muted-foreground hover:text-foreground transition-colors"
+                title="Cancel and return"
+                aria-label="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              {/* Eyebrow & Title */}
+              <div className="text-left pr-8">
+                <span className="text-[11px] font-bold tracking-wider text-primary uppercase">
+                  JOIN REVIEW
+                </span>
+                <h2 className="text-xl font-bold text-foreground mt-1 tracking-tight">
+                  How would you like to join?
+                </h2>
+                <p className="text-xs sm:text-sm text-muted-foreground mt-1.5 leading-relaxed">
+                  Live review in <strong className="font-semibold text-foreground">{(call.title || '').replace(/^(Live\s+)?Review\s*[·-]\s*/i, '').trim() || call.title || 'the clan review'}</strong>. You can turn your camera on or off anytime during the call.
+                </p>
+              </div>
+
+              {/* Two Choice Cards */}
+              <div className="grid grid-cols-2 gap-3.5 my-6">
+                <button
+                  type="button"
+                  onClick={() => setCameraPref('on')}
+                  className="flex flex-col items-center justify-center py-7 px-4 rounded-xl border border-border/80 bg-background hover:bg-primary/5 hover:border-primary/50 transition-all group focus:outline-none focus-visible:ring-2 focus-visible:ring-primary shadow-xs cursor-pointer"
+                >
+                  <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mb-3 group-hover:scale-105 transition-transform">
+                    <Video className="w-5 h-5" />
+                  </div>
+                  <span className="text-sm font-semibold text-foreground">Camera on</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setCameraPref('off')}
+                  className="flex flex-col items-center justify-center py-7 px-4 rounded-xl border border-border/80 bg-background hover:bg-muted/40 hover:border-foreground/30 transition-all group focus:outline-none focus-visible:ring-2 focus-visible:ring-ring shadow-xs cursor-pointer"
+                >
+                  <div className="w-12 h-12 rounded-full bg-muted text-muted-foreground flex items-center justify-center mb-3 group-hover:scale-105 transition-transform">
+                    <VideoOff className="w-5 h-5" />
+                  </div>
+                  <span className="text-sm font-semibold text-foreground">Camera off</span>
+                </button>
+              </div>
+
+              {/* Footer Reassurance */}
+              <p className="text-[11.5px] text-muted-foreground text-center leading-relaxed px-2">
+                If your browser blocks camera access, you can still join and enable it later from the toolbar.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <JitsiRoom
+            key={reloadKey}
+            domain={call.domain}
+            room={call.room}
+            displayName={call.displayName}
+            avatarUrl={call.avatarUrl}
+            role={call.role}
+            privateChat={call.privateChat}
+            polls={call.polls}
+            startWithVideoMuted={cameraPref === 'off'}
+            onJoined={onJoined}
+            onParticipantJoined={onParticipantJoined}
+            onDominantSpeaker={onDominantSpeaker}
+            onSelfDominantChange={onSelfDominantChange}
+            // The user hung up inside Jitsi's own toolbar — treat it exactly like
+            // pressing our End/Leave button. This is the ONLY path (besides those
+            // buttons) that may end a call; navigation no longer reaches it.
+            onReadyToClose={onEnd}
+          />
+        )}
       </div>
     </div>
   );
