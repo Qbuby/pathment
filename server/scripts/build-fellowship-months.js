@@ -62,37 +62,46 @@ const SOURCE = path.resolve(__dirname, 'data/english-full-stack-curriculum.json'
 const MONTHS = [
   {
     month: 1,
-    name: 'Month 1 — Foundations and the web',
-    description: 'HTML, CSS, Git and the JavaScript language itself. Everything is built in the open from day one: the repository is the deliverable, not an afterthought.',
-    orders: [0, 1, 2, 3],
+    /**
+     * JavaScript first, then Git.
+     *
+     * The source roadmap opens with HTML, CSS and a landing page, which are
+     * dropped here: the fellowship is for people who can already put a page
+     * together, and spending the first fortnight on markup costs a month that
+     * is needed later. Git comes second rather than first on purpose, so the
+     * first thing anybody commits is code they wrote themselves.
+     */
+    name: 'Month 1: JavaScript and working in the open',
+    description: 'The JavaScript language itself, then Git and GitHub. Everything is built in the open from day one: the repository is the deliverable, not an afterthought.',
+    orders: [3, 2],
   },
   {
     month: 2,
-    name: 'Month 2 — JavaScript in depth, and React',
+    name: 'Month 2: JavaScript in depth, and React',
     description: 'The parts of JavaScript that separate someone who can follow a tutorial from someone who can debug. Then React, and the first interfaces that are yours rather than copied.',
     orders: [4, 5, 6, 7, 8],
   },
   {
     month: 3,
-    name: 'Month 3 — The backend, and your first full stack',
+    name: 'Month 3: The backend, and your first full stack',
     description: 'Node, Express and a database, joined to the front end you can already build. By the end of this month you have shipped something with both halves working.',
     orders: [9, 10, 11, 12, 13],
   },
   {
     month: 4,
-    name: 'Month 4 — Real applications, and types',
+    name: 'Month 4: Real applications, and types',
     description: 'Three full applications with real domains, plus TypeScript and enough DevOps to deploy what you build without someone else doing it for you.',
     orders: [14, 15, 16, 17, 21],
   },
   {
     month: 5,
-    name: 'Month 5 — Scale and architecture',
+    name: 'Month 5: Scale and architecture',
     description: 'Next.js, the largest builds in the programme, and the beginning of thinking about systems rather than features. This is the month that produces your strongest portfolio piece.',
     orders: [18, 19, 20, 23, 24],
   },
   {
     month: 6,
-    name: 'Month 6 — Job preparation',
+    name: 'Month 6: Job preparation',
     description: 'No new engineering. Five months of work turned into a portfolio, a CV, interview readiness and applications actually sent.',
     orders: [22],
     jobPrep: true,
@@ -105,7 +114,7 @@ const MONTHS = [
  * material the workspace already has rather than duplicating it.
  */
 const problemSolving = (month) => ({
-  title: `Problem solving — month ${month}`,
+  title: `Problem solving: month ${month}`,
   description:
     'Steady practice alongside the build work. Pick from the DSA and competitive programming tracks in the workspace and keep a solutions repository: a commit on the days you solve something, so the habit is visible.',
   type: 'exercise',
@@ -125,14 +134,14 @@ const problemSolving = (month) => ({
 const JOB_PREP = [
   {
     title: 'CV and LinkedIn, rebuilt around the work',
-    description: 'One page. Every claim on it links to something a stranger can open — a repository, a deployed app, a case study.',
+    description: 'One page. Every claim on it links to something a stranger can open: a repository, a deployed app, a case study.',
     type: 'assignment', difficulty: 'medium',
     deliverable: 'A one-page CV and an updated LinkedIn profile.',
     acceptanceCriteria: ['One page', 'Every claim links to something real', 'No skill listed that you could not be questioned on'],
     estimatedHours: 6, dueOffsetDays: 7, pointsBase: 15,
   },
   {
-    title: 'Interview problem solving — daily drilling',
+    title: 'Interview problem solving: daily drilling',
     description: 'The month’s problem-solving work, aimed at interviews specifically: arrays, strings, hash maps, trees, and talking out loud while you solve.',
     type: 'exercise', difficulty: 'hard',
     deliverable: 'A solutions repository and a log of the problems attempted.',
@@ -148,7 +157,7 @@ const JOB_PREP = [
     estimatedHours: 12, dueOffsetDays: 17, pointsBase: 25,
   },
   {
-    title: 'Mock interviews — technical and behavioural',
+    title: 'Mock interviews: technical and behavioural',
     description: 'With your mentor, on your own code, under the conditions of a real interview.',
     type: 'interview', difficulty: 'hard',
     deliverable: 'Two completed mock interviews with written feedback.',
@@ -157,7 +166,7 @@ const JOB_PREP = [
   },
   {
     title: 'Apply: target list and outreach',
-    description: 'A list of companies you actually want, and applications sent — not a number, a list with names on it.',
+    description: 'A list of companies you actually want, and applications sent. Not a number, a list with names on it.',
     type: 'assignment', difficulty: 'medium',
     deliverable: 'A tracked list of applications with dates and outcomes.',
     acceptanceCriteria: ['At least twenty-five applications sent', 'At least five warm approaches to a person, not a form', 'Tracked well enough to follow up'],
@@ -165,13 +174,26 @@ const JOB_PREP = [
   },
 ];
 
+/**
+ * No em dashes on the board.
+ *
+ * Two of the source tasks carry one, and the house style for roadmap content
+ * is to do without: a colon where the dash introduced a label, a full stop
+ * where it joined two thoughts. Applied to the copied text rather than edited
+ * into the export, so re-exporting from production does not quietly undo it.
+ */
+const plain = (value, asTitle = false) => {
+  if (typeof value !== 'string') return value;
+  return value.replace(/\s*\u2014\s*/g, asTitle ? ': ' : ', ');
+};
+
 const fromSource = (task) => ({
-  title: task.title,
-  description: task.description,
+  title: plain(task.title, true),
+  description: plain(task.description),
   type: task.type,
   difficulty: task.difficulty,
-  deliverable: task.deliverable,
-  acceptanceCriteria: task.acceptance_criteria,
+  deliverable: plain(task.deliverable),
+  acceptanceCriteria: (task.acceptance_criteria || []).map((line) => plain(line)),
   estimatedHours: task.estimated_hours,
   dueOffsetDays: task.due_offset_days,
   pointsBase: task.points_base,
@@ -417,7 +439,7 @@ async function main() {
 
       if (!DRY_RUN) {
         const made = await chain(roadmaps.filter(Boolean), adminId);
-        console.log(`\nChain\n  ✓ ${made} link(s) — 1 → 2 → 3 → 4 → 5 → 6`);
+        console.log(`\nChain\n  ✓ ${made} link(s): 1 → 2 → 3 → 4 → 5 → 6`);
       } else {
         console.log('\nChain\n  + would link 1 → 2 → 3 → 4 → 5 → 6');
       }
@@ -426,7 +448,7 @@ async function main() {
         console.log('\nRemoving everything else in this programme');
         await removeOthers(program, roadmaps.filter(Boolean).map((r) => r.id));
       } else {
-        console.log('\n  (other roadmaps left alone — pass --replace to remove them)');
+        console.log('\n  (other roadmaps left alone. Pass --replace to remove them)');
       }
 
       if (process.argv.includes('--assign') && !DRY_RUN) {
