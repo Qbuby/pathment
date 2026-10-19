@@ -50,7 +50,20 @@ export default function MentorTopPerformersPage() {
         // workspace was every nomination in the organisation.
         topPerformersApi.list({ clanId }),
       ]);
-      setBoard(rank.data ?? { ranked: [], notRanked: [], rankedCount: 0 });
+      /**
+       * `??` only catches null and undefined, and the shape that actually
+       * arrived for a clan with nobody to rank was `[]` — not nullish, so it
+       * went straight through, and `board.ranked.length` threw on the next
+       * render. The server now always sends the object; this makes the page
+       * survive the old shape too, since a deployed client meets whichever
+       * API version is live.
+       */
+      const payload = rank.data;
+      setBoard(
+        payload && !Array.isArray(payload) && Array.isArray(payload.ranked)
+          ? payload
+          : { ranked: [], notRanked: [], rankedCount: 0 },
+      );
       setMine(nominations.data ?? []);
     } catch (err) {
       toast.error(extractApiErrorMessage(err, 'Could not load the ranking'));

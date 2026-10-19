@@ -55,7 +55,19 @@ class PerformanceNominationService {
     }
     const resolved = await this._resolveProgram(programId, clanId);
     const menteeIds = await this._menteeIdsFor(resolved, clanId);
-    if (!menteeIds.length) return [];
+    /**
+     * The same shape as every other return from here, including when there is
+     * nobody to rank.
+     *
+     * This returned a bare `[]`, so a clan with no rankable mentees answered
+     * with an array where the caller was promised an object. The page reads
+     * `board.ranked.length` to decide whether to show the empty state, which
+     * on an array is `undefined.length` — so the screen that exists to say
+     * "nobody here yet" was the one screen that could not say it, and the
+     * whole tab fell into the error boundary instead. `nominate` below reads
+     * `board.ranked.find` and would have broken the same way.
+     */
+    if (!menteeIds.length) return { ranked: [], notRanked: [], rankedCount: 0 };
 
     // The SAME score the mentor portal shows under Teaching and the mentee
     // leaderboard ranks by. A third definition of "doing well" is how a mentor
