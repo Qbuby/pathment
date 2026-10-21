@@ -132,6 +132,45 @@ describe('talks library', () => {
     expect((await get(admin)).body.data.talks[0].canManage).toBe(true);
   });
 
+  describe('resolve-url and metadata', () => {
+    it('checks if a talk exists and returns metadata', async () => {
+      const url = 'https://www.youtube.com/watch?v=SxdOUGdseq4';
+      const before = await get(mentor, `/resolve-url?url=${encodeURIComponent(url)}`);
+      expect(before.status).toBe(200);
+      expect(before.body.data.exists).toBe(false);
+      expect(before.body.data.metadata).toBeTruthy();
+
+      await addTalk(mentor, { url });
+
+      const after = await get(mentor, `/resolve-url?url=${encodeURIComponent(url)}`);
+      expect(after.status).toBe(200);
+      expect(after.body.data.exists).toBe(true);
+      expect(after.body.data.existingTalk.title).toBe('Simple made easy');
+    });
+  });
+
+  describe('reviews and feedback', () => {
+    it('allows a mentee to review a talk and calculates average rating', async () => {
+      const talk = (await addTalk(mentor)).body.data.talk;
+      const reviewRes = await request(app)
+        .post(`/api/talks/${talk.id}/reviews`)
+        .set('Authorization', authHeader(mentee))
+        .send({ rating: 5, feedback: 'Great explanation of complexity!' });
+
+      expect(reviewRes.status).toBe(200);
+      expect(reviewRes.body.data.talk.rating).toBe(5);
+      expect(reviewRes.body.data.talk.ratingsCount).toBe(1);
+
+      const listRes = await request(app)
+        .get(`/api/talks/${talk.id}/reviews`)
+        .set('Authorization', authHeader(mentor));
+      expect(listRes.status).toBe(200);
+      expect(listRes.body.data.reviews).toHaveLength(1);
+      expect(listRes.body.data.reviews[0].rating).toBe(5);
+      expect(listRes.body.data.reviews[0].feedback).toBe('Great explanation of complexity!');
+    });
+  });
+
   describe('categories', () => {
     it('lets only an admin create, rename and delete categories', async () => {
       expect((await post(mentor, '/categories', { name: 'Career' })).status).toBe(403);

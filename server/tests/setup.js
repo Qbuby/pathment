@@ -89,3 +89,21 @@ jest.mock('../src/utils/cloudinaryUpload', () => ({
   }),
   deleteFromCloudinary: jest.fn().mockResolvedValue({ result: 'ok' }),
 }));
+
+// ─── Mock Video Metadata ──────────────────────────────────────────────────────
+jest.mock('../src/utils/videoMetadata', () => ({
+  extractYoutubeId: jest.fn((url) => {
+    const match = String(url || '').match(/(?:v=|\/)([a-zA-Z0-9_-]{11})/);
+    return match ? match[1] : null;
+  }),
+  getYoutubeThumbnail: jest.fn((id) => (id ? `https://img.youtube.com/vi/${id}/hqdefault.jpg` : null)),
+  fetchVideoMetadata: jest.fn().mockImplementation(async (url) => {
+    const ytId = /(?:v=|\/)([a-zA-Z0-9_-]{11})/.exec(String(url || ''))?.[1];
+    return {
+      title: 'Simple made easy',
+      speaker: 'Rich Hickey',
+      thumbnailUrl: ytId ? `https://img.youtube.com/vi/${ytId}/hqdefault.jpg` : 'https://img.youtube.com/vi/mock/hqdefault.jpg',
+      description: 'A mock talk description for tests'
+    };
+  })
+}));

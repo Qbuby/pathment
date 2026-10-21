@@ -8,7 +8,12 @@ const { PERMISSIONS } = require('../config/permissions');
 // Reading is open to any authenticated user; the Talks page is only linked for mentors and admins.
 router.get('/', authenticate, c.list);
 router.get('/categories', authenticate, c.listCategories);
+router.get('/resolve-url', authenticate, c.resolveUrl);
 router.get('/:id', authenticate, c.getOne);
+
+// Reviews (mentees and all authenticated users can rate/review a talk)
+router.get('/:id/reviews', authenticate, c.getReviews);
+router.post('/:id/reviews', authenticate, c.addReview);
 
 // Mentors and admins hold library.manage. Edit/delete is further limited to the uploader or an admin.
 const canContribute = requirePermissionAnyScope(PERMISSIONS.LIBRARY_MANAGE);

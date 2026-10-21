@@ -83,7 +83,7 @@ class LinearRoadmapService {
     const rows = await models.RoadmapTask.findAll({
       where: { roadmapId },
       order: [['taskOrder', 'ASC']],
-      attributes: ['id', 'title', 'description', 'type', 'difficulty', 'taskOrder', 'deliverable', 'acceptanceCriteria', 'estimatedHours', 'pointsBase', 'effort', 'dueOffsetDays', 'openSourceOrgIds'],
+      attributes: ['id', 'title', 'description', 'type', 'difficulty', 'taskOrder', 'deliverable', 'acceptanceCriteria', 'estimatedHours', 'pointsBase', 'effort', 'dueOffsetDays', 'openSourceOrgIds', 'talkIds'],
       include: [
         {
           model: models.TaskResource, as: 'resources',
@@ -105,6 +105,21 @@ class LinearRoadmapService {
         const orgMap = new Map(orgRows.map((o) => [o.id, o.toJSON ? o.toJSON() : o]));
         for (const s of steps) {
           s.openSourceOrgs = (s.openSourceOrgIds || []).map((id) => orgMap.get(id)).filter(Boolean);
+        }
+      }
+    }
+
+    // Hydrate talks in a single batch query.
+    if (models.Talk) {
+      const allTalkIds = [...new Set(steps.flatMap((s) => s.talkIds || []))];
+      if (allTalkIds.length > 0) {
+        const talkRows = await models.Talk.findAll({
+          where: { id: allTalkIds },
+          attributes: ['id', 'title', 'speaker', 'url', 'thumbnailUrl', 'durationMins', 'rating', 'ratingsCount']
+        });
+        const talkMap = new Map(talkRows.map((t) => [t.id, t.toJSON ? t.toJSON() : t]));
+        for (const s of steps) {
+          s.talks = (s.talkIds || []).map((id) => talkMap.get(id)).filter(Boolean);
         }
       }
     }
@@ -218,6 +233,7 @@ class LinearRoadmapService {
       pointsBase: pointsForDifficulty(step.difficulty),
       // Only persist orgs on open_source steps; clear it for any other type.
       openSourceOrgIds: step.type === 'open_source' ? (Array.isArray(step.openSourceOrgIds) ? step.openSourceOrgIds : []) : [],
+      talkIds: step.type === 'talk' ? (Array.isArray(step.talkIds) ? step.talkIds : []) : [],
     };
   }
 
@@ -747,6 +763,7 @@ class LinearRoadmapService {
       // Copy the template-level orgs onto the assigned task so the mentee's
       // task card and submission page show the correct open source orgs.
       openSourceOrgIds: step.type === 'open_source' && Array.isArray(step.openSourceOrgIds) ? step.openSourceOrgIds : [],
+      talkIds: step.type === 'talk' && Array.isArray(step.talkIds) ? step.talkIds : [],
       ...(ov || {})
     });
 

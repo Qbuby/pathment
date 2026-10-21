@@ -18,6 +18,7 @@ import {
   GraduationCap,
   ClipboardList,
   Layers,
+  Video,
 } from "lucide-react";
 import { useMenteeTasks } from "@/lib/hooks/mentee";
 import {
@@ -391,6 +392,11 @@ function MenteeTasksContent() {
                                 {getTaskSourceBadge(task.isCustomTask)}
                                 {getDifficultyBadge(
                                   task.roadmapTask?.difficulty,
+                                )}
+                                {taskType === "talk" && (
+                                  <span className="px-2 py-1 bg-indigo-100 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 rounded text-xs font-medium flex items-center gap-1">
+                                    <Video className="w-3 h-3" /> Talk
+                                  </span>
                                 )}
                               </div>
                             </div>

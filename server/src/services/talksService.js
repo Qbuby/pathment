@@ -3,6 +3,7 @@ const { sequelize, models } = require('../db');
 const authzService = require('./authzService');
 const { PERMISSIONS } = require('../config/permissions');
 const { NotFoundError, ValidationError, ConflictError, AuthorizationError } = require('../utils/errors/errorTypes');
+const { fetchVideoMetadata } = require('../utils/videoMetadata');
 
 const likeEscape = (s) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -38,7 +39,10 @@ class TalksService {
       speaker: t.speaker,
       description: t.description,
       url: t.url,
+      thumbnailUrl: t.thumbnailUrl || null,
       durationMins: t.durationMins,
+      rating: Number(t.rating) || 0,
+      ratingsCount: Number(t.ratingsCount) || 0,
       uploadedBy: t.uploadedBy,
       uploaderName: uploader || null,
       categories: (t.categories || []).map((c) => ({ id: c.id, name: c.name })),
@@ -120,6 +124,9 @@ class TalksService {
     }
     if (data.speaker !== undefined) out.speaker = String(data.speaker || '').trim().slice(0, 150) || null;
     if (data.description !== undefined) out.description = String(data.description || '').trim() || null;
+    if (data.thumbnailUrl !== undefined) {
+      out.thumbnailUrl = data.thumbnailUrl ? String(data.thumbnailUrl).trim() : null;
+    }
     if (data.durationMins !== undefined) {
       const mins = data.durationMins === '' || data.durationMins === null ? null : Number(data.durationMins);
       if (mins !== null && (!Number.isInteger(mins) || mins <= 0)) {
@@ -145,11 +152,48 @@ class TalksService {
     if (existing) throw new ConflictError(`This talk is already in the library as "${existing.title}"`);
   }
 
+  async resolveUrl(rawUrl) {
+    const { url, urlKey } = this.normalizeUrl(rawUrl);
+    const existing = await models.Talk.findOne({
+      where: { urlKey },
+      attributes: ['id', 'title', 'speaker', 'url', 'thumbnailUrl']
+    });
+    const metadata = await fetchVideoMetadata(url);
+    return {
+      url,
+      exists: Boolean(existing),
+      existingTalk: existing ? {
+        id: existing.id,
+        title: existing.title,
+        speaker: existing.speaker,
+        url: existing.url,
+        thumbnailUrl: existing.thumbnailUrl
+      } : null,
+      metadata
+    };
+  }
+
   async create(data, user) {
-    const fields = this._cleanFields(data);
     const { url, urlKey } = this.normalizeUrl(data.url);
-    const categoryIds = await this._validCategoryIds(data.categoryIds);
     await this._assertUnique(urlKey);
+    const categoryIds = await this._validCategoryIds(data.categoryIds);
+
+    let autoMeta = null;
+    if (!data.title || !data.thumbnailUrl || !data.speaker || !data.description) {
+      try {
+        autoMeta = await fetchVideoMetadata(url);
+      } catch (_) {}
+    }
+
+    const payload = {
+      title: data.title || autoMeta?.title,
+      speaker: data.speaker !== undefined ? data.speaker : autoMeta?.speaker,
+      description: data.description !== undefined ? data.description : autoMeta?.description,
+      durationMins: data.durationMins,
+      thumbnailUrl: data.thumbnailUrl || autoMeta?.thumbnailUrl || null
+    };
+
+    const fields = this._cleanFields(payload);
 
     let id;
     try {
@@ -188,6 +232,12 @@ class TalksService {
       if (urlKey !== talk.urlKey) await this._assertUnique(urlKey, talk.id);
       patch.url = url;
       patch.urlKey = urlKey;
+      if (data.thumbnailUrl === undefined && !talk.thumbnailUrl) {
+        try {
+          const meta = await fetchVideoMetadata(url);
+          if (meta.thumbnailUrl) patch.thumbnailUrl = meta.thumbnailUrl;
+        } catch (_) {}
+      }
     }
     const categoryIds = data.categoryIds !== undefined ? await this._validCategoryIds(data.categoryIds) : null;
 
@@ -213,6 +263,81 @@ class TalksService {
     const talk = await this._loadManageable(id, user);
     await talk.destroy();
     return { removed: true };
+  }
+
+  async addReview(talkId, data, user) {
+    const talk = await models.Talk.findByPk(talkId);
+    if (!talk) throw new NotFoundError('Talk not found');
+
+    const ratingVal = parseInt(data.rating, 10);
+    if (isNaN(ratingVal) || ratingVal < 1 || ratingVal > 5) {
+      throw new ValidationError('Rating must be an integer between 1 and 5');
+    }
+
+    const feedback = data.feedback ? String(data.feedback).trim() : null;
+
+    const [review, created] = await models.TalkReview.findOrCreate({
+      where: { talkId, userId: user.id },
+      defaults: {
+        organizationId: user.organizationId,
+        talkId,
+        userId: user.id,
+        rating: ratingVal,
+        feedback
+      }
+    });
+
+    if (!created) {
+      await review.update({ rating: ratingVal, feedback });
+    }
+
+    // Recompute talk rating & count
+    const reviews = await models.TalkReview.findAll({
+      where: { talkId },
+      attributes: ['rating']
+    });
+    const count = reviews.length;
+    const avg = count ? (reviews.reduce((sum, r) => sum + r.rating, 0) / count) : 0;
+    await talk.update({
+      rating: Math.round(avg * 100) / 100,
+      ratingsCount: count
+    });
+
+    return {
+      review: {
+        id: review.id,
+        rating: review.rating,
+        feedback: review.feedback,
+        createdAt: review.createdAt
+      },
+      talk: {
+        id: talk.id,
+        rating: Number(talk.rating) || 0,
+        ratingsCount: talk.ratingsCount
+      }
+    };
+  }
+
+  async getReviews(talkId) {
+    const talk = await models.Talk.findByPk(talkId);
+    if (!talk) throw new NotFoundError('Talk not found');
+
+    const reviews = await models.TalkReview.findAll({
+      where: { talkId },
+      include: [{ model: models.User, as: 'user', attributes: ['id', 'firstName', 'lastName'] }],
+      order: [['created_at', 'DESC']]
+    });
+
+    return reviews.map((r) => ({
+      id: r.id,
+      rating: r.rating,
+      feedback: r.feedback,
+      user: r.user ? {
+        id: r.user.id,
+        name: `${r.user.firstName || ''} ${r.user.lastName || ''}`.trim()
+      } : null,
+      createdAt: r.createdAt
+    }));
   }
 
   async listCategories() {

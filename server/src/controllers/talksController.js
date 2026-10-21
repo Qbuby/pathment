@@ -13,6 +13,11 @@ const getOne = catchAsync(async (req, res) => {
   res.status(200).json(successResponse('Talk retrieved', { talk }));
 });
 
+const resolveUrl = catchAsync(async (req, res) => {
+  const result = await talksService.resolveUrl(req.query.url);
+  res.status(200).json(successResponse('Video URL resolved', result));
+});
+
 const create = catchAsync(async (req, res) => {
   const talk = await talksService.create(req.body, req.user);
   res.status(201).json(successResponse('Talk added', { talk }, 201));
@@ -25,6 +30,16 @@ const update = catchAsync(async (req, res) => {
 
 const remove = catchAsync(async (req, res) => {
   res.status(200).json(successResponse('Talk removed', await talksService.remove(req.params.id, req.user)));
+});
+
+const addReview = catchAsync(async (req, res) => {
+  const result = await talksService.addReview(req.params.id, req.body, req.user);
+  res.status(200).json(successResponse('Review recorded', result));
+});
+
+const getReviews = catchAsync(async (req, res) => {
+  const reviews = await talksService.getReviews(req.params.id);
+  res.status(200).json(successResponse('Reviews retrieved', { reviews }));
 });
 
 const listCategories = catchAsync(async (req, res) => {
@@ -46,4 +61,17 @@ const removeCategory = catchAsync(async (req, res) => {
   res.status(200).json(successResponse('Category removed', await talksService.removeCategory(req.params.id)));
 });
 
-module.exports = { list, getOne, create, update, remove, listCategories, createCategory, updateCategory, removeCategory };
+module.exports = {
+  list,
+  getOne,
+  resolveUrl,
+  create,
+  update,
+  remove,
+  addReview,
+  getReviews,
+  listCategories,
+  createCategory,
+  updateCategory,
+  removeCategory
+};

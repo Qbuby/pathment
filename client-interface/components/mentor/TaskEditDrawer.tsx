@@ -250,7 +250,7 @@ export function TaskEditDrawer({
             disabled={
               !["assigned", "not_started", "in_progress"].includes(
                 task.status,
-              ) || ["quiz", "interview", "open_source"].includes(initial.type)
+              ) || ["quiz", "interview", "open_source", "talk"].includes(initial.type)
             }
           >
             {Array.from(
@@ -275,7 +275,7 @@ export function TaskEditDrawer({
             ))}
           </select>
           <p className="mt-1 text-xs text-muted-foreground">
-            Applies to this mentee only. Quizzes, interviews and open-source
+            Applies to this mentee only. Quizzes, interviews, open-source and talk
             tasks use their own assignment setup.
           </p>
         </div>

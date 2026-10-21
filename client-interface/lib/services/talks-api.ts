@@ -6,13 +6,27 @@ export interface TalkCategory {
   talkCount?: number;
 }
 
+export interface TalkReview {
+  id: string;
+  rating: number;
+  feedback?: string | null;
+  user?: {
+    id: string;
+    name: string;
+  } | null;
+  createdAt: string;
+}
+
 export interface TalkItem {
   id: string;
   title: string;
   speaker: string | null;
   description: string | null;
   url: string;
+  thumbnailUrl: string | null;
   durationMins: number | null;
+  rating: number;
+  ratingsCount: number;
   uploadedBy: string | null;
   uploaderName: string | null;
   categories: { id: string; name: string }[];
@@ -25,6 +39,7 @@ export interface TalkInput {
   speaker?: string;
   description?: string;
   url: string;
+  thumbnailUrl?: string | null;
   durationMins?: number | null;
   categoryIds: string[];
 }
@@ -34,6 +49,24 @@ export interface TalksListParams {
   categoryId?: string;
   limit?: number;
   offset?: number;
+}
+
+export interface ResolveUrlResult {
+  url: string;
+  exists: boolean;
+  existingTalk?: {
+    id: string;
+    title: string;
+    speaker?: string | null;
+    url: string;
+    thumbnailUrl?: string | null;
+  } | null;
+  metadata: {
+    title?: string | null;
+    speaker?: string | null;
+    thumbnailUrl?: string | null;
+    description?: string | null;
+  };
 }
 
 export const talksApi = {
@@ -47,9 +80,14 @@ export const talksApi = {
     return apiClient.get(query ? `/talks?${query}` : '/talks');
   },
   get: (id: string) => apiClient.get(`/talks/${id}`),
+  resolveUrl: (url: string) => apiClient.get<ResolveUrlResult>(`/talks/resolve-url?url=${encodeURIComponent(url)}`),
   create: (data: TalkInput) => apiClient.post('/talks', data),
   update: (id: string, data: Partial<TalkInput>) => apiClient.patch(`/talks/${id}`, data),
   remove: (id: string) => apiClient.delete(`/talks/${id}`),
+
+  getReviews: (talkId: string) => apiClient.get<{ reviews: TalkReview[] }>(`/talks/${talkId}/reviews`),
+  addReview: (talkId: string, data: { rating: number; feedback?: string }) =>
+    apiClient.post(`/talks/${talkId}/reviews`, data),
 
   listCategories: () => apiClient.get('/talks/categories'),
   createCategory: (name: string) => apiClient.post('/talks/categories', { name }),

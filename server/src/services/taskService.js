@@ -85,6 +85,7 @@ function applyTaskOverrides(taskInstance) {
   t.points = rt?.difficulty != null
     ? pointsForDifficulty(rt.difficulty)
     : ((t.pointsBase != null ? t.pointsBase : (rt ? rt.pointsBase : null)) ?? null);
+  t.talkIds = t.talkIds || rt?.talkIds || [];
   return t;
 }
 
@@ -118,7 +119,8 @@ class TaskService {
       deliverable,
       acceptanceCriteria,
       resources, // Optional: learning resources (links) attached to the task
-      openSourceOrgIds
+      openSourceOrgIds,
+      talkIds
     } = data;
     let { enrollmentId } = data;
 
@@ -149,6 +151,11 @@ class TaskService {
     const orgIds = Array.isArray(openSourceOrgIds) ? openSourceOrgIds : (data.openSourceOrgId ? [data.openSourceOrgId] : []);
     if (type === 'open_source' && !orgIds.length) {
       throw new ValidationError('At least one open source organization is required for open source tasks');
+    }
+
+    const resolvedTalkIds = Array.isArray(talkIds) ? talkIds : (data.talkId ? [data.talkId] : []);
+    if (type === 'talk' && !resolvedTalkIds.length) {
+      throw new ValidationError('At least one talk is required for talk tasks');
     }
 
     // Older clients may still send the former recurring pseudo-type.
@@ -228,7 +235,9 @@ class TaskService {
         isMandatory: false,
         isCustomTask: true,
         // Standard points by difficulty (no hand-typed values).
-        pointsBase: pointsForDifficulty(difficulty || 'medium')
+        pointsBase: pointsForDifficulty(difficulty || 'medium'),
+        openSourceOrgIds: orgIds,
+        talkIds: resolvedTalkIds
       });
 
       // Attach any learning resources (links) to the one-off task.
@@ -257,7 +266,8 @@ class TaskService {
       trackId: trackId || null,
       scheduleSlotId: scheduleSlotId || null,
       occurrenceDate: occurrenceDate || null,
-      openSourceOrgIds: orgIds
+      openSourceOrgIds: orgIds,
+      talkIds: resolvedTalkIds
     });
 
     // Link the interview kit + snapshot the per-assignment options.
@@ -474,6 +484,16 @@ class TaskService {
         }
       }
     }
+    if (models.Talk) {
+      const allTalkIds = [...new Set(tasks.flatMap((t) => t.talkIds || []))];
+      if (allTalkIds.length > 0) {
+        const talks = await models.Talk.findAll({ where: { id: allTalkIds } });
+        const talkMap = new Map(talks.map((tk) => [tk.id, tk.toJSON ? tk.toJSON() : tk]));
+        for (const t of tasks) {
+          t.talks = (t.talkIds || []).map((id) => talkMap.get(id)).filter(Boolean);
+        }
+      }
+    }
     return tasks;
   }
 
@@ -550,6 +570,16 @@ class TaskService {
         }
       }
     }
+    if (models.Talk) {
+      const allTalkIds = [...new Set(tasks.flatMap((t) => t.talkIds || []))];
+      if (allTalkIds.length > 0) {
+        const talks = await models.Talk.findAll({ where: { id: allTalkIds } });
+        const talkMap = new Map(talks.map((tk) => [tk.id, tk.toJSON ? tk.toJSON() : tk]));
+        for (const t of tasks) {
+          t.talks = (t.talkIds || []).map((id) => talkMap.get(id)).filter(Boolean);
+        }
+      }
+    }
     return tasks;
   }
 
@@ -623,6 +653,12 @@ class TaskService {
       res.openSourceOrgs = orgRows.map((o) => (o.toJSON ? o.toJSON() : o));
     } else {
       res.openSourceOrgs = [];
+    }
+    if (models.Talk && Array.isArray(res.talkIds) && res.talkIds.length > 0) {
+      const talkRows = await models.Talk.findAll({ where: { id: res.talkIds } });
+      res.talks = talkRows.map((o) => (o.toJSON ? o.toJSON() : o));
+    } else {
+      res.talks = [];
     }
     res.schedule = await require('./taskEditScheduleService').read(task);
     return res;

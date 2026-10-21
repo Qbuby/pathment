@@ -22,6 +22,7 @@ import { todayInZone, dateInZone, addDaysToDateStr, zoneLabel } from '@/lib/util
 const TASK_TYPE_LABEL: Record<string, string> = {
   assignment: 'Assignment', project: 'Project', quiz: 'Quiz', reading: 'Reading',
   video: 'Video', discussion: 'Discussion', interview: 'Interview', custom: 'Custom',
+  open_source: 'Open Source', talk: 'Talk / Podcast',
 };
 
 function timeAgo(iso: string): string {
