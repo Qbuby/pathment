@@ -62,7 +62,7 @@ class QuizSessionService {
   // ── Context / shaping ────────────────────────────────────────────────────────
 
   async _loadContext(taskId, menteeId, { clanId = null } = {}) {
-    const task = await models.AssignedTask.findByPk(taskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     if (task.menteeId !== menteeId) throw new ForbiddenError('This quiz is not assigned to you');
     if (clanId && task.clanId && task.clanId !== clanId) throw new NotFoundError('Task not found');
@@ -193,7 +193,8 @@ class QuizSessionService {
       startedAt: new Date(),
     });
 
-    await models.AssignedTask.update(
+    // withPoolWork: ownership was checked above, and pool work starts too.
+    await models.AssignedTask.scope('withPoolWork').update(
       { status: 'in_progress', startedAt: sequelize.literal('COALESCE(started_at, NOW())') },
       { where: { id: taskId, status: { [Op.in]: ['assigned', 'not_started'] } } }
     );
@@ -342,8 +343,13 @@ class QuizSessionService {
         rating: Math.round((pct / 100) * 5 * 100) / 100,
         feedbackText: `Quiz auto-graded — ${autoScore}/${maxScore} points (${Math.round(pct)}%).`,
         pointsPercent: pct,
-      });
+      // Pool work is reviewed by holders of pool.review, which the operator who
+      // assigned it may not be. Auto-grading is the system marking, not a person.
+      }, { asSystem: Boolean(task.poolMemberId) });
       finalized = true;
+    } else if (task.poolMemberId) {
+      // Review mode, pool work → the pool's reviewers hear, not a mentor.
+      await require('./poolWorkEvents').onSubmitted(task, { submissionId: out.submissionId, version: out.version, kind: 'quiz' });
     } else {
       // Review mode → notify the mentor there's a quiz to confirm.
       try {
@@ -419,7 +425,7 @@ class QuizSessionService {
   /** Mentor review payload: questions WITH the answer key, the mentee's answers,
    *  the auto-grade, and totals. The owning mentee gets read access without the key. */
   async getForReview(taskId, requesterId) {
-    const task = await models.AssignedTask.findByPk(taskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     const isOwnerMentee = task.menteeId === requesterId;
     if (!isOwnerMentee) await this._assertReviewer(requesterId, task);
@@ -504,7 +510,7 @@ class QuizSessionService {
   /** Override a per-answer grade (mentor, review mode). */
   async gradeAnswer(taskId, mentorId, questionId, { pointsAwarded, scoreNote } = {}) {
     await clanLifecycleService.assertTaskWritable(taskId);
-    const task = await models.AssignedTask.findByPk(taskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     await this._assertReviewer(mentorId, task);
     await submissionService.assertClanWritableForReview(task.clanId);
@@ -537,7 +543,7 @@ class QuizSessionService {
    *  the shared review path (points/gamification/notifications). */
   async finalizeReview(taskId, mentorId, { overallNote } = {}) {
     await clanLifecycleService.assertTaskWritable(taskId);
-    const task = await models.AssignedTask.findByPk(taskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     await this._assertReviewer(mentorId, task);
 

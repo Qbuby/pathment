@@ -29,8 +29,25 @@ const ROLES = {
       P.TASK_ASSIGN, P.TASK_REVIEW, P.MENTEE_VIEW, P.MENTEE_MANAGE, P.MENTEE_TRANSFER,
       P.CERTIFICATE_VERIFY, P.SCHEDULE_PLAN, P.SCHEDULE_ASSIGN,
       P.LIBRARY_MANAGE, P.ANNOUNCEMENT_POST,
-      P.COMMUNITY_POST, P.COMMUNITY_MODERATE, P.ANALYTICS_VIEW, P.GAMIFICATION_MANAGE, P.FEEDBACK_MANAGE
+      P.COMMUNITY_POST, P.COMMUNITY_MODERATE, P.ANALYTICS_VIEW, P.GAMIFICATION_MANAGE, P.FEEDBACK_MANAGE,
+      P.POOL_MANAGE, P.POOL_MEMBERS, P.POOL_ASSIGN, P.POOL_REVIEW, P.POOL_SELECT
     ]
+  },
+  // ── System Pool (pre-clan selection) ───────────────────────────────────────
+  // Granted at PROGRAM scope. Neither is an admin-tier role: holding one opens
+  // the Selection pools area and nothing else — not the programme's mentees,
+  // cohorts or clans.
+  pool_operator: {
+    label: 'Pool operator',
+    scope: 'program',
+    description: 'Runs a programme\'s selection pools: candidates, work, shortlist and placement.',
+    permissions: [P.POOL_MANAGE, P.POOL_MEMBERS, P.POOL_ASSIGN, P.POOL_REVIEW, P.POOL_SELECT]
+  },
+  pool_reviewer: {
+    label: 'Pool reviewer',
+    scope: 'program',
+    description: 'Reviews pool candidates\' qualifying work. Does not make them their mentor.',
+    permissions: [P.POOL_REVIEW]
   },
   intake_manager: {
     label: 'Intake manager',

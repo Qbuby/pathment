@@ -50,6 +50,22 @@ class NotificationScheduler {
     await this.runReviewSchedules();
     await this.runAdminMeetings();
     await this.runRecurringScheduleTasks();
+    await this.runPoolReminders();
+  }
+
+  /**
+   * System Pool reminders (invitation / due soon / inactivity). The generic
+   * deadline jobs above never see pool work — the AssignedTask default scope
+   * hides it — so the pool's own policy decides when its candidates hear.
+   */
+  async runPoolReminders() {
+    try {
+      const sent = await require('./poolReminderService').tick();
+      const total = Object.values(sent).reduce((s, n) => s + n, 0);
+      if (total) console.log(`[scheduler] sent ${total} pool reminder(s)`, sent);
+    } catch (error) {
+      console.error('[scheduler] pool reminder tick failed:', error.message);
+    }
   }
 
   /** Recurring schedule tasks: materialize upcoming occurrences from mentee schedule slots. */

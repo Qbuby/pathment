@@ -34,6 +34,7 @@ Every feature file follows the same template so things are easy to find and reme
 | Feature | What it covers |
 | --- | --- |
 | [Intake & Assessments](./intake-and-assessments.md) | Public program catalog, shareable cohort apply links, applications, magic-link, admin-built assessments, accept → invite → register → placement, carry-forward. |
+| [System Pool](./system-pool.md) | Pre-clan selection: candidates qualify on existing work, are reviewed and scored, shortlisted, decided by a person, then placed into clans. |
 | [Programs, Cohorts & Clans](./programs-cohorts-clans.md) | The org structure: programs, intake cohorts, mentor-led clans, memberships, clan change requests, cross-clan help. |
 | [Public Clan Joining Link](./clan-public-join.md) | Shareable multi-use clan URLs: admin permission, Lead Mentor link + approve/reject, visitor register/login → join request. |
 | [Matching & Placement](./matching-and-placement.md) | Clan-based placement + AI mentor-match suggestions. |

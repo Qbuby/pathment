@@ -98,7 +98,10 @@ class AuthService {
       } : null,
       program: program ? { id: program.id, name: program.name } : null,
       clan: clan ? { id: clan.id, name: clan.name } : null,
-      applicant: application ? { firstName: application.firstName || '', lastName: application.lastName || '' } : null
+      applicant: application ? { firstName: application.firstName || '', lastName: application.lastName || '' } : null,
+      // A System Pool invitation: the person lands in the candidate area, not
+      // the mentee portal, once they have an account.
+      pool: invite.metadata?.pool ? { id: invite.metadata.poolId || null } : null
     };
   }
 
@@ -136,8 +139,14 @@ class AuthService {
           }, { transaction });
         }
       }
-      const profile = invite.role === 'mentor' ? models.MentorProfile : models.MenteeProfile;
-      await profile.findOrCreate({ where: { userId: actor.id }, transaction });
+      const poolMemberService = require('./poolMemberService');
+      const poolOnly = poolMemberService.isPoolOnlyInvite(invite);
+      // A pool-only invitation makes a CANDIDATE, not a mentee: no mentee
+      // profile, so no mentee portal until they are placed in a clan.
+      if (!poolOnly) {
+        const profile = invite.role === 'mentor' ? models.MentorProfile : models.MenteeProfile;
+        await profile.findOrCreate({ where: { userId: actor.id }, transaction });
+      }
       let membership = null;
       if (invite.clanId) {
         membership = await require('./clanService').addMember(invite.clanId, {
@@ -151,9 +160,18 @@ class AuthService {
       } else if (invite.role === 'mentor') {
         throw new ValidationError('A mentor invite must specify a clan');
       }
+      // Any invitation proves the address: link every pool membership waiting on it.
+      const poolMemberIds = await poolMemberService.activateForUser(actor, { organizationId, transaction });
       // Consume the invitation in the same transaction as membership/placement.
       await invite.update({ usedAt: new Date(), usedBy: actor.id }, { transaction });
-      return { membership, clanId: invite.clanId, role: invite.role };
+      return { membership, clanId: invite.clanId, role: invite.role, poolMemberIds };
+    }).then(async (result) => {
+      // Hand out the pools' work only once the account is committed.
+      if (result.poolMemberIds?.length) {
+        await require('./poolMemberService').afterActivation(result.poolMemberIds)
+          .catch((e) => console.warn('pool activation follow-up failed:', e.message));
+      }
+      return result;
     });
   }
 
@@ -208,6 +226,7 @@ class AuthService {
 
     // Captured inside the txn so we can notify the clan's mentors after commit.
     let placedMenteeClan = null; // { id, name } when a mentee is placed into a clan
+    let activatedPoolMemberIds = []; // System Pool memberships this account activated
 
     const result = await sequelize.transaction(async (transaction) => {
       const invite = await this.getActiveInviteByToken(inviteToken, transaction);
@@ -263,6 +282,7 @@ class AuthService {
         transaction,
       });
 
+      const poolMemberService = require('./poolMemberService');
       if (role === 'mentor') {
         await models.MentorProfile.create({
           userId: user.id,
@@ -271,7 +291,9 @@ class AuthService {
           yearsOfExperience: 0,
           maxMentees: 5
         }, { transaction });
-      } else {
+      } else if (!poolMemberService.isPoolOnlyInvite(invite)) {
+        // A pool-only invitation makes a CANDIDATE: no mentee profile, so no
+        // mentee portal until placement creates one (clanService.addMember).
         await models.MenteeProfile.create({
           userId: user.id,
           interests: [],
@@ -288,6 +310,10 @@ class AuthService {
       }
 
       await models.UserSettings.create({ userId: user.id }, { transaction });
+
+      // Any invitation proves the address: link every System Pool membership
+      // waiting on it in this workspace. Their work is handed out after commit.
+      activatedPoolMemberIds = await poolMemberService.activateForUser(user, { organizationId, transaction });
 
       // The invite is the placement - enroll/place strictly from the token,
       // never from anything the registrant sent. Stale placement (program/clan
@@ -370,6 +396,12 @@ class AuthService {
       this._notifyClanMentorsOfNewMentee({ clan: placedMenteeClan, mentee: result.user }).catch((e) =>
         console.warn('new-mentee notify failed:', e.message)
       );
+    }
+
+    // Now the account is committed, hand out the pools' qualifying work.
+    if (activatedPoolMemberIds.length) {
+      await require('./poolMemberService').afterActivation(activatedPoolMemberIds)
+        .catch((e) => console.warn('pool activation follow-up failed:', e.message));
     }
 
     const userResponse = result.user.toJSON();
@@ -884,6 +916,7 @@ class AuthService {
       userResponse.capabilities = await authzService.getCapabilities(user, { assignments });
       userResponse.permissions = await authzService.getPermissionUnion(user);
       userResponse.canAccessAdmin = await authzService.hasAdminAccess(user, { assignments });
+      userResponse.canAccessPools = await authzService.hasPoolAccess(user, { assignments });
 
       const accessToken = generateAccessToken({ id: user.id, email: user.email, role: user.role });
 
@@ -1273,6 +1306,7 @@ class AuthService {
     json.capabilities = await authzService.getCapabilities(user, { assignments });
     json.permissions = await authzService.getPermissionUnion(user);
     json.canAccessAdmin = await authzService.hasAdminAccess(user, { assignments });
+    json.canAccessPools = await authzService.hasPoolAccess(user, { assignments });
     return json;
   }
 

@@ -71,6 +71,8 @@ const TYPE_ICON: Record<string, { Icon: typeof Bell; cls: string }> = {
 const typeMeta = (t?: string) => TYPE_ICON[t || "system"] || TYPE_ICON.system;
 
 const getRoleNotificationsPath = (pathname: string): string => {
+  // The selection-pool candidate area has its own notifications page.
+  if (pathname.startsWith("/candidate")) return "/candidate/notifications";
   const role = roleFromPathname(pathname);
   if (role === "admin" || role === "mentor" || role === "mentee") {
     return `/${role}/notifications`;
@@ -244,28 +246,37 @@ export default function NotificationDrawer({
         onClick={() => setIsOpen(!isOpen)}
         className={`relative rounded-xl transition-colors duration-200 ${
           showLabel
-            ? "w-full flex items-center gap-3 px-3 py-2.5 text-left"
-            : "p-2"
-        } ${
-          isOpen
-            ? "bg-brand-50 text-brand-700"
-            : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+            ? // A sidebar menu item: same shape and colours as the nav links.
+              `group w-full flex items-center gap-3 px-3 py-2.5 text-left ${
+                isOpen ? "bg-brand-50 text-brand-700" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+              }`
+            : `p-2 ${isOpen ? "bg-brand-50 text-brand-700" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"}`
         }`}
         aria-label={`Notifications ${unreadCount > 0 ? `(${unreadCount} unread)` : ""}`}
         aria-expanded={isOpen}
         aria-haspopup="dialog"
         title="Open notifications"
       >
-        <span className="relative shrink-0">
-          <Bell className={showLabel ? "w-4 h-4" : "w-5 h-5"} />
-          {unreadCount > 0 && (
-            <span className="absolute -top-2 -right-2 flex items-center justify-center min-w-5 h-5 px-1 bg-red-500 text-white text-xs font-bold rounded-full">
-              {unreadCount > 99 ? "99+" : unreadCount}
-            </span>
-          )}
-        </span>
-        {showLabel && (
-          <span className="text-sm font-medium">Notifications</span>
+        {showLabel ? (
+          <>
+            <Bell className={`w-4.5 h-4.5 shrink-0 ${isOpen ? "text-brand-700" : "text-slate-400 group-hover:text-slate-600"}`} />
+            <span className="text-sm font-medium">Notifications</span>
+            {/* The count as a pill at the end of the row, like the nav's unread badges. */}
+            {unreadCount > 0 && (
+              <span className="ml-auto inline-flex items-center justify-center min-w-5 h-5 px-1.5 bg-red-500 text-white text-[11px] font-bold rounded-full">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
+          </>
+        ) : (
+          <span className="relative shrink-0">
+            <Bell className="w-5 h-5" />
+            {unreadCount > 0 && (
+              <span className="absolute -top-2 -right-2 flex items-center justify-center min-w-5 h-5 px-1 bg-red-500 text-white text-xs font-bold rounded-full">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
+          </span>
         )}
       </button>
 

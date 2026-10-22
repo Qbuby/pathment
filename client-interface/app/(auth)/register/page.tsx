@@ -24,6 +24,8 @@ type InviteDetails = {
   program?: { id: string; name: string } | null;
   clan?: { id: string; name: string } | null;
   applicant?: { firstName: string; lastName: string } | null;
+  /** A selection-pool invitation: the person lands in the candidate area. */
+  pool?: { id: string | null } | null;
 };
 
 type ClanJoinDetails = {
@@ -161,8 +163,10 @@ export default function RegisterPage() {
     try {
       await apiClient.post(apiConfig.endpoints.acceptInvite(inviteToken));
       await refreshUser();
-      toast.success(inviteDetails?.clan ? 'You joined the clan.' : 'You joined the workspace.');
-      router.push(scopedPath(`/${inviteDetails?.role === 'mentor' ? 'mentor' : 'mentee'}/dashboard`));
+      toast.success(inviteDetails?.pool ? 'You joined the selection pool.' : inviteDetails?.clan ? 'You joined the clan.' : 'You joined the workspace.');
+      router.push(scopedPath(inviteDetails?.pool
+        ? '/candidate/dashboard'
+        : `/${inviteDetails?.role === 'mentor' ? 'mentor' : 'mentee'}/dashboard`));
     } catch (error: unknown) {
       toast.error(extractApiErrorMessage(error, 'Could not accept this invite'));
     } finally {

@@ -18,14 +18,16 @@ import { logicalPathname, workspacePath } from '@/lib/services/workspace-scope';
  * "/admin/<section>" prefix, so page detail routes inherit their section's gate.
  */
 
-// "/admin/<section>" → required permission (built once from the nav config).
-const SECTION_PERMISSION: Record<string, string> = (() => {
-  const map: Record<string, string> = {};
+// "/admin/<section>" → required permission, or a set of which any one will do
+// (built once from the nav config).
+type SectionRule = { permission?: string; anyOf?: string[] };
+const SECTION_PERMISSION: Record<string, SectionRule> = (() => {
+  const map: Record<string, SectionRule> = {};
   for (const item of getFlatNavItems('admin')) {
-    if (!item.permission) continue;
+    if (!item.permission && !item.anyOf) continue;
     const section = item.path.split('/').slice(0, 3).join('/'); // e.g. /admin/users
-    // First permission wins; siblings in a section share the same gate.
-    if (!map[section]) map[section] = item.permission;
+    // First rule wins; siblings in a section share the same gate.
+    if (!map[section]) map[section] = { permission: item.permission, anyOf: item.anyOf };
   }
   return map;
 })();
@@ -36,7 +38,7 @@ function sectionOf(pathname: string): string {
 
 export function AdminAccessGate({ children }: { children: React.ReactNode }) {
   const pathname = logicalPathname(usePathname());
-  const { can, canAccessAdmin, loading } = usePermissions();
+  const { can, canAny, canAccessAdmin, loading } = usePermissions();
 
   const required = useMemo(() => SECTION_PERMISSION[sectionOf(pathname || '')], [pathname]);
 
@@ -52,7 +54,9 @@ export function AdminAccessGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (can(required)) return <>{children}</>;
+  if ((!required.permission || can(required.permission)) && (!required.anyOf || canAny(required.anyOf))) {
+    return <>{children}</>;
+  }
 
   // Permitted in the admin area generally, but not THIS section.
   const fallback = canAccessAdmin ? '/admin/dashboard' : '/';

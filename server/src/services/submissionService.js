@@ -45,8 +45,10 @@ class SubmissionService {
    */
   async submitTaskWithFiles(taskId, menteeId, submissionData, files = []) {
     await clanLifecycleService.assertTaskWritable(taskId);
-    const task = await models.AssignedTask.findByPk(taskId, {
-      include: [{ model: models.RoadmapTask, as: 'roadmapTask', attributes: ['type'] }],
+    // withPoolWork: a System Pool candidate hands in qualifying work through
+    // this same path. Safe to open — ownership is checked just below.
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId, {
+      include: [{ model: models.RoadmapTask, as: 'roadmapTask', attributes: ['type', 'title'] }],
     });
 
     if (!task) {
@@ -172,6 +174,15 @@ class SubmissionService {
       isLate: task.dueDate && new Date() > new Date(task.dueDate),
       ...(Number.isFinite(reportedHours) && reportedHours > 0 ? { timeSpentHours: reportedHours } : {})
     });
+
+    // Qualifying work in the System Pool stops here: no mentorship to resume,
+    // no roadmap to advance (a pool task may reuse a roadmap step, and advancing
+    // would hand the candidate that roadmap's NEXT step as ordinary work), no
+    // mentor to notify — the pool's reviewers hear instead.
+    if (task.poolMemberId) {
+      await require('./poolWorkEvents').onSubmitted(task, { submissionId: submission.id, version: newVersion });
+      return this.getSubmissionById(submission.id, { includePoolWork: true });
+    }
 
     // Re-engagement: a paused mentee who submits work has come back → resume.
     mentorshipPauseService.autoResumeIfPaused(task.menteeId, 'submitted work', task.clanId).catch(() => { });
@@ -402,10 +413,17 @@ class SubmissionService {
   /**
    * Review task submission with detailed feedback
    */
-  async reviewSubmission(submissionId, mentorId, reviewData) {
+  /**
+   * `opts.asSystem` is for the system marking work itself (an auto-graded
+   * quiz), never for a person: it skips the reviewer check. Only internal
+   * callers pass it; no route does.
+   */
+  async reviewSubmission(submissionId, mentorId, reviewData, opts = {}) {
     const submission = await models.TaskSubmission.findByPk(submissionId, {
       include: [{
-        model: models.AssignedTask,
+        // withPoolWork: System Pool work is reviewed through this same path.
+        // Opening it is safe because canActOnTask demands pool.review for it.
+        model: models.AssignedTask.scope('withPoolWork'),
         as: 'assignedTask',
         include: [{
           model: models.RoadmapTask,
@@ -414,14 +432,15 @@ class SubmissionService {
       }]
     });
 
-    if (!submission) {
+    if (!submission || !submission.assignedTask) {
       throw new NotFoundError('Submission not found');
     }
     await clanLifecycleService.assertTaskWritable(submission.assignedTask);
 
     const task = submission.assignedTask;
+    const isPoolWork = Boolean(task.poolMemberId);
 
-    if (!(await authzService.canActOnTask(mentorId, task, PERMISSIONS.TASK_REVIEW))) {
+    if (!opts.asSystem && !(await authzService.canActOnTask(mentorId, task, PERMISSIONS.TASK_REVIEW))) {
       throw new ForbiddenError('You do not have permission to review this submission');
     }
     await assertWritableClanForMentorReview(task.clanId);
@@ -505,7 +524,23 @@ class SubmissionService {
       updateData.revisionCount = task.revisionCount + 1;
     }
 
+    // System Pool work never earns points: candidates are not in a clan yet, and
+    // their pool score comes from review ratings and quiz results instead.
+    const poolWorkEvents = isPoolWork ? require('./poolWorkEvents') : null;
+    if (isPoolWork && isApproved) updateData.pointsAwarded = 0;
+
     await task.update(updateData);
+
+    // Qualifying work stops here. Everything below is mentorship: advancing a
+    // roadmap, repeats, enrollment progress, streaks, badges, mentor stats, and
+    // notifications worded and linked for the mentee portal. None of it applies
+    // to someone who is not in a clan yet.
+    if (isPoolWork) {
+      await poolWorkEvents.onReviewed(task, {
+        submissionId: submission.id, isApproved, title: task.roadmapTask?.title || 'your work',
+      });
+      return submission;
+    }
 
     // The NEXT within-roadmap step was already assigned at submission time (so
     // the mentee wasn't idle). advanceOnApproval still runs here to (a) safety-
@@ -765,11 +800,13 @@ class SubmissionService {
   /**
    * Get submission by ID with all related data
    */
-  async getSubmissionById(submissionId) {
+  async getSubmissionById(submissionId, { includePoolWork = false } = {}) {
     const submission = await models.TaskSubmission.findByPk(submissionId, {
       include: [
         {
-          model: models.AssignedTask,
+          // System Pool work is only reachable by callers that opt in and then
+          // authorise it themselves (the pool and candidate services).
+          model: includePoolWork ? models.AssignedTask.scope('withPoolWork') : models.AssignedTask,
           as: 'assignedTask',
           include: [
             {
@@ -804,7 +841,9 @@ class SubmissionService {
       ]
     });
 
-    if (!submission) {
+    // A submission whose task is hidden is pool work reached without opting in:
+    // it does not exist for this caller (and the callers read assignedTask).
+    if (!submission || !submission.assignedTask) {
       throw new NotFoundError('Submission not found');
     }
 

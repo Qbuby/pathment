@@ -36,6 +36,15 @@ const PERMISSIONS = {
   TASK_ASSIGN: 'task.assign',
   TASK_REVIEW: 'task.review',
 
+  // System Pool — pre-clan selection. Each is checked at the pool's PROGRAMME
+  // scope, so a pool reviewer for one programme cannot touch another's pool.
+  // Deliberately five narrow permissions rather than one "manager" role.
+  POOL_MANAGE: 'pool.manage',     // create, configure, open, close a pool
+  POOL_MEMBERS: 'pool.members',   // import, invite, withdraw, disqualify candidates
+  POOL_ASSIGN: 'pool.assign',     // give qualifying work to pool members
+  POOL_REVIEW: 'pool.review',     // review pool submissions, enter scores
+  POOL_SELECT: 'pool.select',     // confirm selection, start clan placement
+
   // Day planning
   /**
    * Organise YOUR OWN day: put work into a time block, move it between blocks,
@@ -114,6 +123,16 @@ const PERMISSION_GROUPS = [
     permissions: [
       { key: P.INTAKE_MANAGE, label: 'Run intake and applications' },
       { key: P.INVITE_CREATE, label: 'Send invites' }
+    ]
+  },
+  {
+    label: 'Selection pools',
+    permissions: [
+      { key: P.POOL_MANAGE, label: 'Set up and run selection pools' },
+      { key: P.POOL_MEMBERS, label: 'Add and remove pool candidates' },
+      { key: P.POOL_ASSIGN, label: 'Give pool candidates work' },
+      { key: P.POOL_REVIEW, label: 'Review pool candidates\' work' },
+      { key: P.POOL_SELECT, label: 'Select candidates and place them in clans' }
     ]
   },
   {

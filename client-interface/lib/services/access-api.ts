@@ -42,6 +42,8 @@ export const accessApi = {
     apiClient.get<any>('/access/me/permissions').then((r) => ({
       permissions: (r.data?.permissions || []) as string[],
       canAccessAdmin: Boolean(r.data?.canAccessAdmin),
+      // Selection pools only (pool.* at org/programme scope) — not the admin area at large.
+      canAccessPools: Boolean(r.data?.canAccessPools),
     })),
   roleCatalog: () =>
     apiClient.get<any>('/access/roles').then((r) => (r.data?.roles || []) as RoleCatalogEntry[]),

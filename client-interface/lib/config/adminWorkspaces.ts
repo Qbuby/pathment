@@ -2,7 +2,13 @@ export interface AdminWorkspaceTab {
   href: string;
   label: string;
   permission?: string;
+  /** Shown when the user holds ANY of these (e.g. every pool.* permission). */
+  anyOf?: string[];
 }
+
+/** Any one of these opens Selection pools — operators and reviewers alike. */
+export const POOL_PERMISSION_KEYS = ["pool.manage", "pool.members", "pool.assign", "pool.review", "pool.select"];
+
 export const adminWorkspaces: { label: string; tabs: AdminWorkspaceTab[] }[] = [
   {
     label: "Admissions",
@@ -11,6 +17,11 @@ export const adminWorkspaces: { label: string; tabs: AdminWorkspaceTab[] }[] = [
         href: "/admin/cohorts",
         label: "Intake",
         permission: "intake.manage",
+      },
+      {
+        href: "/admin/pools",
+        label: "Selection pools",
+        anyOf: POOL_PERMISSION_KEYS,
       },
       {
         href: "/admin/assessments",
