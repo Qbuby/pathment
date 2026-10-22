@@ -330,6 +330,7 @@ class GamificationService {
       LEFT JOIN clans c ON c.id = at.clan_id
       WHERE at.mentee_id = :userId
         AND at.status = 'completed'
+        AND at.pool_member_id IS NULL -- System Pool qualifying work never counts towards badges
         AND (:organizationId::uuid IS NULL OR at.organization_id = :organizationId)
         AND (
           :clanId::uuid IS NOT NULL AND at.clan_id = :clanId
@@ -369,6 +370,7 @@ class GamificationService {
       LEFT JOIN clans c ON c.id = at.clan_id
       WHERE at.mentee_id = :userId
         AND at.status = 'completed'
+        AND at.pool_member_id IS NULL -- System Pool qualifying work never counts towards badges
         AND at.organization_id = :organizationId
       `,
       { replacements: { userId, organizationId } }
@@ -570,6 +572,7 @@ class GamificationService {
             LEFT JOIN programs p ON p.id = e.program_id
             WHERE at.mentee_id = :userId
               AND at.status = 'completed'
+              AND at.pool_member_id IS NULL -- System Pool qualifying work never counts towards badges
               AND at.roadmap_task_id = :relatedId
               AND (:organizationId::uuid IS NULL OR at.organization_id = :organizationId)
               AND (

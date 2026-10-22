@@ -62,6 +62,7 @@ const pendingSql = `
     LEFT JOIN roadmap_tasks rt ON rt.id = t.roadmap_task_id
    WHERE t.mentee_id = :menteeId
      AND t.clan_id IS NOT NULL
+     AND t.pool_member_id IS NULL
      AND t.clan_id <> sc.id
      AND sc.kind = 'standing'
      AND src.organization_id = sc.organization_id

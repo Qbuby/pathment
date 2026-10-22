@@ -925,10 +925,13 @@ class CohortService {
   taskSql({ programId = null, clanId = null, standing = false } = {}, alias = '') {
     const p = alias ? `${alias}.` : '';
     const org = sequelize.escape(requireWorkspaceId());
+    // System Pool qualifying work has clan_id NULL like legacy rows, so without
+    // this it would fall into the legacy branch below and count towards scores.
+    const notPoolWork = `${p}pool_member_id IS NULL AND `;
     if (standing && clanId) {
-      return `${p}clan_id = ${sequelize.escape(clanId)}`;
+      return `${notPoolWork}${p}clan_id = ${sequelize.escape(clanId)}`;
     }
-    return `${clanId ? `${p}clan_id = ${sequelize.escape(clanId)} AND ` : ''}
+    return `${notPoolWork}${clanId ? `${p}clan_id = ${sequelize.escape(clanId)} AND ` : ''}
     (${p}clan_id IS NULL OR ${p}clan_id IN (SELECT id FROM clans WHERE organization_id = ${org} AND kind = 'cohort'))
     ${programId ? `AND ${p}enrollment_id IN (SELECT id FROM enrollments WHERE organization_id = ${org} AND program_id = ${sequelize.escape(programId)})` : ''}`;
   }
