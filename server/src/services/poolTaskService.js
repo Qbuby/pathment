@@ -322,7 +322,7 @@ class PoolTaskService {
           where: {
             roadmapTaskId: item.roadmapTaskId,
             status: { [Op.in]: OPEN_STATUSES },
-            poolMemberId: { [Op.in]: sequelize.literal(`(SELECT id FROM pool_members WHERE pool_id = ${sequelize.escape(pool.id)})`) },
+            poolMemberId: { [Op.in]: sequelize.literal(`(SELECT id FROM candidate_pool_members WHERE pool_id = ${sequelize.escape(pool.id)})`) },
           },
           transaction,
         }

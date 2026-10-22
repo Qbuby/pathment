@@ -49,7 +49,7 @@ module.exports = (sequelize, DataTypes) => {
     placement: { type: DataTypes.JSONB, allowNull: false, defaultValue: {} },
     reminders: { type: DataTypes.JSONB, allowNull: false, defaultValue: {} },
   }, {
-    tableName: 'pool_members',
+    tableName: 'candidate_pool_members',
     underscored: true,
     indexes: [
       { unique: true, fields: ['pool_id', 'email'] },

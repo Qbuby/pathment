@@ -33,7 +33,7 @@ class PoolReminderService {
   /** Claim a reminder for a member. True only for the one caller that wins. */
   async _claim(member, key) {
     const rows = await sequelize.query(
-      `UPDATE pool_members
+      `UPDATE candidate_pool_members
           SET reminders = reminders || jsonb_build_object(CAST(:key AS text), CAST(:at AS text)), updated_at = NOW()
         WHERE id = :id AND organization_id = :org AND (reminders -> CAST(:key AS text)) IS NULL
         RETURNING id`,

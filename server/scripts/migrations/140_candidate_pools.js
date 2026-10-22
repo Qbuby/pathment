@@ -13,7 +13,7 @@
  *                            programme (the permission scope) and optionally a
  *                            cohort. `work_items` lists the qualifying work
  *                            given to the pool; `settings` holds its options.
- *   pool_members             one row per candidate per pool. `user_id` is NULL
+ *   candidate_pool_members   one row per candidate per pool. `user_id` is NULL
  *                            while the person is only invited — there is no
  *                            account to point at yet — so the email is the
  *                            identity until they activate. Small JSON fields
@@ -66,7 +66,7 @@ const STATEMENTS = [
   'CREATE INDEX IF NOT EXISTS candidate_pools_program_idx ON candidate_pools (program_id)',
   'CREATE INDEX IF NOT EXISTS candidate_pools_status_idx ON candidate_pools (status)',
 
-  `CREATE TABLE IF NOT EXISTS pool_members (
+  `CREATE TABLE IF NOT EXISTS candidate_pool_members (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES organizations(id),
     pool_id UUID NOT NULL REFERENCES candidate_pools(id) ON DELETE CASCADE,
@@ -94,13 +94,13 @@ const STATEMENTS = [
   )`,
   // One membership per person per pool. The email is the identity because an
   // invited candidate has no account yet.
-  'CREATE UNIQUE INDEX IF NOT EXISTS pool_members_org_pool_email_uniq ON pool_members (organization_id, pool_id, email)',
-  'CREATE INDEX IF NOT EXISTS pool_members_organization_idx ON pool_members (organization_id)',
-  'CREATE INDEX IF NOT EXISTS pool_members_pool_idx ON pool_members (pool_id)',
-  'CREATE INDEX IF NOT EXISTS pool_members_user_idx ON pool_members (user_id)',
+  'CREATE UNIQUE INDEX IF NOT EXISTS candidate_pool_members_org_pool_email_uniq ON candidate_pool_members (organization_id, pool_id, email)',
+  'CREATE INDEX IF NOT EXISTS candidate_pool_members_organization_idx ON candidate_pool_members (organization_id)',
+  'CREATE INDEX IF NOT EXISTS candidate_pool_members_pool_idx ON candidate_pool_members (pool_id)',
+  'CREATE INDEX IF NOT EXISTS candidate_pool_members_user_idx ON candidate_pool_members (user_id)',
 
   // Tag pool work on the shared task table. NULL = ordinary work, untouched.
-  'ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS pool_member_id UUID REFERENCES pool_members(id)',
+  'ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS pool_member_id UUID REFERENCES candidate_pool_members(id)',
   // Each piece of pool work has its own task template, so (member, template)
   // identifies it: the same work reaches the same member once. A cancelled
   // copy does not count, so work can be re-issued after a cancellation.
@@ -121,7 +121,7 @@ async function up({ dryRun = false } = {}) {
       await sequelize.query(sql, { transaction });
     }
   });
-  console.log('  ✓ candidate_pools, pool_members');
+  console.log('  ✓ candidate_pools, candidate_pool_members');
   console.log('  ✓ assigned_tasks.pool_member_id (NULL for every existing task)');
 }
 
@@ -130,7 +130,7 @@ async function down() {
     const q = (sql) => sequelize.query(sql, { transaction });
     await q('DROP INDEX IF EXISTS assigned_tasks_pool_member_work_uniq');
     await q('ALTER TABLE assigned_tasks DROP COLUMN IF EXISTS pool_member_id');
-    await q('DROP TABLE IF EXISTS pool_members');
+    await q('DROP TABLE IF EXISTS candidate_pool_members');
     await q('DROP TABLE IF EXISTS candidate_pools');
   });
   console.log('  ✓ Dropped the candidate pool tables and assigned_tasks.pool_member_id');
