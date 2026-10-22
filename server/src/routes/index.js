@@ -83,6 +83,11 @@ router.use('/auto-reply', autoReplyRoutes);
 router.use('/mentors', mentorRoutes);
 router.use('/mentees', menteeRoutes);
 
+// System Pool (pre-clan selection): operators/reviewers, and candidates' own work
+const poolRoutes = require('./pools');
+router.use('/pools', poolRoutes.pools);
+router.use('/candidate', poolRoutes.candidate);
+
 // Task routes
 router.use('/tasks', taskRoutes);
 router.use('/interviews', interviewRoutes);
