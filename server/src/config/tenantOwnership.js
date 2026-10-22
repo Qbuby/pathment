@@ -44,6 +44,9 @@ const WORKSPACE_MODELS = {
   QuizQuestion: 'quiz_questions',
   QuizSession: 'quiz_sessions',
   CourseEnrollment: 'course_enrollments',
+  // The System Pool (migration 140).
+  CandidatePool: 'candidate_pools',
+  PoolMember: 'pool_members',
   AdminMeeting: 'admin_meetings',
   AvailabilityRule: 'availability_rules',
   AvailabilitySlot: 'availability_slots',

@@ -142,7 +142,11 @@ module.exports = function installOrganizationScope(sequelize, models) {
           continue;
         }
         if (!association.target.rawAttributes.organizationId) continue;
-        const parent = await association.target.findByPk(id, {
+        // unscoped(): this asks only "is the parent in this workspace?". A
+        // default scope (AssignedTask hides System Pool work) must not make a
+        // real parent look missing. The workspace predicate is a hook, so it
+        // still applies.
+        const parent = await association.target.unscoped().findByPk(id, {
           attributes: ['id', 'organizationId'], transaction: options.transaction,
         });
         if (!parent || parent.organizationId !== organizationId) {
