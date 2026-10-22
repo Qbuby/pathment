@@ -10,6 +10,11 @@ const { getRequestContext } = require('../utils/auditContext');
 // a clan/program scope grants the mentor switch (drives getCapabilities).
 const MENTOR_PERMISSIONS = [P.MENTEE_VIEW, P.MENTEE_MANAGE, P.TASK_ASSIGN, P.TASK_REVIEW];
 
+// The System Pool permissions. Holding any of them at org/program scope opens
+// the Selection pools area — and only that; they are not mentoring powers, so
+// they never switch on the mentor portal either.
+const POOL_PERMISSIONS = [P.POOL_MANAGE, P.POOL_MEMBERS, P.POOL_ASSIGN, P.POOL_REVIEW, P.POOL_SELECT];
+
 
 // In-memory cache of admin-defined custom roles (key → { permissions[], scope }).
 // Invalidated by accessService whenever a custom role changes.
@@ -132,7 +137,7 @@ class AuthzService {
     if ((!organizationId && user.role === 'admin') || ['owner', 'admin'].includes(organizationMembership?.role)) {
       add('super_admin', 'org');
     }
-    if ((legacyAccountRole && user.role === 'mentee') || (organizationId &&
+    if ((legacyAccountRole && user.role === 'mentee' && !(await this.isPoolCandidateOnly(user))) || (organizationId &&
         await models.MenteeProfile.findOne({ where: { userId: user.id }, attributes: ['id'] }))) {
       add('mentee', 'self', user.id);
     }
@@ -292,7 +297,8 @@ class AuthzService {
     if ((legacyAccountRole && user.role === 'mentor') || mentorsSomewhere ||
         (getRequestContext().organizationId && await models.MentorProfile.findOne({ where: { userId: user.id }, attributes: ['id'] }))) caps.add('mentor');
 
-    if ((legacyAccountRole && user.role === 'mentee') || assignments.some(a => a.role === 'mentee')) {
+    if ((legacyAccountRole && user.role === 'mentee' && !(await this.isPoolCandidateOnly(user))) ||
+        assignments.some(a => a.role === 'mentee')) {
       caps.add('mentee');
     } else {
       const enrollment = await models.Enrollment.findOne({
@@ -302,7 +308,64 @@ class AuthzService {
       if (enrollment) caps.add('mentee');
     }
 
+    // A System Pool candidate: someone in a selection pool. It opens the
+    // candidate area — their own qualifying work and outcome — and nothing
+    // else. It is kept after placement so they can still read their outcome.
+    if (models.PoolMember && await models.PoolMember.findOne({ where: { userId: user.id }, attributes: ['id'] })) {
+      caps.add('candidate');
+    }
+
     return [...caps];
+  }
+
+  /**
+   * Is this account ONLY a System Pool candidate — invited into a pool, never
+   * given a mentee profile?
+   *
+   * In the default workspace a stored `role = 'mentee'` alone used to mean
+   * "mentee". A pool candidate's account is created with that role (invites
+   * have no other learner role), so without this they would walk straight
+   * into the mentee portal: the community lounge, org-wide announcements, the
+   * directory. They get a mentee profile — and with it the mentee portal —
+   * when they are placed into a clan.
+   *
+   * Only reached for legacy-role mentees, and a real mentee has a profile, so
+   * nobody who has the mentee portal today loses it.
+   */
+  async isPoolCandidateOnly(user) {
+    if (!user || !models.PoolMember) return false;
+    const profile = await models.MenteeProfile.findOne({ where: { userId: user.id }, attributes: ['id'] });
+    if (profile) return false;
+    const member = await models.PoolMember.findOne({ where: { userId: user.id }, attributes: ['id'] });
+    return Boolean(member);
+  }
+
+  /**
+   * May this person enter the Selection pools area? True for anyone holding a
+   * `pool.*` permission at org or programme scope. Separate from
+   * `hasAdminAccess` on purpose: a pool reviewer must not become an admin of
+   * the programme's mentees, clans or cohorts.
+   */
+  async hasPoolAccess(user, opts = {}) {
+    if (!user) return false;
+    const custom = await loadCustomRoles();
+    const assignments = opts.assignments || (await this.getAssignments(user));
+    return assignments.some((a) => ['org', 'program'].includes(a.scopeType) &&
+      POOL_PERMISSIONS.some((perm) => assignmentGrants(a, perm, custom)));
+  }
+
+  /**
+   * The programmes whose pools this person can see: null = every programme
+   * (an org-scoped holder), otherwise the programme ids they hold any pool
+   * permission at.
+   */
+  async poolProgramScope(user, opts = {}) {
+    if (!user) return [];
+    const custom = await loadCustomRoles();
+    const assignments = opts.assignments || (await this.getAssignments(user));
+    const holds = (a) => POOL_PERMISSIONS.some((perm) => assignmentGrants(a, perm, custom));
+    if (assignments.some((a) => a.scopeType === 'org' && holds(a))) return null;
+    return [...new Set(assignments.filter((a) => a.scopeType === 'program' && a.scopeId && holds(a)).map((a) => a.scopeId))];
   }
 
   /**
@@ -545,6 +608,16 @@ class AuthzService {
     if (!user) return false;
     const assignments = await this.getAssignments(user);
 
+    // System Pool work answers to the POOL, never to a clan or to whoever
+    // assigned it: the candidate is in no clan yet, and once they are placed
+    // their new mentor must not gain rights over the work that selected them.
+    const poolMemberId = task.poolMemberId !== undefined
+      ? task.poolMemberId
+      : (await models.AssignedTask.scope('withPoolWork').findByPk(task.id, { attributes: ['poolMemberId'] }))?.poolMemberId;
+    if (poolMemberId) {
+      return this._canActOnPoolTask(user, { menteeId: task.menteeId, poolMemberId }, permissions, { assignments });
+    }
+
     // No self-review. A co-mentor of the clan they're also a mentee in holds
     // task.review over that clan's mentees — themselves included — so without
     // this they could approve and score their own submissions. Admins keep
@@ -562,6 +635,52 @@ class AuthzService {
     return false;
   }
 
+  /**
+   * May `user` act on a piece of System Pool work?
+   *
+   * Reviewing it needs `pool.review` at the pool's programme. Merely looking
+   * (the callers that pass `mentee.view`) is allowed to anyone holding any
+   * `pool.*` permission there. Nobody — admins included — reviews their own
+   * qualifying work: the candidate is being selected on it.
+   */
+  async _canActOnPoolTask(user, { menteeId, poolMemberId }, permissions, { assignments }) {
+    if (menteeId && menteeId === user.id) return false;
+    const resource = await this.scopeOfPoolMember(poolMemberId);
+    if (!resource) return false;
+    const perms = Array.isArray(permissions) ? permissions : [permissions];
+    const wanted = new Set();
+    for (const p of perms) {
+      if (p === P.TASK_REVIEW || p === P.POOL_REVIEW) wanted.add(P.POOL_REVIEW);
+      else if (p === P.MENTEE_VIEW) POOL_PERMISSIONS.forEach((pp) => wanted.add(pp));
+      else if (POOL_PERMISSIONS.includes(p)) wanted.add(p);
+    }
+    for (const p of wanted) {
+      if (await this.can(user, p, resource, { assignments })) return true;
+    }
+    return false;
+  }
+
+  /**
+   * A pool member resolves to their pool's PROGRAMME — never to a clan. Even
+   * after placement, qualifying work is the pool's, not the new clan's.
+   */
+  async scopeOfPoolMember(poolMemberId) {
+    if (!poolMemberId || !models.PoolMember) return null;
+    const member = await models.PoolMember.findByPk(poolMemberId, {
+      attributes: ['id', 'userId'],
+      include: [{ model: models.CandidatePool, as: 'pool', attributes: ['programId'] }],
+    });
+    if (!member?.pool) return null;
+    return { programId: member.pool.programId, userId: member.userId || undefined };
+  }
+
+  /** A pool resolves to its programme — the scope every `pool.*` check uses. */
+  async scopeOfPool(poolId) {
+    if (!poolId || !models.CandidatePool) return null;
+    const pool = await models.CandidatePool.findByPk(poolId, { attributes: ['id', 'programId'] });
+    return pool ? { programId: pool.programId } : null;
+  }
+
   // ── Scope resolvers (locate a resource in the hierarchy) ─────────────────────
   /** A clan resource: covers clan + its program. */
   async scopeOfClan(clanId) {
@@ -572,8 +691,17 @@ class AuthzService {
 
   /** An assigned task: covers the mentee (self), their clan, and the program. */
   async scopeOfAssignedTask(taskId) {
-    const task = await models.AssignedTask.findByPk(taskId, { attributes: ['id', 'menteeId', 'enrollmentId', 'clanId'] });
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId, {
+      attributes: ['id', 'menteeId', 'enrollmentId', 'clanId', 'poolMemberId'],
+    });
     if (!task) return null;
+    // Pool work locates in its pool's programme, and ONLY there. Never fall
+    // back to "the mentee's only clan" below: after placement that would hand
+    // the new clan's mentors the work the candidate was selected on.
+    if (task.poolMemberId) {
+      const pool = await this.scopeOfPoolMember(task.poolMemberId);
+      return pool ? { userId: task.menteeId, programId: pool.programId } : { userId: task.menteeId };
+    }
     const out = { userId: task.menteeId };
     if (task.clanId) out.clanId = task.clanId;
     if (task.enrollmentId) {
