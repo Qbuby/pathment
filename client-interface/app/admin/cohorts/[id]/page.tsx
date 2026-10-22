@@ -18,6 +18,7 @@ import { assessmentApi, type Assessment } from '@/lib/services/assessment-api';
 import { IntakeFormBuilder } from '@/components/admin/IntakeFormBuilder';
 import { AssessmentDrawer } from '@/components/admin/AssessmentDrawer';
 import { IntakeScoreToolbar } from '@/components/admin/IntakeScoreToolbar';
+import { AddToPoolButton } from '@/components/admin/pools/AddToPoolButton';
 import { LevelCriteriaEditor } from '@/components/admin/LevelCriteriaEditor';
 import { Drawer } from '@/components/shared/Drawer';
 import RichTextEditor from '@/components/shared/RichTextEditor';
@@ -1284,6 +1285,8 @@ export default function CohortReviewPage({ params }: { params: Promise<{ id: str
             </button>
           )}
           <PassThresholdControl cohortId={id} value={passThreshold} onSaved={refetch} />
+          {/* Selected applicants → a selection pool. Changes nothing about their applications. */}
+          <AddToPoolButton programId={cohort?.programId} applicationIds={[...selected]} />
           <IntakeScoreToolbar cohortId={id} cohortName={cohort?.name || 'cohort'} selectedIds={[...selected]} visibleIds={filteredIds} onDone={() => { setSelected(new Set()); refetch(); }} />
           <button
             onClick={() => refetch()}

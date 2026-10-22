@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
+import { EntityCard, entityCardSecondaryBtn, formatDateRange } from '@/components/admin/EntityCard';
 import { toast } from 'sonner';
-import { Plus, Loader2, ChevronRight, CalendarRange, Link2, Check, Inbox } from 'lucide-react';
+import { Plus, Loader2, CalendarRange, Link2, Check, Inbox } from 'lucide-react';
 import { Drawer } from '@/components/shared/Drawer';
 import { SelectMenu } from '@/components/shared/SelectMenu';
 import { useCohorts, type Cohort, type CohortStatus } from '@/lib/hooks/admin';
@@ -119,55 +119,40 @@ function CohortCard({ cohort }: { cohort: Cohort }) {
     ? `${window.location.origin}/apply/${cohort.publicSlug}`
     : null;
   return (
-    <Link href={`/admin/cohorts/${cohort.id}`} className="group relative block rounded-2xl border border-slate-200 bg-card p-5 hover:border-brand-300 hover:shadow-sm transition-all">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="font-medium text-slate-900 truncate">{cohort.name}</p>
-          <p className="mt-0.5 text-xs text-slate-500 truncate">{cohort.program?.name || '-'}</p>
-        </div>
-        <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-xs font-medium shrink-0 ${meta.cls}`}>{meta.label}</span>
-      </div>
-      <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-        <div className="rounded-lg bg-slate-50 py-2">
-          <p className="text-sm font-semibold text-slate-900">{cohort.applicationCount ?? 0}</p>
-          <p className="text-[11px] text-slate-500">applicants</p>
-        </div>
-        <div className={`rounded-lg py-2 ${pending ? 'bg-amber-50' : 'bg-slate-50'}`}>
-          <p className={`text-sm font-semibold ${pending ? 'text-amber-700' : 'text-slate-900'}`}>{pending}</p>
-          <p className="text-[11px] text-slate-500">in review</p>
-        </div>
-        <div className="rounded-lg bg-emerald-50 py-2">
-          <p className="text-sm font-semibold text-emerald-700">{accepted}</p>
-          <p className="text-[11px] text-slate-500">accepted</p>
-        </div>
-      </div>
-      <div className="mt-3 flex items-center justify-between gap-2 text-xs font-medium">
-        {/*
+    <EntityCard
+      href={`/admin/cohorts/${cohort.id}`}
+      status={meta}
+      title={cohort.name}
+      description={cohort.program?.name || undefined}
+      tags={applyUrl ? ['Apply link live'] : []}
+      stats={[
+        { label: 'Applicants', value: cohort.applicationCount ?? 0 },
+        { label: 'In review', value: pending, tone: pending ? 'attention' : 'default' },
+        { label: 'Accepted', value: accepted, tone: accepted ? 'good' : 'default' },
+        { label: 'Seats', value: cohort.capacity ?? 'No limit' },
+      ]}
+      footer={formatDateRange(cohort.startDate, cohort.endDate) || 'No dates set'}
+      primaryLabel={pending ? `Review ${pending}` : 'Open'}
+      actions={applyUrl ? (
+        /*
             The apply link is the entire point of an open intake and lived two
             clicks inside the cohort, so sharing one meant opening it, finding
             the settings panel and copying from there. It belongs on the card.
-        */}
-        {applyUrl ? (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              navigator.clipboard.writeText(applyUrl)
-                .then(() => { setCopied(true); toast.success('Apply link copied'); setTimeout(() => setCopied(false), 2000); })
-                .catch(() => toast.error('Could not copy the link'));
-            }}
-            className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-50 hover:text-brand-700"
-          >
-            {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Link2 className="w-3.5 h-3.5" />}
-            {copied ? 'Copied' : 'Copy apply link'}
-          </button>
-        ) : <span />}
-        <span className="inline-flex items-center text-brand-600">
-          {pending ? `Review ${pending}` : 'Open intake'} <ChevronRight className="ml-0.5 w-3.5 h-3.5" />
-        </span>
-      </div>
-    </Link>
+        */
+        <button
+          type="button"
+          onClick={() => {
+            navigator.clipboard.writeText(applyUrl)
+              .then(() => { setCopied(true); toast.success('Apply link copied'); setTimeout(() => setCopied(false), 2000); })
+              .catch(() => toast.error('Could not copy the link'));
+          }}
+          className={entityCardSecondaryBtn}
+        >
+          {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Link2 className="w-4 h-4" />}
+          {copied ? 'Copied' : 'Copy link'}
+        </button>
+      ) : undefined}
+    />
   );
 }
 

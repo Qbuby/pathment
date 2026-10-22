@@ -62,7 +62,7 @@ export default function Navigation({ role }: NavigationProps) {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   const { links, pinned, isEditing, toggleEdit, togglePin, moveUp, moveDown, reset, recordUsage, adaptive, toggleAdaptive } = useNavPreferences(role);
-  const { can, canAny, canAccessAdmin, loading: permsLoading } = usePermissions();
+  const { can, canAny, canAccessAdmin, canAccessPools, loading: permsLoading } = usePermissions();
 
   // Platform console entry: shown only to platform operators (platform_admins
   // rows / env bootstrap), resolved once and cached. Workspace roles never
@@ -100,7 +100,7 @@ export default function Navigation({ role }: NavigationProps) {
           .map((link) => {
             if (link.requiresAdminArea && !canAccessAdmin) return null;
             if (link.children) {
-              const kids = link.children.filter((c) => !c.permission || can(c.permission));
+              const kids = link.children.filter((c) => (!c.permission || can(c.permission)) && (!c.anyOf || canAny(c.anyOf)));
               if (!kids.length) return null;
               if (link.workspace) return { ...link, preferenceKey: link.path, path: kids[0].path, activePaths: kids.map((child) => child.path), children: undefined };
               return { ...link, children: kids };
@@ -114,8 +114,13 @@ export default function Navigation({ role }: NavigationProps) {
     if (role !== 'admin' && canAccessAdmin) {
       return [...base, { path: '/admin', icon: ShieldCheck, label: 'Admin area', requiresAdminArea: true }];
     }
+    // A pool reviewer/operator who is not an admin: their one way into the
+    // admin area is Selection pools, and that is all it shows them.
+    if (role !== 'admin' && canAccessPools) {
+      return [...base, { path: '/admin/pools', icon: ShieldCheck, label: 'Selection pools' }];
+    }
     return base;
-  }, [links, permsLoading, canAccessAdmin, can, canAny, role]);
+  }, [links, permsLoading, canAccessAdmin, canAccessPools, can, canAny, role]);
 
   // ── Collapsible group state ───────────────────────────────────────────────
   // Initialise with any group that contains the current path already open
@@ -177,7 +182,10 @@ export default function Navigation({ role }: NavigationProps) {
   const renderRoleSwitcher = () => {
     if (!availableRoles || availableRoles.length <= 1) return null;
     const order: UserRole[] = ['admin', 'mentor', 'mentee'];
+    // Only the three portal roles switch; other capabilities (a selection-pool
+    // candidate) have their own area and never appear here.
     const roles = order.filter((r) => availableRoles.includes(r));
+    if (roles.length <= 1) return null;
     return (
       <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl">
         {roles.map((r) => (
@@ -473,7 +481,7 @@ export default function Navigation({ role }: NavigationProps) {
           {/* Role switcher (only for users who hold more than one role view) */}
           <div className="px-3 pt-3"><WorkspaceSwitcher /></div>
 
-          {availableRoles && availableRoles.length > 1 && (
+          {renderRoleSwitcher() && (
             <div className="px-3 pt-3">{renderRoleSwitcher()}</div>
           )}
 
@@ -559,7 +567,7 @@ export default function Navigation({ role }: NavigationProps) {
           <div className="border-t border-slate-100 bg-card">
             <nav className="px-3 py-3 space-y-0.5">
               <div className="pb-3"><WorkspaceSwitcher compact onNavigate={() => setMobileMenuOpen(false)} /></div>
-              {availableRoles && availableRoles.length > 1 && (
+              {renderRoleSwitcher() && (
                 <div className="pb-2">{renderRoleSwitcher()}</div>
               )}
               {renderClanScope() && <div className="pb-2">{renderClanScope()}</div>}

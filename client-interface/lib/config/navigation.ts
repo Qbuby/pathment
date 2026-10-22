@@ -46,6 +46,8 @@ export interface NavChildLink {
   icon: LucideIcon;
   label: string;
   permission?: string;
+  /** Visible when the user holds ANY of these. */
+  anyOf?: string[];
 }
 
 export interface NavLink {
@@ -68,7 +70,7 @@ export const navigationConfig: Record<string, NavLink[]> = {
     ...adminWorkspaces.map((workspace) => {
       const icon = ({ Admissions: CalendarRange, People: Users, Learning: BookOpen, Recognition: Trophy, Community: MessageSquarePlus, Insights: BarChart2, Administration: Settings } as Record<string, LucideIcon>)[workspace.label];
       return { path: `group:admin-${workspace.label.toLowerCase()}`, label: workspace.label, icon, workspace: true,
-        children: workspace.tabs.map((tab) => ({ path: tab.href, label: tab.label, permission: tab.permission, icon })) };
+        children: workspace.tabs.map((tab) => ({ path: tab.href, label: tab.label, permission: tab.permission, anyOf: tab.anyOf, icon })) };
     }),
     { path: '/admin/messages', icon: MessageSquare, label: 'Messages', badge: 'messages' },
     { path: '/admin/settings', icon: Settings, label: 'Settings', permission: 'system.settings' },
@@ -121,7 +123,7 @@ export function getFlatNavItems(role: UserRole): FlatNavItem[] {
   for (const link of links) {
     if (link.children) {
       for (const child of link.children) {
-        out.push({ path: child.path, label: child.label, icon: child.icon, group: link.label, permission: child.permission });
+        out.push({ path: child.path, label: child.label, icon: child.icon, group: link.label, permission: child.permission, anyOf: child.anyOf });
       }
     } else {
       out.push({

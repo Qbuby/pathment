@@ -610,7 +610,7 @@ export function AssignTaskDrawer({
    */
   if (!mounted) return null;
   return createPortal(
-      <div className="fixed inset-0 z-[60] flex justify-end" onKeyDown={onKeyDown}>
+      <div className="fixed inset-0 z-60 flex justify-end" onKeyDown={onKeyDown}>
         <div className={drawerBackdropClass(shown)} onClick={closeKeepingDraft} aria-hidden="true" />
         <div
           ref={drawerRef}
@@ -998,7 +998,7 @@ export function AssignTaskDrawer({
                         <input value={r.title} onChange={(e) => setResources((prev) => prev.map((x, j) => (j === i ? { ...x, title: e.target.value } : x)))}
                           placeholder="Label" aria-label={`Resource ${i + 1} label`} className={`${field} flex-1`} />
                         <input value={r.url} onChange={(e) => setResources((prev) => prev.map((x, j) => (j === i ? { ...x, url: e.target.value } : x)))}
-                          placeholder="https://…" aria-label={`Resource ${i + 1} URL`} className={`${field} flex-[2]`} />
+                          placeholder="https://…" aria-label={`Resource ${i + 1} URL`} className={`${field} flex-2`} />
                         <button type="button" onClick={() => setResources((prev) => prev.filter((_, j) => j !== i))} aria-label="Remove resource" className="p-2 text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
                       </div>
                     ))}

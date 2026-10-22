@@ -1,7 +1,7 @@
 'use client';
 
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
   Loader2, ArrowRight, ArrowLeft, CheckCircle2, AlertTriangle, Play, RotateCcw,
@@ -60,7 +60,9 @@ export default function QuizRunnerPage({ params }: { params: Promise<{ taskId: s
   const q: CandidateQuizQuestion | undefined = questions[idx];
   const opts = data?.options;
 
-  const backToTask = () => router.push(`/mentee/tasks/${taskId}`);
+  // The same runner serves selection-pool candidates under /candidate.
+  const area = usePathname()?.includes('/candidate/') ? '/candidate' : '/mentee';
+  const backToTask = () => router.push(`${area}/tasks/${taskId}`);
 
   const isAnswered = useCallback((question: CandidateQuizQuestion): boolean => {
     const a = answersRef.current[question.id];

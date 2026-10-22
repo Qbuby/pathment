@@ -26,6 +26,13 @@ export const PERMISSIONS = {
   TASK_ASSIGN: 'task.assign',
   TASK_REVIEW: 'task.review',
 
+  /** System Pool (pre-clan selection), each checked at the pool's programme. */
+  POOL_MANAGE: 'pool.manage',
+  POOL_MEMBERS: 'pool.members',
+  POOL_ASSIGN: 'pool.assign',
+  POOL_REVIEW: 'pool.review',
+  POOL_SELECT: 'pool.select',
+
   /** Arrange your own day. A mentee holds this at self scope. */
   SCHEDULE_PLAN: 'schedule.plan',
   /** Shape somebody else's day: assign a template, lock a block, push to all. */

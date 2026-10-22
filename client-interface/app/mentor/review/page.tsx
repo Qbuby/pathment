@@ -664,7 +664,7 @@ export default function CohortReview() {
           </button>
           <div className="hidden sm:flex items-start gap-5 shrink-0 text-right">
             {dueLabel && (
-              <div className="min-w-[3.5rem]">
+              <div className="min-w-14">
                 <p className="text-[10px] leading-none text-slate-400">Due</p>
                 <p className={`mt-1 text-xs leading-none tabular-nums ${overdue ? 'text-red-600' : 'text-slate-700'}`}>
                   {overdue && <Clock className="inline-block w-2.5 h-2.5 mr-0.5 align-[-1px]" aria-hidden />}
@@ -674,11 +674,11 @@ export default function CohortReview() {
             )}
             {showTimeline && (
               <>
-                <div className="min-w-[3.5rem]">
+                <div className="min-w-14">
                   <p className="text-[10px] leading-none text-slate-400">Submitted</p>
                   <p className="mt-1 text-xs leading-none text-slate-700 tabular-nums">{submitted || '—'}</p>
                 </div>
-                <div className="min-w-[3.5rem]">
+                <div className="min-w-14">
                   <p className="text-[10px] leading-none text-slate-400">Reviewed</p>
                   <p className="mt-1 text-xs leading-none text-slate-700 tabular-nums">{reviewed || '—'}</p>
                 </div>
@@ -1078,7 +1078,7 @@ export default function CohortReview() {
             tokens rather than shipped as an image, so it themes and costs
             nothing to load.
         */}
-        <div aria-hidden className="relative border-b border-slate-200 bg-gradient-to-b from-brand-50/80 to-card px-6 pb-7 pt-9 dark:border-slate-800 dark:from-brand-500/10">
+        <div aria-hidden className="relative border-b border-slate-200 bg-linear-to-b from-brand-50/80 to-card px-6 pb-7 pt-9 dark:border-slate-800 dark:from-brand-500/10">
           <div className="mx-auto flex w-full max-w-sm items-end justify-center gap-3">
             {[0, 1, 2, 3, 4].map((i) => (
               <div key={i} className="flex flex-col items-center gap-1.5">
