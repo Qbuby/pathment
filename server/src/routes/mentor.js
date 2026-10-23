@@ -66,6 +66,9 @@ router.get('/mentee/:id', authenticate, authorize(['mentor', 'admin']), cohortCo
  * The mentee's record across EVERY clan in the org, and their open work
  * elsewhere. Deliberately not clan-scoped — see menteeRecordController.
  */
+// A period report for one mentee. Same audience as the profile it is a view
+// of; the per-mentee authorisation happens in the controller.
+router.get('/mentee/:id/report', authenticate, authorize(['mentor', 'admin']), cohortController.getMenteeReport);
 router.get('/mentee/:id/record', authenticate, authorize(['mentor', 'admin']), menteeRecordController.getRecord);
 router.get('/mentee/:id/open-work-elsewhere', authenticate, authorize(['mentor', 'admin']), menteeRecordController.getOpenWorkElsewhere);
 
