@@ -3,6 +3,7 @@ const { models } = require('../db');
 const { ValidationError } = require('../utils/errors/errorTypes');
 const cohortService = require('./cohortService');
 const performanceService = require('./performanceService');
+const authzService = require('./authzService');
 
 /**
  * One mentee, one period, everything a human needs to judge how it went.
@@ -327,6 +328,181 @@ class MenteeReportService {
     }
 
     return { inClan, inProgram };
+  }
+  // ── reporting on more than one person ──────────────────────────────────
+
+  /**
+   * Who this caller may report on, given what they asked for.
+   *
+   * Resolved from the caller's actual access rather than from the ids the
+   * browser sent. A mentor naming a clan they do not mentor, or an id they
+   * picked out of a URL, gets the same answer as if they had named nobody:
+   * `canViewMentee` is the authority, and it already accounts for a co-mentor
+   * whose `mentee.view` has been revoked.
+   */
+  async resolveAudience(user, { menteeIds = null, clanId = null, programId = null } = {}, { cap = 200 } = {}) {
+    let candidates = [];
+
+    if (Array.isArray(menteeIds) && menteeIds.length) {
+      candidates = [...new Set(menteeIds)];
+    } else if (clanId) {
+      const rows = await models.ClanMembership.findAll({
+        where: { clanId, role: 'mentee' }, attributes: ['userId'], raw: true,
+      });
+      candidates = [...new Set(rows.map((r) => r.userId))];
+    } else if (programId) {
+      const rows = await models.Enrollment.findAll({
+        where: { programId }, attributes: ['menteeId'], raw: true,
+      });
+      candidates = [...new Set(rows.map((r) => r.menteeId).filter(Boolean))];
+    } else {
+      throw new ValidationError('Choose a clan, a programme or some mentees');
+    }
+
+    if (!candidates.length) return { menteeIds: [], refused: 0, capped: false };
+
+    const allowed = [];
+    for (const id of candidates) {
+      if (allowed.length >= cap) break;
+      // eslint-disable-next-line no-await-in-loop
+      if (await authzService.canViewMentee(user, id, { clanId })) allowed.push(id);
+    }
+    return {
+      menteeIds: allowed,
+      refused: candidates.length - allowed.length,
+      capped: candidates.length > cap,
+    };
+  }
+
+  /** The same report, for several people. */
+  async buildMany(menteeIds, { from, to, clanId = null } = {}) {
+    const reports = [];
+    for (const menteeId of menteeIds) {
+      // eslint-disable-next-line no-await-in-loop
+      const report = await this.build({ menteeId, from, to, clanId });
+      if (report) reports.push(report);
+    }
+    return reports;
+  }
+
+  /**
+   * Send these reports to people outside Pathment.
+   *
+   * The reason this exists: the organisations funding a fellowship need to see
+   * that the people they are paying for are actually progressing, and they do
+   * not have accounts here. So the recipients are arbitrary addresses, which
+   * makes this the one place in the product that mails strangers on a user's
+   * say-so.
+   *
+   * That is handled rather than hoped about. The recipient list is capped and
+   * validated, the mentee list comes from `resolveAudience` rather than from
+   * the request, and every send is written to the audit log with who sent what
+   * to whom: an export of somebody's progress leaving the system should be
+   * answerable for afterwards.
+   */
+  async sendReports(user, { recipients = [], menteeIds = null, clanId = null, programId = null, from, to, note = '' } = {}) {
+    const clean = [...new Set((recipients || []).map((r) => String(r || '').trim().toLowerCase()).filter(Boolean))];
+    if (!clean.length) throw new ValidationError('Add at least one email address');
+    if (clean.length > 10) throw new ValidationError('Ten recipients at a time is the limit');
+    const bad = clean.filter((email) => !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email));
+    if (bad.length) throw new ValidationError(`That is not a valid email address: ${bad[0]}`);
+
+    const audience = await this.resolveAudience(user, { menteeIds, clanId, programId });
+    if (!audience.menteeIds.length) throw new ValidationError('No mentees you can report on were selected');
+
+    const reports = await this.buildMany(audience.menteeIds, { from, to, clanId });
+    if (!reports.length) throw new ValidationError('Nothing to report for that period');
+
+    const period = reports[0].period;
+    const label = `${new Date(period.from).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} to ${new Date(period.to).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+    const subject = reports.length === 1
+      ? `Progress report: ${reports[0].mentee.name} (${label})`
+      : `Progress report: ${reports.length} mentees (${label})`;
+
+    const emailService = require('./emailService');
+    const { renderEmail, plainText } = require('../utils/emailTemplate');
+    const bodyHtml = this._emailBody(reports, { label, note, sender: user });
+
+    let queued = 0;
+    for (const to_ of clean) {
+      // eslint-disable-next-line no-await-in-loop
+      const result = await emailService.enqueue({
+        to: to_,
+        subject,
+        html: renderEmail({ heading: subject, bodyHtml, preheader: `Progress for ${label}` }),
+        text: plainText({ heading: subject, bodyText: this._emailText(reports, { label, note }) }),
+        emailType: 'system',
+        priority: 4,
+      });
+      if (result && result.queued !== false) queued += 1;
+    }
+
+    try {
+      await require('../utils/auditContext').createAuditLog({
+        action: 'MENTEE_REPORT_SENT',
+        entityType: 'MenteeReport',
+        entityId: user.id,
+        newValues: { recipients: clean, mentees: reports.map((r) => r.mentee.id), period },
+      });
+    } catch (error) {
+      console.error('[reports] audit failed (non-fatal):', error.message);
+    }
+
+    return {
+      sent: queued,
+      recipients: clean.length,
+      mentees: reports.length,
+      refused: audience.refused,
+      capped: audience.capped,
+    };
+  }
+
+  /** A table somebody can read without logging in, because they cannot. */
+  _emailBody(reports, { label, note, sender }) {
+    const esc = (value) => String(value == null ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const rows = reports.map((r) => {
+      const place = r.standing?.inClan?.rank
+        ? `${r.standing.inClan.rank} of ${r.standing.inClan.of}`
+        : 'not ranked';
+      return `<tr>
+        <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;">${esc(r.mentee.name)}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:right;">${r.progress.absolute}%</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:right;">${r.activity.completed}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:right;">${r.progress.onTimeRate}%</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:right;">${esc(place)}</td>
+      </tr>`;
+    }).join('');
+
+    const context = reports[0]?.context;
+    return `
+      ${note ? `<p style="margin:0 0 14px;">${esc(note)}</p>` : ''}
+      <p style="margin:0 0 14px;color:#475569;font-size:14px;">
+        ${esc(context?.program?.name || 'Programme')}${context?.clan ? ` &middot; ${esc(context.clan.name)}` : ''}
+        &middot; ${esc(label)}
+      </p>
+      <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;font-size:14px;">
+        <tr style="text-align:left;color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">
+          <th style="padding:6px 10px;">Mentee</th>
+          <th style="padding:6px 10px;text-align:right;">Progress</th>
+          <th style="padding:6px 10px;text-align:right;">Finished</th>
+          <th style="padding:6px 10px;text-align:right;">On time</th>
+          <th style="padding:6px 10px;text-align:right;">In clan</th>
+        </tr>
+        ${rows}
+      </table>
+      <p style="margin:16px 0 0;color:#94a3b8;font-size:12px;">
+        Sent from Pathment by ${esc(`${sender.firstName || ''} ${sender.lastName || ''}`.trim() || 'a mentor')}.
+        Progress is measured as at the end of the period shown.
+      </p>`;
+  }
+
+  _emailText(reports, { label, note }) {
+    const lines = [note, '', `Period: ${label}`, ''].filter((line) => line !== undefined);
+    for (const r of reports) {
+      lines.push(`${r.mentee.name}: ${r.progress.absolute}% overall, ${r.activity.completed} finished this period, ${r.progress.onTimeRate}% on time`);
+    }
+    return lines.join('\n');
   }
 }
 

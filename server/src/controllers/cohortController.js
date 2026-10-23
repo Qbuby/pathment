@@ -38,6 +38,50 @@ const getCohortReportSummary = catchAsync(async (req, res) => {
 });
 
 /**
+ * POST /api/mentor/reports/batch  { menteeIds?|clanId?|programId?, from?, to? }
+ *
+ * Several mentees at once, for the screen that shows a whole clan's month.
+ * The audience is resolved from the caller's access rather than from the ids
+ * the browser sent.
+ */
+const getMenteeReports = catchAsync(async (req, res) => {
+  const clanId = requestedClanId(req) || req.body.clanId || null;
+  const audience = await menteeReportService.resolveAudience(req.user, {
+    menteeIds: req.body.menteeIds,
+    clanId,
+    programId: req.body.programId,
+  });
+  const reports = await menteeReportService.buildMany(audience.menteeIds, {
+    from: req.body.from, to: req.body.to, clanId,
+  });
+  res.status(200).json(successResponse('Mentee reports', {
+    reports, refused: audience.refused, capped: audience.capped,
+  }));
+});
+
+/**
+ * POST /api/mentor/reports/send
+ *   { recipients[], menteeIds?|clanId?|programId?, from?, to?, note? }
+ *
+ * Mails the reports to people who do not have Pathment accounts - typically
+ * the organisation funding the fellowship, which needs to see that the people
+ * it is paying for are progressing.
+ */
+const sendMenteeReports = catchAsync(async (req, res) => {
+  const clanId = requestedClanId(req) || req.body.clanId || null;
+  const result = await menteeReportService.sendReports(req.user, {
+    recipients: req.body.recipients,
+    menteeIds: req.body.menteeIds,
+    clanId,
+    programId: req.body.programId,
+    from: req.body.from,
+    to: req.body.to,
+    note: req.body.note,
+  });
+  res.status(200).json(successResponse('Reports sent', result));
+});
+
+/**
  * GET /api/mentor/mentee/:id/report?from=&to=
  *
  * One mentee, one period. Defaults to the current month, because that is the
@@ -245,4 +289,4 @@ const getMenteeAttendanceHistory = catchAsync(async (req, res) => {
   res.status(200).json(successResponse('Attendance history', { history }));
 });
 
-module.exports = { getCohort, getCohortActivity, getCohortReportSummary, getMenteeReport, getMenteeProfile, getApprovals, getApprovalsCount, getChangesRequested, getReviewed, bulkApprove, bulkReview, nudge, getMyProgress, updatePersonality, addInsight, logMeetingNote, addCollaborator, removeCollaborator, setAttendance, getReviewAttendance, getMenteeAttendanceHistory };
+module.exports = { getCohort, getCohortActivity, getCohortReportSummary, getMenteeReport, getMenteeReports, sendMenteeReports, getMenteeProfile, getApprovals, getApprovalsCount, getChangesRequested, getReviewed, bulkApprove, bulkReview, nudge, getMyProgress, updatePersonality, addInsight, logMeetingNote, addCollaborator, removeCollaborator, setAttendance, getReviewAttendance, getMenteeAttendanceHistory };

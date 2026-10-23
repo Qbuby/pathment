@@ -13,7 +13,7 @@ const mentorshipPauseController = require('../controllers/mentorshipPauseControl
 const menteeTransferController = require('../controllers/menteeTransferController');
 const taskProgressController = require('../controllers/taskProgressController');
 const { authenticate, authorize } = require('../middlewares/auth');
-const { requirePermission } = require('../middlewares/authz');
+const { requirePermission, requirePermissionAnyScope } = require('../middlewares/authz');
 const { PERMISSIONS } = require('../config/permissions');
 
 const mentorOnly = [authenticate, authorize(['mentor', 'admin'])];
@@ -66,6 +66,12 @@ router.get('/mentee/:id', authenticate, authorize(['mentor', 'admin']), cohortCo
  * The mentee's record across EVERY clan in the org, and their open work
  * elsewhere. Deliberately not clan-scoped — see menteeRecordController.
  */
+// Reports for several mentees, and mailing them outward. Both are gated on
+// mentee.view, which a co-mentor holds by default and can have revoked - the
+// same permission that decides whether they can read the progress at all.
+router.post('/reports/batch', authenticate, requirePermissionAnyScope(PERMISSIONS.MENTEE_VIEW), cohortController.getMenteeReports);
+router.post('/reports/send', authenticate, requirePermissionAnyScope(PERMISSIONS.MENTEE_VIEW), cohortController.sendMenteeReports);
+
 // A period report for one mentee. Same audience as the profile it is a view
 // of; the per-mentee authorisation happens in the controller.
 router.get('/mentee/:id/report', authenticate, authorize(['mentor', 'admin']), cohortController.getMenteeReport);
