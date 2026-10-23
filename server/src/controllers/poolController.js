@@ -19,6 +19,7 @@ const poolReviewService = require('../services/poolReviewService');
 const poolScoringService = require('../services/poolScoringService');
 const poolPlacementService = require('../services/poolPlacementService');
 const poolCandidateService = require('../services/poolCandidateService');
+const poolAvatarService = require('../services/poolAvatarService');
 const submissionService = require('../services/submissionService');
 
 const assignments = async (req) => (req.loadAssignments ? req.loadAssignments() : undefined);
@@ -41,20 +42,74 @@ exports.options = catchAsync(async (req, res) => {
     order: [['name', 'ASC']],
   });
   const programId = req.query.programId && programs.some((p) => p.id === req.query.programId) ? req.query.programId : null;
-  const [cohorts, clans, quizKits, interviewKits, roadmapSteps] = programId ? await Promise.all([
+  const [cohorts, clans, quizKits, interviewKits, roadmaps] = programId ? await Promise.all([
     models.Cohort.findAll({ where: { programId }, attributes: ['id', 'name', 'status'], order: [['createdAt', 'DESC']] }),
     models.Clan.findAll({ where: { programId, kind: 'cohort' }, attributes: ['id', 'name', 'status', 'maxMentees', 'frozenAt'], order: [['name', 'ASC']] }),
     models.QuizKit.findAll({ where: { status: 'published' }, attributes: ['id', 'title'], order: [['title', 'ASC']] }),
     models.InterviewKit.findAll({ where: { status: 'published' }, attributes: ['id', 'title'], order: [['title', 'ASC']] }),
-    models.RoadmapTask.findAll({
-      where: { type: { [Op.in]: poolTaskService.SUBMITTABLE_TYPES } },
-      include: [{ model: models.Roadmap, as: 'roadmap', attributes: ['id', 'name'], where: { programId }, required: true }],
-      attributes: ['id', 'title', 'type', 'difficulty'],
-      order: [['title', 'ASC']],
-      limit: 500,
+    /*
+     * Roadmaps WITH their steps, as a roadmap-shaped tree.
+     *
+     * This used to answer with a flat list of every step in the programme,
+     * ordered by title, each step labelled with the roadmap it came from. A
+     * six-month fellowship is six roadmaps of thirty-odd steps, so the picker
+     * was two hundred rows in alphabetical order with no way to look INTO a
+     * roadmap — which is how an operator actually chooses work ("the month
+     * three steps"). The roadmap is the unit now, and its steps come with it
+     * in teaching order.
+     *
+     * Every roadmap is returned, including one whose steps are all quizzes or
+     * interviews, so the picker can say why it is empty rather than leaving
+     * the roadmap out and looking as though it does not exist.
+     */
+    models.Roadmap.findAll({
+      where: { programId },
+      attributes: ['id', 'name', 'description', 'published', 'source', 'totalWeeks'],
+      include: [{
+        model: models.RoadmapTask,
+        as: 'steps',
+        attributes: ['id', 'title', 'type', 'difficulty', 'taskOrder', 'estimatedHours'],
+        required: false,
+      }],
+      order: [['name', 'ASC'], [{ model: models.RoadmapTask, as: 'steps' }, 'taskOrder', 'ASC']],
     }),
   ]) : [[], [], [], [], []];
-  ok(res, 'Pool options', { programs, cohorts, clans, quizKits, interviewKits, roadmapSteps });
+
+  const assignable = poolTaskService.SUBMITTABLE_TYPES;
+  const roadmapTree = roadmaps.map((r) => {
+    const steps = (r.steps || []).map((t) => ({
+      id: t.id,
+      title: t.title,
+      type: t.type,
+      difficulty: t.difficulty,
+      taskOrder: t.taskOrder,
+      estimatedHours: t.estimatedHours,
+      // A quiz or interview step is assigned through its own kit, not as a
+      // task, so it is shown and explained rather than silently dropped.
+      assignable: assignable.includes(t.type),
+    }));
+    return {
+      id: r.id,
+      name: r.name,
+      description: r.description,
+      published: r.published,
+      source: r.source,
+      totalWeeks: r.totalWeeks,
+      stepCount: steps.length,
+      assignableCount: steps.filter((s) => s.assignable).length,
+      steps,
+    };
+  });
+  // Kept for anything still reading a flat list; the tree is what the picker uses.
+  const roadmapSteps = roadmapTree.flatMap((r) =>
+    r.steps.filter((s) => s.assignable).map((s) => ({ ...s, roadmapId: r.id, roadmap: { id: r.id, name: r.name } })));
+
+  ok(res, 'Pool options', {
+    programs, cohorts, clans, quizKits, interviewKits,
+    roadmaps: roadmapTree,
+    roadmapSteps,
+    difficultyPoints: poolService.DIFFICULTY_POINTS_DEFAULT,
+  });
 });
 
 exports.createPool = catchAsync(async (req, res) => {
@@ -163,6 +218,20 @@ exports.createAssignment = catchAsync(async (req, res) => {
   ok(res, 'Work created', await poolTaskService.createAssignment(req.params.id, req.body, req.user), 201);
 });
 
+exports.addRoadmapSteps = catchAsync(async (req, res) => {
+  ok(res, 'Work added', await poolTaskService.addRoadmapSteps(req.params.id, req.body, req.user), 201);
+});
+
+exports.updateAssignment = catchAsync(async (req, res) => {
+  const assignment = await poolTaskService.updateAssignment(req.params.id, req.params.assignmentId, req.body, req.user);
+  ok(res, 'Work updated', { assignment });
+});
+
+exports.assignToMember = catchAsync(async (req, res) => {
+  const assignmentIds = Array.isArray(req.body.assignmentIds) ? req.body.assignmentIds : null;
+  ok(res, 'Work assigned', await poolTaskService.assignToMember(req.params.id, req.params.memberId, { assignmentIds }, req.user));
+});
+
 exports.assign = catchAsync(async (req, res) => {
   const memberIds = Array.isArray(req.body.memberIds) ? req.body.memberIds : null;
   ok(res, 'Work assigned', await poolTaskService.assign(req.params.id, req.params.assignmentId, { memberIds }, req.user));
@@ -171,6 +240,20 @@ exports.assign = catchAsync(async (req, res) => {
 exports.cancelAssignment = catchAsync(async (req, res) => {
   const assignment = await poolTaskService.cancelAssignment(req.params.id, req.params.assignmentId, req.body.reason, req.user);
   ok(res, 'Work cancelled', { assignment });
+});
+
+// ─── The pool photo ────────────────────────────────────────────────────────────
+
+exports.uploadAvatar = catchAsync(async (req, res) => {
+  ok(res, 'File uploaded', await poolAvatarService.uploadAvatarFile(req.params.id, req.user, req.file), 201);
+});
+
+exports.setAvatar = catchAsync(async (req, res) => {
+  ok(res, 'Pool photo updated', await poolAvatarService.setAvatarUrl(req.params.id, req.user, req.body?.avatarUrl));
+});
+
+exports.removeAvatar = catchAsync(async (req, res) => {
+  ok(res, 'Pool photo removed', await poolAvatarService.removeAvatar(req.params.id, req.user));
 });
 
 // ─── Review ────────────────────────────────────────────────────────────────────

@@ -29,7 +29,17 @@ const TRANSITIONS = {
   closed: [],
 };
 
-const SCORE_SOURCES = ['quiz', 'task_review', 'interview_review', 'manual'];
+// Difficulty is the only dial on what a piece of work is worth. Four steps,
+// small numbers, the same curve shape as config/points.js.
+const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'];
+const { TASK_POINTS_BY_DIFFICULTY } = require('../config/points');
+const DIFFICULTY_POINTS_DEFAULT = { ...TASK_POINTS_BY_DIFFICULTY };
+const MAX_WORK_POINTS = 1000;
+
+// The key a hand adjustment to a candidate's points is stored under on
+// PoolMember.manualScores. One per candidate: a single "and this is what the
+// panel thought" number, not a second scoring system.
+const ADJUSTMENT_KEY = 'adjustment';
 
 const REMINDER_DEFAULTS = {
   enabled: true,
@@ -61,36 +71,41 @@ const date = (value, label) => {
 };
 
 /**
- * A scoring policy is a list of components, each with a visible label, weight,
- * source and maximum, whose weights add up to 100. Nothing else is accepted —
- * the total must always be explainable from its parts.
+ * A scoring policy is the curve a piece of work takes its points from.
+ *
+ * It used to be a list of weighted components totalling 100%, which asked an
+ * operator to describe a round twice: once as the work they hand out, and
+ * again as the percentages that work feeds. The two drifted — a component with
+ * no work behind it scored everybody 0 and blocked the shortlist — and the
+ * number a candidate earned for a project could not be read off the project.
+ *
+ * So the policy is now four numbers. A piece of work is worth its difficulty's
+ * points, decided when it is added and editable there, and a candidate's score
+ * is the points they actually earned. Nothing to reconcile, and the total is
+ * still the sum of its visible parts.
+ *
+ * `components` is deliberately not carried forward. An older pool keeps
+ * whatever it stored (the column is untouched by this), and scoring ignores
+ * it.
  */
-function validateScoringPolicy(policy, { previousVersion = 0 } = {}) {
-  const components = Array.isArray(policy?.components) ? policy.components : [];
-  const seen = new Set();
-  const clean = components.map((c, i) => {
-    const key = String(c.key || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').slice(0, 60);
-    const label = String(c.label || '').trim().slice(0, 80);
-    const weight = Number(c.weight);
-    if (!key) throw new ValidationError(`Score component ${i + 1} needs a key`);
-    if (seen.has(key)) throw new ValidationError(`Score component "${key}" appears twice`);
-    seen.add(key);
-    if (!label) throw new ValidationError(`Score component "${key}" needs a label`);
-    if (!SCORE_SOURCES.includes(c.source)) {
-      throw new ValidationError(`Score component "${label}" has an unknown source (use ${SCORE_SOURCES.join(', ')})`);
+function validateScoringPolicy(policy, { previousVersion = 0, current = {} } = {}) {
+  const given = policy?.difficultyPoints && typeof policy.difficultyPoints === 'object'
+    ? policy.difficultyPoints
+    : {};
+  const base = { ...DIFFICULTY_POINTS_DEFAULT, ...(current.difficultyPoints || {}) };
+  const difficultyPoints = {};
+  for (const difficulty of DIFFICULTIES) {
+    const raw = given[difficulty] === undefined ? base[difficulty] : given[difficulty];
+    const n = int(raw, { min: 0, max: MAX_WORK_POINTS });
+    if (Number.isNaN(n) || n === null) {
+      throw new ValidationError(`${difficulty} work must be worth a whole number of points (0 to ${MAX_WORK_POINTS})`);
     }
-    if (!Number.isFinite(weight) || weight <= 0 || weight > 100) {
-      throw new ValidationError(`Score component "${label}" needs a weight between 0 and 100`);
-    }
-    return { key, label, weight, source: c.source, required: c.required !== false, max: 100 };
-  });
-  if (clean.length) {
-    const total = clean.reduce((s, c) => s + c.weight, 0);
-    if (Math.abs(total - 100) > 0.01) {
-      throw new ValidationError(`Score weights must add up to 100% (they add up to ${Math.round(total * 100) / 100}%)`);
-    }
+    difficultyPoints[difficulty] = n;
   }
-  return { version: previousVersion + 1, components: clean };
+  if (!Object.values(difficultyPoints).some((n) => n > 0)) {
+    throw new ValidationError('At least one difficulty has to be worth some points');
+  }
+  return { version: previousVersion + 1, mode: 'points', difficultyPoints };
 }
 
 function validateReminderPolicy(policy = {}) {
@@ -248,7 +263,7 @@ class PoolService {
       programId: program.id,
       cohortId: data.cohortId || null,
       status: 'draft',
-      scoringPolicy: validateScoringPolicy(data.scoringPolicy || { components: [] }, { previousVersion: 0 }),
+      scoringPolicy: validateScoringPolicy(data.scoringPolicy || {}, { previousVersion: 0 }),
       reminderPolicy: validateReminderPolicy(data.reminderPolicy || {}),
       settings,
       createdById: actor.id,
@@ -277,7 +292,10 @@ class PoolService {
       if (await this.isSelectionConfirmed(poolId)) {
         throw new ValidationError('The scoring policy cannot change after a shortlist has been confirmed');
       }
-      patch.scoringPolicy = validateScoringPolicy(data.scoringPolicy, { previousVersion: pool.scoringPolicy?.version || 0 });
+      patch.scoringPolicy = validateScoringPolicy(data.scoringPolicy, {
+        previousVersion: pool.scoringPolicy?.version || 0,
+        current: pool.scoringPolicy || {},
+      });
     }
     if (data.reminderPolicy !== undefined) patch.reminderPolicy = validateReminderPolicy({ ...pool.reminderPolicy, ...data.reminderPolicy });
     if (data.settings !== undefined) {
@@ -374,6 +392,25 @@ class PoolService {
     return matching.find((w) => !w.cancelledAt) || matching[matching.length - 1] || null;
   }
 
+  /**
+   * This pool's points curve, with any gap filled from the default.
+   *
+   * A pool created before points existed has no curve stored, and a round that
+   * has already handed work out must not start scoring it 0 — so the default
+   * stands in rather than the absence meaning "worth nothing".
+   */
+  difficultyPoints(pool) {
+    return { ...DIFFICULTY_POINTS_DEFAULT, ...(pool?.scoringPolicy?.difficultyPoints || {}) };
+  }
+
+  /** What one piece of work is worth. Its own number, or its difficulty's. */
+  pointsOf(pool, item, difficulty = null) {
+    const own = int(item?.points, { min: 0, max: MAX_WORK_POINTS });
+    if (Number.isInteger(own)) return own;
+    return this.difficultyPoints(pool)[String(difficulty || 'medium').toLowerCase()]
+      ?? DIFFICULTY_POINTS_DEFAULT.medium;
+  }
+
   /** Every member with their bucket and per-work-item status. */
   async dashboard(poolId) {
     const pool = await this.getPool(poolId);
@@ -392,7 +429,19 @@ class PoolService {
         attributes: ['id', 'poolMemberId', 'roadmapTaskId', 'status', 'dueDate', 'submittedAt', 'completedAt', 'updatedAt', 'assignedAt', 'isLate'],
       }),
     ]);
-    const assignments = this.workItems(pool);
+    const workItems = this.workItems(pool);
+    // The templates carry the difficulty a piece of work falls back to for its
+    // points, so every screen reads a number rather than re-deriving the curve.
+    const templates = workItems.length ? await models.RoadmapTask.findAll({
+      where: { id: { [Op.in]: workItems.map((w) => w.roadmapTaskId) } },
+      attributes: ['id', 'difficulty'],
+    }) : [];
+    const difficultyOf = new Map(templates.map((t) => [t.id, t.difficulty]));
+    const assignments = workItems.map((w) => ({
+      ...w,
+      points: this.pointsOf(pool, w, difficultyOf.get(w.roadmapTaskId)),
+      difficulty: difficultyOf.get(w.roadmapTaskId) || null,
+    }));
     // Target clans live in each member's placement JSON; name them in one read.
     const targetIds = [...new Set(members.map((m) => m.placement?.targetClanId).filter(Boolean))];
     const targetClans = targetIds.length
@@ -418,6 +467,8 @@ class PoolService {
         email: m.email,
         name: models.PoolMember.displayName(m),
         userId: m.userId,
+        // Their photo, so a candidate list reads like every other person list.
+        avatarUrl: m.user?.profilePictureUrl || null,
         source: m.details?.source || 'import',
         status: m.status,
         bucket: this.bucketOf(m, mine, { inactivityDays }),
@@ -509,4 +560,7 @@ class PoolService {
 module.exports = new PoolService();
 module.exports.REMINDER_DEFAULTS = REMINDER_DEFAULTS;
 module.exports.SETTINGS_DEFAULTS = SETTINGS_DEFAULTS;
-module.exports.SCORE_SOURCES = SCORE_SOURCES;
+module.exports.DIFFICULTY_POINTS_DEFAULT = DIFFICULTY_POINTS_DEFAULT;
+module.exports.DIFFICULTIES = DIFFICULTIES;
+module.exports.MAX_WORK_POINTS = MAX_WORK_POINTS;
+module.exports.ADJUSTMENT_KEY = ADJUSTMENT_KEY;

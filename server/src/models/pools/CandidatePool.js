@@ -8,14 +8,26 @@
  * operators give its candidates.
  *
  * `workItems` — the qualifying work, one entry per piece:
- *   { id, kind: 'task'|'quiz'|'interview', roadmapTaskId, title, componentKey,
+ *   { id, kind: 'task'|'quiz'|'interview', roadmapTaskId, title, points,
  *     required, dueAt, config, createdById, createdAt, cancelledAt }
  * Each piece has its own task template (`roadmapTaskId`); every member's
  * AssignedTask points at it, which is how a task is traced back to its piece
- * of work and how scoring knows which component it feeds.
+ * of work and how scoring knows what it is worth.
+ *
+ * `points` is decided when the work is added — defaulted from the step's
+ * difficulty through the pool's own curve — so an operator can see what a
+ * round is worth while they build it, instead of discovering it afterwards
+ * from a table of percentages.
  */
 const POOL_STATUSES = ['draft', 'open', 'qualifying', 'reviewing', 'placing', 'closed'];
 const WORK_KINDS = ['task', 'quiz', 'interview'];
+
+// What a piece of work is worth by default, by difficulty. The same shape and
+// the same intent as config/points.js — a small, fixed curve rather than a
+// hand-typed number per piece — but per pool, because one round can weigh a
+// hard project more heavily than another does.
+const { TASK_POINTS_BY_DIFFICULTY } = require('../../config/points');
+const DIFFICULTY_POINTS = { ...TASK_POINTS_BY_DIFFICULTY };
 
 module.exports = (sequelize, DataTypes) => {
   const CandidatePool = sequelize.define('CandidatePool', {
@@ -35,17 +47,21 @@ module.exports = (sequelize, DataTypes) => {
     opensAt: { type: DataTypes.DATE, allowNull: true, field: 'opens_at' },
     closesAt: { type: DataTypes.DATE, allowNull: true, field: 'closes_at' },
     qualificationDueAt: { type: DataTypes.DATE, allowNull: true, field: 'qualification_due_at' },
-    // { version, components: [{ key, label, weight, source, required, max }] }
-    // Validated by poolService.validateScoringPolicy before it is stored.
+    // { version, mode: 'points', difficultyPoints: { easy, medium, hard, expert } }
+    // The curve a new piece of work takes its points from. Validated by
+    // poolService.validateScoringPolicy before it is stored. `components` is
+    // kept on older rows and ignored: scores are points now, not percentages.
     scoringPolicy: {
       type: DataTypes.JSONB, allowNull: false, field: 'scoring_policy',
-      defaultValue: { version: 1, components: [] },
+      defaultValue: { version: 1, mode: 'points', difficultyPoints: DIFFICULTY_POINTS },
     },
     // { enabled, inviteAfterDays, inviteMaxCount, dueSoonHours, inactivityDays, inactivityMaxCount }
     reminderPolicy: { type: DataTypes.JSONB, allowNull: false, defaultValue: {}, field: 'reminder_policy' },
     // { awardPoints, autoAssignOnActivation, waitlistSize, targetClanIds }
     settings: { type: DataTypes.JSONB, allowNull: false, defaultValue: {} },
     workItems: { type: DataTypes.JSONB, allowNull: false, defaultValue: [], field: 'work_items' },
+    // The pool's photo, shown wherever a clan photo is. See migration 142.
+    avatarUrl: { type: DataTypes.TEXT, allowNull: true, field: 'avatar_url' },
     createdById: { type: DataTypes.UUID, allowNull: true, field: 'created_by_id' },
     archivedAt: { type: DataTypes.DATE, allowNull: true, field: 'archived_at' },
   }, {
@@ -59,6 +75,7 @@ module.exports = (sequelize, DataTypes) => {
 
   CandidatePool.STATUSES = POOL_STATUSES;
   CandidatePool.WORK_KINDS = WORK_KINDS;
+  CandidatePool.DIFFICULTY_POINTS = DIFFICULTY_POINTS;
 
   CandidatePool.associate = (models) => {
     CandidatePool.belongsTo(models.Program, { foreignKey: 'program_id', as: 'program' });

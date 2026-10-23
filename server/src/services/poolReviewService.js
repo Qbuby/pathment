@@ -30,7 +30,7 @@ class PoolReviewService {
         include: [
           { model: models.PoolMember, as: 'poolMember', required: true, where: { poolId }, attributes: ['id', 'email', 'details', 'userId'],
             include: [{ model: models.User, as: 'user', attributes: ['id', 'firstName', 'lastName'] }] },
-          { model: models.RoadmapTask, as: 'roadmapTask', attributes: ['id', 'title', 'type'] },
+          { model: models.RoadmapTask, as: 'roadmapTask', attributes: ['id', 'title', 'type', 'difficulty'] },
         ],
       }],
       // task_submissions has no created_at (timestamps: false); submitted_at is its clock.
@@ -53,7 +53,11 @@ class PoolReviewService {
         isLate: t.isLate,
         kind: item?.kind || 'task',
         title: item?.title || t.roadmapTask?.title,
-        componentKey: item?.componentKey || null,
+        // Which piece of the pool's work this is, and what approving it is
+        // worth — so the reviewer sees the stake without a second request.
+        assignmentId: item?.id || null,
+        points: poolService.pointsOf(pool, item, t.roadmapTask?.difficulty),
+        required: item ? item.required !== false : true,
         member: { id: m.id, email: m.email, userId: m.userId, name: models.PoolMember.displayName(m) },
       };
     });
@@ -91,6 +95,9 @@ class PoolReviewService {
         status: task.status,
         kind: assignment?.kind || 'task',
         title: assignment?.title || task.roadmapTask?.title,
+        assignmentId: assignment?.id || null,
+        points: poolService.pointsOf(pool, assignment, task.roadmapTask?.difficulty),
+        required: assignment ? assignment.required !== false : true,
         description: task.roadmapTask?.description,
         deliverable: task.roadmapTask?.deliverable,
         acceptanceCriteria: task.roadmapTask?.acceptanceCriteria || [],

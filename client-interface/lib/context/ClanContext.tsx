@@ -4,7 +4,8 @@ import { createContext, useContext, useState, useEffect, useCallback, useMemo, R
 import { useAuth } from './AuthContext';
 import { qk, useApiQuery, STALE } from '@/lib/query';
 import { clanApi } from '@/lib/services/clan-api';
-import { resolveMentorClan, resolveMenteeClan } from '@/lib/utils/clan-selection';
+import { resolveMentorClan, resolveMenteeClan, poolIdOf, poolScope } from '@/lib/utils/clan-selection';
+import { candidateApi, type CandidatePoolSummary } from '@/lib/services/pool-api';
 import { readClanChoice, writeClanChoice } from '@/lib/services/clan-choice';
 
 // Clan roles that mean "I mentor this clan" (so it belongs in the scope picker).
@@ -12,6 +13,26 @@ const MENTOR_CLAN_ROLES = ['lead_mentor', 'co_mentor', 'core_team'];
 export const ALL_CLANS = 'all';
 
 export interface ClanLite { id: string; name: string; avatarUrl?: string | null; kind?: 'cohort' | 'standing'; frozenAt?: string | null; programId?: string; programName?: string | null; }
+
+/**
+ * A selection pool the signed-in person is a candidate in.
+ *
+ * It belongs in this context, beside their clans, because it is the same
+ * question: which place is the learner workspace about right now? A candidate
+ * with no clan has exactly one answer, and a candidate who was placed into a
+ * clan and is in a second round has two.
+ */
+export interface PoolLite {
+  id: string;
+  name: string;
+  avatarUrl?: string | null;
+  programName?: string | null;
+  status: CandidatePoolSummary['pool']['status'];
+  /** Set once there is an outcome — the round is over for them. */
+  decided: boolean;
+}
+
+export { poolIdOf, poolScope };
 
 /** Cohort clans become historical after formal program close. Standing clans stay writable. */
 export function isHistoricalCohortClan(clan?: Pick<ClanLite, 'kind' | 'frozenAt'> | null): boolean {
@@ -64,15 +85,23 @@ interface ClanContextValue {
   setActiveClanId: (id: string) => void;
   /** Clans the current user is a mentee of. */
   menteeClans: ClanLite[];
-  /** Active mentee workspace clan (never 'all'). Empty string while unknown. */
+  /** Selection pools they are a candidate in. */
+  menteePools: PoolLite[];
+  /**
+   * The learner workspace's scope: a clan id, or `pool:<id>`. Never 'all'.
+   * Empty string while unknown.
+   */
   menteeActiveClanId: string;
   setMenteeActiveClanId: (id: string) => void;
+  /** The chosen pool, when the scope is one. Null in a clan. */
+  activePool: PoolLite | null;
   loading: boolean;
 }
 
 const ClanContext = createContext<ClanContextValue | undefined>(undefined);
 
 const EMPTY_MEMBERSHIPS = { mentor: [] as ClanLite[], mentee: [] as ClanLite[] };
+const EMPTY_POOLS: PoolLite[] = [];
 
 export function ClanProvider({ children }: { children: ReactNode }) {
   const { user, availableRoles } = useAuth();
@@ -96,6 +125,21 @@ export function ClanProvider({ children }: { children: ReactNode }) {
   const userId = user?.id ?? null;
   const isMentor = !!availableRoles?.includes('mentor');
   const isMentee = !!availableRoles?.includes('mentee');
+  // `candidate` is its own capability: somebody can hold it with no clan at
+  // all (they have never been placed) or alongside one (a second round).
+  const isCandidate = !!user?.capabilities?.includes('candidate');
+
+  /**
+   * Whether this account has any clan memberships worth asking about.
+   *
+   * A selection-pool candidate who has never been placed holds neither
+   * `mentor` nor `mentee`, so the memberships query below never runs — and
+   * `loadedMemberships` then stays `undefined` for the whole session. Read as
+   * "we have not been told yet", that leaves their scope permanently
+   * unsettled, so a pool choice is never resolved and the picker shows
+   * nothing. "Nobody to ask" is settled knowledge, not a pending request.
+   */
+  const wantsMemberships = !!userId && (isMentor || isMentee);
 
   const { data: loadedMemberships, loading } = useApiQuery<{ mentor: ClanLite[]; mentee: ClanLite[] }>({
     queryKey: qk.clan.memberships(user?.id || ''),
@@ -121,9 +165,34 @@ export function ClanProvider({ children }: { children: ReactNode }) {
       const activeFirst = (a: ClanLite, b: ClanLite) => Number(!!a.frozenAt) - Number(!!b.frozenAt) || a.name.localeCompare(b.name);
       return { mentor: mentor.sort(activeFirst), mentee: mentee.sort(activeFirst) };
     },
-    enabled: !!user?.id && (isMentor || isMentee),
+    enabled: wantsMemberships,
     staleTime: STALE.long,
   });
+
+  /**
+   * The pools they are a candidate in.
+   *
+   * A separate query from the memberships because it is a separate capability
+   * — asking for it on every mentee's behalf would be a request per page load
+   * that answers "none" for everybody who is simply in a clan.
+   */
+  const { data: loadedPools } = useApiQuery<PoolLite[]>({
+    queryKey: qk.candidate.pools,
+    queryFn: async () => {
+      const rows = await candidateApi.pools();
+      return rows.map((r) => ({
+        id: r.pool.id,
+        name: r.pool.name,
+        avatarUrl: r.pool.avatarUrl ?? null,
+        programName: r.pool.program?.name ?? null,
+        status: r.pool.status,
+        decided: Boolean(r.outcome),
+      }));
+    },
+    enabled: !!user?.id && isCandidate,
+    staleTime: STALE.long,
+  });
+  const menteePools = loadedPools ?? EMPTY_POOLS;
 
   /**
    * Has the server actually told us which clans this person is in?
@@ -135,7 +204,7 @@ export function ClanProvider({ children }: { children: ReactNode }) {
    * replace it with "All clans", which the persist effect below then wrote to
    * storage. That is what erased the selection on every sign-in.
    */
-  const clansKnown = loadedMemberships !== undefined;
+  const clansKnown = loadedMemberships !== undefined || (!!user && !wantsMemberships);
   const data = loadedMemberships ?? EMPTY_MEMBERSHIPS;
   const clans = data.mentor;
   const menteeClans = data.mentee;
@@ -177,10 +246,18 @@ export function ClanProvider({ children }: { children: ReactNode }) {
     () => resolveMentorClan(mentorChoice, clans, !clansKnown),
     [mentorChoice, clans, clansKnown],
   );
+  const poolIds = useMemo(() => menteePools.map((p) => p.id), [menteePools]);
   const menteeActiveClanId = useMemo(
-    () => resolveMenteeClan(menteeChoice, menteeClans, !clansKnown),
-    [menteeChoice, menteeClans, clansKnown],
+    // A candidate's pools are not loaded yet while `isCandidate` is unknown,
+    // so "unsettled" covers them too — otherwise a stored pool choice would be
+    // discarded on the first render and replaced with a clan.
+    () => resolveMenteeClan(menteeChoice, menteeClans, !clansKnown || (isCandidate && loadedPools === undefined), poolIds),
+    [menteeChoice, menteeClans, clansKnown, isCandidate, loadedPools, poolIds],
   );
+  const activePool = useMemo(() => {
+    const id = poolIdOf(menteeActiveClanId);
+    return id ? menteePools.find((p) => p.id === id) ?? null : null;
+  }, [menteeActiveClanId, menteePools]);
 
   /**
    * Keep storage agreeing with the picker.
@@ -218,7 +295,7 @@ export function ClanProvider({ children }: { children: ReactNode }) {
   return (
     <ClanContext.Provider value={{
       clans, activeClanId, setActiveClanId,
-      menteeClans, menteeActiveClanId, setMenteeActiveClanId,
+      menteeClans, menteePools, menteeActiveClanId, setMenteeActiveClanId, activePool,
       loading,
     }}>
       {children}
@@ -232,7 +309,8 @@ export function useClan(): ClanContextValue {
   if (!ctx) {
     return {
       clans: [], activeClanId: ALL_CLANS, setActiveClanId: () => {},
-      menteeClans: [], menteeActiveClanId: '', setMenteeActiveClanId: () => {},
+      menteeClans: [], menteePools: [], menteeActiveClanId: '', setMenteeActiveClanId: () => {},
+      activePool: null,
       loading: false,
     };
   }

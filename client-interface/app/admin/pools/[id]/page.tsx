@@ -3,6 +3,7 @@
 import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { workspacePath } from '@/lib/services/workspace-scope';
+import { ClanAvatar } from '@/components/shared/ClanAvatar';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { Archive, ArrowLeft, CalendarClock, ChevronRight, ClipboardList, GraduationCap, History, LayoutGrid, ListOrdered, Lock, Settings2, SlidersHorizontal, Target, UsersRound } from 'lucide-react';
@@ -144,6 +145,8 @@ export default function PoolDetailPage({ params }: { params: Promise<{ id: strin
             <ArrowLeft className="h-3.5 w-3.5" /> Selection pools
           </Link>
           <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2.5">
+            {/* The pool's photo, as a clan carries its own. */}
+            <ClanAvatar name={pool.name} src={pool.avatarUrl} size="md" />
             {/* Sized here on purpose: the global h1 style is a page-hero size. */}
             <h1 className="truncate text-2xl! font-semibold! leading-tight! text-slate-900">{pool.name}</h1>
             <Chip cls={meta.cls}>{meta.label}</Chip>
@@ -271,7 +274,7 @@ export default function PoolDetailPage({ params }: { params: Promise<{ id: strin
       )}
 
       {tab === 'overview' && <OverviewTab data={data} onGo={go} />}
-      {tab === 'candidates' && <CandidatesTab data={data} onChange={reload} canManage={can('pool.members')} canSelect={can('pool.select')} canReview={canReview} initialFilter={candidateFilter} />}
+      {tab === 'candidates' && <CandidatesTab data={data} onChange={reload} canManage={can('pool.members')} canSelect={can('pool.select')} canReview={canReview} canAssign={can('pool.assign')} initialFilter={candidateFilter} />}
 
       {/* Work: what candidates are given. Reviewing it happens in Candidates, person by person. */}
       {tab === 'work' && <WorkTab data={data} onChange={reload} canAssign={can('pool.assign')} />}

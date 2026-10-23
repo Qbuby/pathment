@@ -50,7 +50,8 @@ const FALLBACK = { label: 'Pool updated', group: 'setup' as Group, icon: Setting
 const FIELD_LABEL: Record<string, string> = {
   name: 'name', description: 'description', selectionQuota: 'how many to select', capacity: 'capacity',
   opensAt: 'opening date', closesAt: 'closing date', qualificationDueAt: 'qualification deadline',
-  scoringPolicy: 'scoring', reminderPolicy: 'reminders', settings: 'options', cohortId: 'cohort',
+  scoringPolicy: 'what work is worth', reminderPolicy: 'reminders', settings: 'options', cohortId: 'cohort',
+  avatarUrl: 'photo',
 };
 const DATE_FIELDS = new Set(['opensAt', 'closesAt', 'qualificationDueAt']);
 const OUTCOME_LABEL: Record<string, string> = { selected: 'Selected', waitlisted: 'Waitlisted', not_selected: 'Not selected' };
@@ -62,7 +63,6 @@ const parts = (...items: (string | false | null | undefined)[]) => items.filter(
 
 interface Lookups {
   member: (id?: unknown) => string | null;
-  component: (key?: unknown) => string | null;
   work: (id?: unknown) => string | null;
 }
 
@@ -114,13 +114,25 @@ function describe(e: PoolHistoryEvent, look: Lookups): Described {
         text: parts(
           v.title ? `“${v.title}”` : null,
           v.kind ? KIND_LABEL[String(v.kind)] || String(v.kind) : null,
-          look.component(v.componentKey) ? `counts towards ${look.component(v.componentKey)}` : 'not scored',
+          v.points === undefined || v.points === null ? null : `worth ${v.points} pts`,
+        ),
+      };
+    case 'POOL_WORK_UPDATED':
+      return {
+        text: parts(
+          look.work(v.assignmentId) ? `“${look.work(v.assignmentId)}”` : null,
+          v.points !== undefined && old.points !== undefined && old.points !== null
+            ? `${old.points} → ${v.points} pts`
+            : v.points !== undefined ? `now worth ${v.points} pts` : null,
+          v.required !== undefined && old.required !== undefined ? (v.required ? 'now required' : 'now optional') : null,
         ),
       };
     case 'POOL_WORK_ASSIGNED':
       return {
         text: parts(
           look.work(v.assignmentId) ? `“${look.work(v.assignmentId)}”` : null,
+          // Assigning to one person logs the person, not the piece of work.
+          look.member(v.memberId) ? `to ${look.member(v.memberId)}` : null,
           n('assigned') > 0 ? `given to ${plural(n('assigned'), 'candidate')}` : 'nobody new to give it to',
           n('skipped') > 0 && `${n('skipped')} already had it`,
           n('failed') > 0 && `${n('failed')} failed`,
@@ -135,13 +147,14 @@ function describe(e: PoolHistoryEvent, look: Lookups): Described {
         ),
       };
     case 'POOL_MANUAL_SCORE_SET': {
-      const fmt = (s: unknown) => (s === null || s === undefined ? 'none' : `${s}`);
-      const before = old.score;
+      const fmt = (n: unknown) => (n === null || n === undefined ? 'none' : `${Number(n) > 0 ? '+' : ''}${n} pts`);
+      const before = old.adjustment;
       return {
         text: parts(
           who,
-          look.component(v.componentKey),
-          before === null || before === undefined ? `${fmt(v.score)}/100` : `${fmt(before)} → ${fmt(v.score)}/100`,
+          'adjustment',
+          before === null || before === undefined ? fmt(v.adjustment) : `${fmt(before)} → ${fmt(v.adjustment)}`,
+          quote(v.note),
         ),
       };
     }
@@ -201,11 +214,9 @@ export function HistoryTab({ poolId, data }: { poolId: string; data?: PoolDashbo
 
   const look: Lookups = useMemo(() => {
     const members = new Map((data?.members || []).map((m) => [m.id, m.name || m.email]));
-    const components = new Map((data?.pool.scoringPolicy?.components || []).map((c) => [c.key, c.label]));
     const work = new Map((data?.assignments || []).map((a) => [a.id, a.title]));
     return {
       member: (id) => (typeof id === 'string' ? members.get(id) || null : null),
-      component: (key) => (typeof key === 'string' ? components.get(key) || null : null),
       work: (id) => (typeof id === 'string' ? work.get(id) || null : null),
     };
   }, [data]);

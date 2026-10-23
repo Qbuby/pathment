@@ -1,18 +1,16 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, ClipboardList, Clock, FileQuestion, Hourglass, ListTodo, Loader2,
-  Mail, Mic, PenLine, Repeat, RotateCcw, Save, Scale, Search, Check, UserMinus, UserPlus, UserX, Waypoints,
-} from 'lucide-react';
+import { Check, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, ClipboardList, Clock, FileQuestion, Hourglass, ListTodo, Loader2, Mail, Mic, PenLine, Repeat, RotateCcw, Save, Scale, Search, Send, UserMinus, UserPlus, UserX, Waypoints } from 'lucide-react';
 import { toast } from 'sonner';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { Avatar } from '@/components/shared/Avatar';
 import { MenteeCarousel } from '@/components/mentor/attendance/MenteeCarousel';
-import { useApiQuery } from '@/lib/query';
+import { qk, useApiQuery } from '@/lib/query';
 import { poolApi, type PoolDashboard, type PoolMemberRow, type ReviewQueueItem } from '@/lib/services/pool-api';
 import { ReviewDrawer } from './ReviewTab';
-import { Chip, DECISION, WORK_STATUS, bucketMeta, fmtDate } from './poolUi';
+import { AssignWorkDrawer } from './AssignWorkDrawer';
+import { Chip, DECISION, WORK_SCORE, WORK_STATUS, bucketMeta, fmtDate, pts } from './poolUi';
 
 /**
  * Candidates, reviewed one at a time — the same shape as a mentor's Clan
@@ -108,7 +106,7 @@ function CandidateChip({ member, active, onClick }: { member: PoolMemberRow; act
 const KIND_ICON = { task: ClipboardList, quiz: FileQuestion, interview: Mic } as const;
 const iconBtn = 'rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800';
 
-export function CandidateReview({ data, onChange, canManage, canSelect, canReview, onAdd, onResend, onExit, onDecide, initialFilter = 'all' }: {
+export function CandidateReview({ data, onChange, canManage, canSelect, canReview, canAssign, onAdd, onResend, onExit, onDecide, initialFilter = 'all' }: {
   data: PoolDashboard;
   /** Where to start, e.g. 'review' when arriving from a "needs review" link. */
   initialFilter?: Filter;
@@ -116,20 +114,23 @@ export function CandidateReview({ data, onChange, canManage, canSelect, canRevie
   canManage: boolean;
   canSelect: boolean;
   canReview: boolean;
+  /** Whether this person may hand work out (pool.assign). */
+  canAssign: boolean;
   onAdd: () => void;
   onResend: (m: PoolMemberRow) => void;
   onExit: (m: PoolMemberRow, kind: 'withdraw' | 'disqualify') => void;
   onDecide: (m: PoolMemberRow) => void;
 }) {
   const { pool, members, assignments } = data;
-  const components = pool.scoringPolicy?.components || [];
   const live = assignments.filter((a) => !a.cancelledAt);
   const queue = useApiQuery({ queryKey: ['pools', pool.id, 'review-queue'], queryFn: () => poolApi.reviewQueue(pool.id), enabled: canReview });
-  const scores = useApiQuery({ queryKey: ['pools', pool.id, 'scores'], queryFn: () => poolApi.scores(pool.id) });
+  const scores = useApiQuery({ queryKey: qk.pool.scores(pool.id), queryFn: () => poolApi.scores(pool.id) });
 
   const [query, setQuery] = useState('');
   const [chosenFilter, setFilter] = useState<Filter>(initialFilter);
-  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [adjustDraft, setAdjustDraft] = useState<string | null>(null);
+  const [adjustNote, setAdjustNote] = useState('');
+  const [giveWork, setGiveWork] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [workTab, setWorkTab] = useState<'review' | 'progress' | 'done'>('review');
@@ -162,24 +163,32 @@ export function CandidateReview({ data, onChange, canManage, canSelect, canRevie
 
   const afterReview = async () => { await Promise.all([queue.refetch(), scores.refetch()]); onChange(); };
 
-  // Scores entered by hand (e.g. a panel interview held outside Pathment) —
-  // moved here from the Work tab, so they are given while looking at the person.
-  const manual = components.filter((c) => c.source === 'manual');
+  /**
+   * One hand adjustment, rather than a parallel scoring lane.
+   *
+   * There used to be a `manual` score component per pool, each with its own
+   * weight, which meant a candidate's total could not be read off their work.
+   * A judgement made off the platform — a panel interview, a reference — is
+   * now points added to or taken off the total, on its own line, with a note.
+   */
   const canScoreByHand = canReview && !!member?.userId && !member?.decision;
-  const saveManual = async (componentKey: string) => {
-    if (!member) return;
-    const key = `${member.id}:${componentKey}`;
-    const raw = draft[key];
-    if (raw === undefined) return;
-    setSaving(key);
+  const currentAdjustment = score?.adjustment ?? 0;
+  const saveAdjustment = async () => {
+    if (!member || adjustDraft === null) return;
+    const raw = adjustDraft.trim();
+    setSaving(member.id);
     try {
-      await poolApi.setManualScore(pool.id, member.id, { componentKey, score: raw === '' ? null : Number(raw) });
-      toast.success('Score saved');
-      setDraft((d) => { const n = { ...d }; delete n[key]; return n; });
+      await poolApi.setAdjustment(pool.id, member.id, {
+        score: raw === '' ? null : Number(raw),
+        note: adjustNote.trim() || undefined,
+      });
+      toast.success(raw === '' ? 'Adjustment cleared' : 'Adjustment saved');
+      setAdjustDraft(null);
+      setAdjustNote('');
       await scores.refetch();
       onChange();
     } catch (e) {
-      toast.error(extractApiErrorMessage(e, 'Could not save the score'));
+      toast.error(extractApiErrorMessage(e, 'Could not save the adjustment'));
     } finally {
       setSaving(null);
     }
@@ -279,7 +288,12 @@ export function CandidateReview({ data, onChange, canManage, canSelect, canRevie
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 {[
                   { label: 'Work approved', pct: live.length ? (completed.length / live.length) * 100 : 0, text: `${completed.length}/${live.length}`, cls: 'bg-brand-600' },
-                  { label: 'Live score', pct: score ? score.total : 0, text: score ? `${score.total}/100` : components.length ? '-' : 'No scoring', cls: 'bg-emerald-500' },
+                  {
+                    label: 'Points earned',
+                    pct: score && score.possible ? (score.total / score.possible) * 100 : 0,
+                    text: score ? `${score.total}/${score.possible}` : live.length ? '-' : 'No work yet',
+                    cls: 'bg-emerald-500',
+                  },
                 ].map((bar) => (
                   <div key={bar.label}>
                     <p className="mb-1 text-xs text-slate-500">{bar.label}</p>
@@ -310,6 +324,21 @@ export function CandidateReview({ data, onChange, canManage, canSelect, canRevie
                     )}
                   </button>
                 ))}
+                {/*
+                  * Giving work to ONE candidate, from where their work is.
+                  * The Work tab hands a piece out to everybody; this is the
+                  * other direction — somebody joined late, or owes an extra
+                  * interview, and only they should get it.
+                  */}
+                {canAssign && !member.decision && member.userId && pool.status !== 'closed' && (
+                  <button
+                    type="button"
+                    onClick={() => setGiveWork(true)}
+                    className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:border-brand-300 hover:text-brand-700"
+                  >
+                    <Send className="h-3.5 w-3.5" aria-hidden="true" /> Give work
+                  </button>
+                )}
               </div>
 
               <div className="p-4">
@@ -353,7 +382,7 @@ export function CandidateReview({ data, onChange, canManage, canSelect, canRevie
                     <div className="space-y-1.5">
                       {rows.map(({ a, w }) => {
                         const s = w?.status ? WORK_STATUS[w.status] : null;
-                        const comp = components.find((c) => c.key === a.componentKey);
+                        const worth = a.points;
                         const Icon = KIND_ICON[a.kind];
                         return (
                           <div key={a.id} className="flex items-center gap-3 rounded-xl border border-slate-100 px-3 py-2.5 dark:border-slate-800">
@@ -361,7 +390,7 @@ export function CandidateReview({ data, onChange, canManage, canSelect, canRevie
                             <div className="min-w-0 flex-1">
                               <p className="truncate text-sm text-slate-800">{a.title}</p>
                               <p className="truncate text-[11px] text-slate-500">
-                                {comp ? `${comp.label} · ${comp.weight}%` : 'Not scored'}
+                                Worth {pts(worth)}{a.required ? '' : ' · optional'}
                                 {w?.dueDate && ` · due ${fmtDate(w.dueDate)}`}
                                 {w?.isLate && ' · late'}
                               </p>
@@ -400,58 +429,97 @@ export function CandidateReview({ data, onChange, canManage, canSelect, canRevie
                 <h3 className="flex items-center gap-2 font-semibold text-slate-900"><Scale className="h-4 w-4 text-brand-600" />Score</h3>
                 {score && <span className="text-xs text-slate-500">Rank <span className="font-semibold text-slate-800">#{score.rank}</span> of {scores.data?.rows.length}</span>}
               </div>
-              {!components.length ? (
-                <p className="text-sm text-slate-500">No scoring set up yet. Add it in Settings.</p>
+              {!live.length ? (
+                <p className="text-sm text-slate-500">No work in this pool yet, so there is nothing to score. Add it on the Work tab.</p>
               ) : !score ? (
                 <p className="text-sm text-slate-500">{scores.loading ? 'Loading…' : 'Not scored.'}</p>
               ) : (
                 <>
                   <div className="space-y-2 text-sm">
-                    {score.components.map((c) => (
-                      <div key={c.key} className="flex items-center justify-between gap-3">
-                        <span className="min-w-0 truncate text-slate-600">{c.label} <span className="text-xs text-slate-400">· {c.weight}%</span></span>
-                        <span className={`shrink-0 tabular-nums ${c.status === 'scored' ? 'font-medium text-slate-900' : 'text-xs text-amber-700'}`}>
-                          {c.status === 'scored' ? `${c.score}/100` : c.status === 'pending_review' ? 'To review' : c.status === 'changes_requested' ? 'Resubmitting' : 'Missing'}
+                    {score.components.map((c) => {
+                      const state = WORK_SCORE[c.status];
+                      return (
+                        <div key={c.key} className="flex items-center justify-between gap-3">
+                          <span className="min-w-0 truncate text-slate-600">
+                            {c.label}
+                            <span className="text-xs text-slate-400"> · {c.points} pts{c.required ? '' : ' · optional'}</span>
+                          </span>
+                          <span className={`shrink-0 tabular-nums ${c.status === 'scored' ? 'font-medium text-slate-900' : `text-xs ${state?.cls || 'text-slate-500'}`}`}>
+                            {c.status === 'scored' ? `${c.earned}/${c.points}` : state?.label || c.status}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    {currentAdjustment !== 0 && (
+                      <div className="flex items-center justify-between gap-3 border-t border-dashed border-slate-200 pt-2">
+                        <span className="min-w-0 truncate text-slate-600">
+                          Adjustment
+                          {score.adjustmentNote && <span className="block truncate text-[11px] text-slate-400">&ldquo;{score.adjustmentNote}&rdquo;</span>}
+                        </span>
+                        <span className={`shrink-0 font-medium tabular-nums ${currentAdjustment > 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {currentAdjustment > 0 ? '+' : ''}{currentAdjustment}
                         </span>
                       </div>
-                    ))}
+                    )}
                   </div>
                   <div className="mt-3 flex items-center justify-between border-t border-slate-200 pt-3 text-sm">
                     <span className="text-slate-500">Total</span>
-                    <span className="font-semibold tabular-nums text-slate-900">{score.total}/100</span>
+                    <span className="font-semibold tabular-nums text-slate-900">{score.total} <span className="font-normal text-slate-400">of {score.possible} pts</span></span>
                   </div>
                 </>
               )}
-              {manual.length > 0 && (
+
+              {/* One hand adjustment, for a judgement made off the platform. */}
+              {canReview && member && (
                 <div className="mt-4 space-y-2.5 rounded-xl bg-slate-50 p-3 dark:bg-slate-800/50">
-                  <p className="flex items-center gap-1.5 text-xs font-medium text-slate-600"><PenLine className="h-3.5 w-3.5" />Entered by hand <span className="font-normal text-slate-400">(0 to 100)</span></p>
-                  {manual.map((c) => {
-                    const key = `${member.id}:${c.key}`;
-                    const current = member.manualScores?.[c.key]?.score;
-                    const value = draft[key] ?? (current ?? '');
-                    return (
-                      <div key={c.key} className="flex items-center justify-between gap-2">
-                        <span className="min-w-0 truncate text-sm text-slate-700">{c.label}</span>
-                        {canScoreByHand ? (
-                          <span className="flex shrink-0 items-center gap-1">
-                            <input type="number" min={0} max={100} value={value} aria-label={`${c.label} score`}
-                              onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
-                              onKeyDown={(e) => { if (e.key === 'Enter') saveManual(c.key); }}
-                              className="w-20 rounded-lg border border-slate-300 bg-card px-2.5 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-500" />
-                            {draft[key] !== undefined && (
-                              <button onClick={() => saveManual(c.key)} disabled={saving === key} title="Save score" aria-label="Save score" className="rounded-lg p-1.5 text-brand-600 hover:bg-brand-50">
-                                {saving === key ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                              </button>
-                            )}
-                          </span>
-                        ) : (
-                          <span className="shrink-0 text-sm tabular-nums text-slate-500">{current ?? 'Not entered'}</span>
-                        )}
+                  <p className="flex items-center gap-1.5 text-xs font-medium text-slate-600">
+                    <PenLine className="h-3.5 w-3.5" />Adjustment
+                    <span className="font-normal text-slate-400">· points on top, or off</span>
+                  </p>
+                  {canScoreByHand ? (
+                    adjustDraft === null ? (
+                      <button
+                        type="button"
+                        onClick={() => { setAdjustDraft(currentAdjustment ? String(currentAdjustment) : ''); setAdjustNote(score?.adjustmentNote || ''); }}
+                        className="w-full rounded-lg border border-slate-200 bg-card px-3 py-2 text-left text-sm text-slate-700 hover:border-brand-300 hover:text-brand-700"
+                      >
+                        {currentAdjustment ? `${currentAdjustment > 0 ? '+' : ''}${currentAdjustment} pts — change it` : 'Add an adjustment'}
+                      </button>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            autoFocus
+                            value={adjustDraft}
+                            aria-label="Points adjustment"
+                            placeholder="e.g. 5 or -5"
+                            onChange={(e) => setAdjustDraft(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') void saveAdjustment(); if (e.key === 'Escape') setAdjustDraft(null); }}
+                            className="w-24 rounded-lg border border-slate-300 bg-card px-2.5 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          />
+                          <span className="text-xs text-slate-500">pts</span>
+                        </div>
+                        <input
+                          value={adjustNote}
+                          aria-label="Why"
+                          placeholder="Why — it is shown with the number"
+                          onChange={(e) => setAdjustNote(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') void saveAdjustment(); }}
+                          className="w-full rounded-lg border border-slate-300 bg-card px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                        <div className="flex gap-2">
+                          <button onClick={saveAdjustment} disabled={saving === member.id} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50">
+                            {saving === member.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save
+                          </button>
+                          <button onClick={() => setAdjustDraft(null)} className="rounded-lg px-3 py-1.5 text-xs text-slate-500 hover:text-slate-700">Cancel</button>
+                        </div>
                       </div>
-                    );
-                  })}
-                  {!canScoreByHand && canReview && (
-                    <p className="text-[11px] text-slate-400">{member.decision ? 'A decision is made, so scores are final.' : 'They can be scored once they have joined.'}</p>
+                    )
+                  ) : (
+                    <p className="text-[11px] text-slate-400">
+                      {member.decision ? 'A decision is made, so scores are final.' : 'Can be adjusted once they have joined.'}
+                    </p>
                   )}
                 </div>
               )}
@@ -493,11 +561,19 @@ export function CandidateReview({ data, onChange, canManage, canSelect, canRevie
         </div>
       )}
 
+      {giveWork && member && (
+        <AssignWorkDrawer
+          data={data}
+          member={member}
+          onClose={() => setGiveWork(false)}
+          onDone={async () => { await scores.refetch(); onChange(); }}
+        />
+      )}
+
       {reviewing && (
         <ReviewDrawer
           poolId={pool.id}
           item={reviewing}
-          component={components.find((c) => c.key === reviewing.componentKey)}
           onClose={() => setReviewing(null)}
           onDone={afterReview}
           next={mineQueue.length > 1 && reviewIdx >= 0 ? { onClick: () => setReviewing(mineQueue[reviewIdx + 1]), disabled: reviewIdx >= mineQueue.length - 1, position: `${reviewIdx + 1} of ${mineQueue.length}` } : undefined}

@@ -2,19 +2,21 @@
 
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { AlertTriangle, CheckCircle2, History, Info, ListChecks, ListOrdered, Loader2, Lock, Settings2, Sparkles } from 'lucide-react';
-import { useApiQuery } from '@/lib/query';
+import { AlertTriangle, CheckCircle2, ClipboardList, History, Info, ListChecks, ListOrdered, Loader2, Lock, Sparkles } from 'lucide-react';
+import { qk, useApiQuery } from '@/lib/query';
 import { useConfirm } from '@/lib/context/ConfirmContext';
 import { AvatarWithInitials } from '@/components/admin/ui';
-import { poolApi, type Blocker, type PoolDashboard, type ScoredComponent, type Shortlist } from '@/lib/services/pool-api';
+import { poolApi, type Blocker, type PoolDashboard, type ScoredWork, type Shortlist } from '@/lib/services/pool-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
-import { Chip, DECISION, EmptyState, PanelHeader, Spinner, field, nameParts, panel, primaryBtn } from './poolUi';
+import { Chip, DECISION, EmptyState, PanelHeader, Spinner, field, nameParts, panel, primaryBtn, pts } from './poolUi';
 
-const COMPONENT_STATUS: Record<ScoredComponent['status'], { label: string; cls: string }> = {
+/** Why a piece of work earned less than it is worth, in a cell's worth of words. */
+const WORK_CELL: Record<ScoredWork['status'], { label: string; cls: string }> = {
   scored: { label: '', cls: 'text-slate-900' },
   pending_review: { label: 'awaiting review', cls: 'text-amber-600' },
   changes_requested: { label: 'changes requested', cls: 'text-rose-600' },
   missing: { label: 'not handed in', cls: 'text-slate-400' },
+  not_assigned: { label: 'never given', cls: 'text-slate-400' },
   no_work: { label: 'no work', cls: 'text-slate-400' },
 };
 
@@ -41,11 +43,14 @@ function RankBadge({ rank }: { rank: number }) {
   );
 }
 
-function ComponentCell({ c }: { c: ScoredComponent }) {
-  const s = COMPONENT_STATUS[c.status];
+function WorkCell({ c }: { c: ScoredWork }) {
+  const s = WORK_CELL[c.status];
   return (
     <td className="text-right tabular-nums">
-      <span className={s.cls}>{c.score === null ? '—' : c.score}</span>
+      <span className={s.cls}>
+        {c.status === 'scored' ? c.earned : '—'}
+        {c.status === 'scored' && <span className="text-[10px] text-slate-400">/{c.points}</span>}
+      </span>
       {s.label && <p className="text-[10px] text-slate-400">{s.label}</p>}
     </td>
   );
@@ -97,7 +102,11 @@ function ShortlistView({ poolId, shortlist, canSelect, onDone }: { poolId: strin
           <span className="shrink-0 rounded-xl bg-brand-50 p-2 text-brand-600"><ListChecks className="h-4 w-4" aria-hidden="true" /></span>
           <div>
             <h2 className="text-base text-slate-900">Shortlist v{shortlist.version}</h2>
-            <p className="mt-0.5 text-sm text-muted-foreground">Quota {shortlist.quota} · generated {new Date(shortlist.createdAt).toLocaleString()}</p>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Quota {shortlist.quota}
+              {shortlist.possible ? <> · out of {pts(shortlist.possible)}</> : null}
+              {' · '}generated {new Date(shortlist.createdAt).toLocaleString()}
+            </p>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -137,7 +146,10 @@ function ShortlistView({ poolId, shortlist, canSelect, onDone }: { poolId: strin
                     <AvatarWithInitials {...nameParts(name, e.member?.email)} size="sm" colorClass="bg-brand-100 text-brand-700" />
                     {!e.complete && <p className="mt-1 pl-9 text-xs text-amber-700">Incomplete work</p>}
                   </td>
-                  <td className="text-right font-semibold text-slate-900 tabular-nums">{Number(e.totalScore).toFixed(2)}</td>
+                  <td className="text-right font-semibold text-slate-900 tabular-nums">
+                    {Number(e.totalScore)}
+                    {(e.possible ?? shortlist.possible) ? <span className="text-[11px] font-normal text-slate-400">/{e.possible ?? shortlist.possible}</span> : null}
+                  </td>
                   <td><Chip cls={DECISION[e.proposedOutcome]?.cls || ''}>{DECISION[e.proposedOutcome]?.label}</Chip>{tied && <span className="ml-2 text-xs text-amber-700">tied</span>}</td>
                   <td>
                     {editable ? (
@@ -186,12 +198,11 @@ function ShortlistView({ poolId, shortlist, canSelect, onDone }: { poolId: strin
 
 export function ShortlistTab({ data, onChange, canSelect }: { data: PoolDashboard; onChange: () => void; canSelect: boolean }) {
   const { pool } = data;
-  const components = pool.scoringPolicy?.components || [];
-  const scores = useApiQuery({ queryKey: ['pools', pool.id, 'scores'], queryFn: () => poolApi.scores(pool.id) });
-  const lists = useApiQuery({ queryKey: ['pools', pool.id, 'shortlists'], queryFn: () => poolApi.shortlists(pool.id) });
+  const scores = useApiQuery({ queryKey: qk.pool.scores(pool.id), queryFn: () => poolApi.scores(pool.id) });
+  const lists = useApiQuery({ queryKey: [...qk.pool.detail(pool.id), 'shortlists'], queryFn: () => poolApi.shortlists(pool.id) });
   const current = (lists.data || []).find((s) => s.status !== 'superseded');
   const shortlist = useApiQuery({
-    queryKey: ['pools', pool.id, 'shortlist', current?.id || 'none'],
+    queryKey: [...qk.pool.detail(pool.id), 'shortlist', current?.id || 'none'],
     queryFn: () => poolApi.shortlist(pool.id, current!.id),
     enabled: Boolean(current),
   });
@@ -215,8 +226,22 @@ export function ShortlistTab({ data, onChange, canSelect }: { data: PoolDashboar
     }
   };
 
-  if (!components.length) {
-    return <section className={panel}><EmptyState icon={Settings2} title="No scoring set up yet" text="Set up the score components in Settings first. The live scores and the shortlist are built from them." /></section>;
+  const work = scores.data?.work || [];
+  const possible = scores.data?.possible ?? 0;
+
+  // Nothing to rank on is a different problem from nothing being scored yet,
+  // and it is fixed on a different tab, so it says so rather than showing an
+  // empty table.
+  if (!scores.loading && !work.length) {
+    return (
+      <section className={panel}>
+        <EmptyState
+          icon={ClipboardList}
+          title="No qualifying work yet"
+          text="A score is the points a candidate earned, so there is nothing to rank until this pool has work. Add it on the Work tab."
+        />
+      </section>
+    );
   }
 
   return (
@@ -225,7 +250,9 @@ export function ShortlistTab({ data, onChange, canSelect }: { data: PoolDashboar
         <PanelHeader
           icon={ListOrdered}
           title="Live scores"
-          subtitle="Ranked from reviewed work only. Each column is one score component."
+          subtitle={possible
+            ? `Ranked on points earned from reviewed work. A perfect round is worth ${pts(possible)}.`
+            : 'Ranked on points earned from reviewed work.'}
           actions={<>
             {canSelect && !confirmed && pool.status !== 'closed' && (
               <button onClick={generate} disabled={generating} className={primaryBtn}>
@@ -236,9 +263,10 @@ export function ShortlistTab({ data, onChange, canSelect }: { data: PoolDashboar
           </>}
         />
         <div className="flex flex-wrap gap-2 px-5 pb-4 sm:px-6">
-          {components.map((c) => (
-            <span key={c.key} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/60 px-3 py-1 text-xs text-slate-700">
-              {c.label} <span className="font-semibold text-brand-700">{c.weight}%</span>
+          {work.map((w) => (
+            <span key={w.key} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/60 px-3 py-1 text-xs text-slate-700">
+              {w.label}
+              {!w.required && <span className="text-slate-400">optional</span>}
             </span>
           ))}
         </div>
@@ -252,7 +280,8 @@ export function ShortlistTab({ data, onChange, canSelect }: { data: PoolDashboar
                   <tr>
                     <th>#</th>
                     <th>Candidate</th>
-                    {components.map((c) => <th key={c.key} className="text-right">{c.label}<span className="block text-[11px] font-normal">{c.weight}%</span></th>)}
+                    {work.map((w) => <th key={w.key} className="text-right">{w.label}</th>)}
+                    <th className="text-right">Adjust.</th>
                     <th className="text-right">Total</th>
                     <th>Would be</th>
                   </tr>
@@ -262,12 +291,19 @@ export function ShortlistTab({ data, onChange, canSelect }: { data: PoolDashboar
                     <tr key={r.memberId}>
                       <td><RankBadge rank={r.rank} /></td>
                       <td><AvatarWithInitials {...nameParts(r.name, r.email)} size="sm" colorClass="bg-brand-100 text-brand-700" /></td>
-                      {r.components.map((c) => <ComponentCell key={c.key} c={c} />)}
-                      <td className="text-right font-semibold text-slate-900 tabular-nums">{r.total.toFixed(2)}</td>
+                      {r.components.map((c) => <WorkCell key={c.key} c={c} />)}
+                      <td className="text-right tabular-nums">
+                        {r.adjustment
+                          ? <span title={r.adjustmentNote || undefined} className={r.adjustment > 0 ? 'text-emerald-700' : 'text-rose-700'}>{r.adjustment > 0 ? '+' : ''}{r.adjustment}</span>
+                          : <span className="text-slate-300">—</span>}
+                      </td>
+                      <td className="text-right font-semibold text-slate-900 tabular-nums">
+                        {r.total} <span className="text-[11px] font-normal text-slate-400">/{r.possible}</span>
+                      </td>
                       <td>{r.proposedOutcome ? <Chip cls={DECISION[r.proposedOutcome]?.cls || ''}>{DECISION[r.proposedOutcome]?.label}</Chip> : <span className="text-slate-400">—</span>}</td>
                     </tr>
                   ))}
-                  {!scores.data.rows.length && <tr><td colSpan={components.length + 4} className="text-center text-muted-foreground">No candidates to score yet.</td></tr>}
+                  {!scores.data.rows.length && <tr><td colSpan={work.length + 5} className="text-center text-muted-foreground">No candidates to score yet.</td></tr>}
                 </tbody>
               </table>
             </div>

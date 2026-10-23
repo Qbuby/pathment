@@ -14,8 +14,9 @@
  * Small JSON fields keep the row to what the spec names plus what the flow
  * cannot do without:
  *   details       { firstName, lastName, source, activatedAt }
- *   manualScores  { [componentKey]: { score, note, byId, at } } — scores entered
- *                 by hand for `manual` components (an outside interview)
+ *   manualScores  { adjustment: { score, note, byId, at } } — the one number a
+ *                 person types: points added to or taken off the points they
+ *                 earned, for a judgement made away from the platform
  *   placement     { status: 'pending'|'failed', targetClanId, error, attempts }
  *   reminders     { [reminderKey]: sentAtIso } — each reminder sent, claimed
  *                 atomically so none goes out twice

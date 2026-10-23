@@ -152,7 +152,7 @@ class PoolReminderService {
       await this._notify(member, {
         title: `Still with us? ${pool.name}`,
         message: 'You have qualifying work waiting. Pick it up when you can — the deadline still applies.',
-        actionUrl: '/candidate',
+        actionUrl: '/mentee/dashboard',
       });
       sent += 1;
     }

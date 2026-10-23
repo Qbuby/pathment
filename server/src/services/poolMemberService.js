@@ -23,6 +23,7 @@ const { inviteLink } = require('../utils/links');
 const { NOTIFICATION_EVENTS } = require('../config/notificationMatrix');
 const { PERMISSIONS: P } = require('../config/permissions');
 const poolService = require('./poolService');
+const { ADJUSTMENT_KEY, MAX_WORK_POINTS } = poolService;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const INVITE_DEFAULT_DAYS = 14;
@@ -344,7 +345,7 @@ class PoolMemberService {
           message: decision === 'withdrawn'
             ? 'Your place in this selection round has been withdrawn. Your remaining work is no longer due.'
             : 'You are no longer part of this selection round. Your remaining work is no longer due.',
-          actionUrl: '/candidate',
+          actionUrl: '/mentee/dashboard',
           actionLabel: 'Open',
           relatedEntityType: 'pool_member_exit',
           relatedEntityId: member.id,
@@ -359,26 +360,47 @@ class PoolMemberService {
    * A score a reviewer enters by hand for a `manual` component — typically an
    * interview held outside Pathment. 0–100, with an optional note.
    */
-  async setManualScore(poolId, memberId, { componentKey, score, note }, actor) {
+  /**
+   * A hand adjustment to one candidate's points.
+   *
+   * There used to be a whole parallel scoring lane for this: a component with
+   * `source: 'manual'`, carrying a weight, that an operator typed a percentage
+   * into. That meant two ways to be worth something, and a candidate's total
+   * could not be read off their work.
+   *
+   * Now there is one number per candidate, added to the points they earned and
+   * always shown on its own line. It may be negative — a panel that wants to
+   * mark somebody down for something that happened off the platform should be
+   * able to, visibly and with a note, rather than by quietly re-rating work.
+   */
+  async setManualScore(poolId, memberId, { score, note } = {}, actor) {
     const pool = await poolService.getPool(poolId);
-    const component = (pool.scoringPolicy?.components || []).find((c) => c.key === componentKey);
-    if (!component) throw new ValidationError('That score component is not part of this pool\'s scoring');
-    if (component.source !== 'manual') throw new ValidationError(`"${component.label}" is scored from the work itself, not by hand`);
+    const clearing = score === null || score === undefined || score === '';
     const value = Number(score);
-    if (score === null || score === '') {
-      // Clearing a score is allowed until a decision is made.
-    } else if (!Number.isFinite(value) || value < 0 || value > 100) {
-      throw new ValidationError('A score must be between 0 and 100');
+    const limit = MAX_WORK_POINTS;
+    if (!clearing && (!Number.isFinite(value) || Math.abs(value) > limit)) {
+      throw new ValidationError(`An adjustment must be a number between -${limit} and ${limit} points`);
     }
     const member = await this._member(poolId, memberId);
     if (member.decision) throw new ValidationError('A decision has been made for this candidate — their scores are final');
     if (member.userId && member.userId === actor.id) throw new ValidationError('You cannot score yourself');
     const scores = { ...(member.manualScores || {}) };
-    const before = scores[componentKey] || null;
-    if (score === null || score === '') delete scores[componentKey];
-    else scores[componentKey] = { score: Math.round(value * 100) / 100, note: note ? String(note).slice(0, 2000) : null, byId: actor.id, at: new Date().toISOString() };
+    const before = scores[ADJUSTMENT_KEY] || null;
+    if (clearing) delete scores[ADJUSTMENT_KEY];
+    else {
+      scores[ADJUSTMENT_KEY] = {
+        score: Math.round(value * 100) / 100,
+        note: note ? String(note).slice(0, 2000) : null,
+        byId: actor.id,
+        at: new Date().toISOString(),
+      };
+    }
     await member.update({ manualScores: scores });
-    await poolService.audit(pool.id, actor.id, 'POOL_MANUAL_SCORE_SET', { memberId: member.id, componentKey, score: scores[componentKey]?.score ?? null }, { score: before?.score ?? null });
+    await poolService.audit(
+      pool.id, actor.id, 'POOL_MANUAL_SCORE_SET',
+      { memberId: member.id, adjustment: scores[ADJUSTMENT_KEY]?.score ?? null, note: scores[ADJUSTMENT_KEY]?.note ?? null },
+      { adjustment: before?.score ?? null },
+    );
     return member;
   }
 

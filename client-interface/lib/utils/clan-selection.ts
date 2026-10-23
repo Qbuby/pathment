@@ -86,16 +86,48 @@ export function resolveMentorClan(
 }
 
 /**
- * The mentee's effective clan. Same rule minus "all" — a mentee is always in
- * exactly one clan at a time, and a merged view would mean nothing to them.
+ * A selection pool in the learner's scope picker.
+ *
+ * A pool is not a clan — there is no enrollment, no mentor, no roadmap — but
+ * it is a place somebody belongs to and works in for weeks, and it sits in the
+ * same picker for the same reason: it is the thing the whole workspace is
+ * currently about. The id is prefixed so one stored string can hold either.
+ */
+export const POOL_SCOPE_PREFIX = 'pool:';
+
+/** `pool:<id>` → `<id>`, or null when this is a clan. */
+export function poolIdOf(scope: string | null | undefined): string | null {
+  return scope && scope.startsWith(POOL_SCOPE_PREFIX) ? scope.slice(POOL_SCOPE_PREFIX.length) : null;
+}
+
+/** `<id>` → `pool:<id>`, the value the picker stores. */
+export function poolScope(poolId: string): string {
+  return `${POOL_SCOPE_PREFIX}${poolId}`;
+}
+
+/**
+ * The learner's effective scope: a clan, or a selection pool.
+ *
+ * Same rule as the mentor's minus "all" — a learner is in one place at a time,
+ * and a merged view would mean nothing to them. A clan wins the default
+ * because somebody placed in a clan has graduated out of the round; a pool is
+ * where the only people with no clan at all are.
  */
 export function resolveMenteeClan(
   choice: string | null,
   clans: SelectableClan[],
   unsettled: boolean,
+  poolIds: string[] = [],
 ): string {
   if (choice === null) return '';
-  if (choice && clans.some((c) => c.id === choice)) return choice;
-  if (unsettled) return choice;
-  return defaultClanOf(clans) ?? '';
+  const chosenPool = poolIdOf(choice);
+  if (chosenPool) {
+    if (poolIds.includes(chosenPool)) return choice;
+    if (unsettled) return choice;
+  } else if (choice && clans.some((c) => c.id === choice)) {
+    return choice;
+  } else if (unsettled) {
+    return choice;
+  }
+  return defaultClanOf(clans) ?? (poolIds.length ? poolScope(poolIds[0]) : '');
 }

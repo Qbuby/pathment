@@ -24,12 +24,15 @@ export function OverviewTab({ data, onGo }: { data: PoolDashboard; onGo: (tab: s
   const pendingPlacement = members.filter((m) => m.decision === 'selected' && m.placementStatus !== 'placed').length;
   const selected = members.filter((m) => m.decision === 'selected').length;
   const placed = members.filter((m) => m.placementStatus === 'placed').length;
-  const components = pool.scoringPolicy?.components || [];
-  const unfed = components.filter((c) => c.source !== 'manual' && !assignments.some((a) => a.componentKey === c.key && !a.cancelledAt));
+  const live_work = assignments.filter((a) => !a.cancelledAt);
+  // Work worth nothing cannot separate anybody, which is the one thing a
+  // selection round has to do. Worth saying before the shortlist is generated.
+  const worthless = live_work.filter((a) => !a.points).length;
 
   const attention = [
-    !components.length && { text: 'No scoring set up yet — the shortlist cannot be generated', tab: 'settings' },
-    unfed.length > 0 && { text: `${unfed.map((c) => c.label).join(', ')}: no work feeds this score component`, tab: 'work' },
+    !live_work.length && { text: 'No qualifying work yet — a score is the points earned, so there is nothing to rank on', tab: 'work' },
+    live_work.length > 0 && worthless === live_work.length && { text: 'Every piece of work is worth 0 points, so nobody can be ranked', tab: 'work' },
+    live_work.length > 0 && worthless > 0 && worthless < live_work.length && { text: `${worthless} piece${worthless === 1 ? ' of work is' : 's of work are'} worth 0 points`, tab: 'work' },
     needsReview > 0 && { text: `${needsReview} piece${needsReview === 1 ? ' of work is' : 's of work are'} waiting for a review`, tab: 'review' },
     expiredInvites > 0 && { text: `${expiredInvites} invitation${expiredInvites === 1 ? ' has' : 's have'} expired — resend them`, tab: 'candidates' },
     stalled > 0 && { text: `${stalled} candidate${stalled === 1 ? ' has' : 's have'} had no activity${inactivityDays ? ` in ${inactivityDays} days` : ' lately'}`, tab: 'candidates' },
@@ -44,7 +47,7 @@ export function OverviewTab({ data, onGo }: { data: PoolDashboard; onGo: (tab: s
     { label: 'Opens', value: fmtDate(pool.opensAt) },
     { label: 'Closes', value: fmtDate(pool.closesAt) },
     { label: 'Qualification deadline', value: fmtDate(pool.qualificationDueAt) },
-    { label: 'Pieces of work', value: assignments.filter((a) => !a.cancelledAt).length },
+    { label: 'Pieces of work', value: <>{live_work.length}{live_work.length ? muted(`${live_work.reduce((sum, a) => sum + a.points, 0)} pts in total`) : null}</> },
     { label: 'Invite pending', value: <>{invitePending}{expiredInvites ? muted(`${expiredInvites} expired`) : muted('no account yet')}</> },
     { label: 'Stalled', value: <>{stalled}{muted(inactivityDays ? `no activity in ${inactivityDays} days` : 'no recent activity')}</> },
     { label: 'Changes requested', value: <>{changesRequested}{muted('waiting to resubmit')}</> },

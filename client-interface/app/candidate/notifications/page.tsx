@@ -1,7 +1,5 @@
-import NotificationsPage from '@/components/shared/notifications/NotificationsPage';
+import { CandidateRedirect } from '../CandidateRedirect';
 
-// Candidate notifications are addressed to 'any' audience (a candidate is in
-// none of the three portals), so the mentee-scoped list shows them.
 export default function CandidateNotificationsPage() {
-  return <NotificationsPage role="mentee" />;
+  return <CandidateRedirect to="/mentee/notifications" />;
 }

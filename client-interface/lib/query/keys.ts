@@ -93,6 +93,24 @@ export const qk = {
     planStrip: (menteeId: string, clanId?: string | null) => ['mentee', 'plan-strip', menteeId, clanId ?? ''] as const,
   },
 
+  /** Selection pools: the pre-clan qualifying round. */
+  pool: {
+    all: ['pools'] as const,
+    list: (status?: string | null, programId?: string | null) => ['pools', 'list', status ?? '', programId ?? ''] as const,
+    detail: (id: string) => ['pools', id] as const,
+    options: (programId?: string | null) => ['pools', 'options', programId ?? ''] as const,
+    assignments: (id: string) => ['pools', id, 'assignments'] as const,
+    scores: (id: string) => ['pools', id, 'scores'] as const,
+  },
+
+  /** What a candidate sees of their own selection round. */
+  candidate: {
+    all: ['candidate'] as const,
+    pools: ['candidate', 'pools'] as const,
+    tasks: ['candidate', 'tasks'] as const,
+    task: (taskId: string) => ['candidate', 'tasks', taskId] as const,
+  },
+
   /** The handover pool: mentees offered out of one clan and taken into another. */
   handoverPool: {
     all: ['handover-pool'] as const,

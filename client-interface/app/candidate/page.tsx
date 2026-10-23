@@ -1,5 +1,5 @@
-import { redirect } from 'next/navigation';
+import { CandidateRedirect } from './CandidateRedirect';
 
 export default function CandidateIndexPage() {
-  redirect('/candidate/dashboard');
+  return <CandidateRedirect to="/mentee/dashboard" />;
 }

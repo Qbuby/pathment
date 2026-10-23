@@ -2,16 +2,23 @@
  * poolScoringService — explainable scores, the proposed shortlist, and the
  * human decision.
  *
- * Every score is the sum of visible parts. A component takes its number from
- * reviewed work only:
- *   quiz / task_review / interview_review   the review rating of the work that
- *                                            feeds it (0–5, shown as 0–100).
- *                                            Quiz and interview reviews already
- *                                            store their percentage this way.
- *   manual                                   a score a reviewer entered by hand
- * Several pieces of work feeding one component are averaged. Work that was
- * never handed in scores 0 and is flagged; work handed in but not yet reviewed
- * stops the shortlist being confirmed — nobody is ranked on unreviewed work.
+ * A score is points earned, and every point is traceable to one piece of work.
+ * Each piece is worth a number decided when it was added to the pool (from its
+ * difficulty, through the pool's curve), and a candidate earns:
+ *
+ *   points × rating ÷ 5     for work whose latest review approved it
+ *   points                  when it was approved without a rating
+ *   0                       for anything else — not handed in, or not approved
+ *
+ * Quiz and interview reviews already store their result on the same 0–5
+ * rating, so one rule covers every kind of work. A hand adjustment
+ * (`manualScores.adjustment`) is added on top for a judgement made off the
+ * platform; it is the only number a person types, and it is always shown
+ * separately.
+ *
+ * There are no weights and no percentages. The total is the sum of its parts
+ * because the parts ARE points. Work handed in but not yet reviewed stops the
+ * shortlist being confirmed — nobody is ranked on unreviewed work.
  *
  * The system PROPOSES; a person with pool.select DECIDES. A tie at the cutoff
  * is never broken silently, and any change to the proposal needs a reason.
@@ -33,6 +40,7 @@ const { NotFoundError, ValidationError } = require('../utils/errors/errorTypes')
 const { NOTIFICATION_EVENTS } = require('../config/notificationMatrix');
 const { PERMISSIONS: P } = require('../config/permissions');
 const poolService = require('./poolService');
+const { ADJUSTMENT_KEY } = poolService;
 const poolWorkEvents = require('./poolWorkEvents');
 
 const OUTCOMES = ['selected', 'waitlisted', 'not_selected'];
@@ -40,9 +48,9 @@ const GENERATED = 'POOL_SHORTLIST_GENERATED';
 const CONFIRMED = 'POOL_SELECTION_CONFIRMED';
 const round2 = (n) => Math.round(n * 100) / 100;
 
-// Blockers that only a change to the work can clear (review it, fix the policy)
+// Blockers that only a change to the work can clear (add some, review it)
 // versus one a person clears by deciding (a tie at the cutoff).
-const HARD_BLOCKERS = ['policy_empty', 'component_without_work', 'reviews_outstanding'];
+const HARD_BLOCKERS = ['no_work', 'reviews_outstanding'];
 
 class PoolScoringService {
   /**
@@ -51,13 +59,18 @@ class PoolScoringService {
    */
   async compute(poolId) {
     const pool = await poolService.getPool(poolId);
-    const policy = pool.scoringPolicy || { components: [] };
-    const components = policy.components || [];
     const workItems = poolService.workItems(pool).filter((w) => !w.cancelledAt);
     const members = await models.PoolMember.findAll({
       where: { poolId, [Op.or]: [{ decision: null }, { decision: { [Op.notIn]: ['withdrawn', 'disqualified'] } }] },
       include: [{ model: models.User, as: 'user', attributes: ['id', 'firstName', 'lastName'] }],
     });
+    // The templates carry the difficulty a piece of work falls back to when it
+    // has no points of its own (work added before points existed).
+    const templates = workItems.length ? await models.RoadmapTask.findAll({
+      where: { id: { [Op.in]: workItems.map((w) => w.roadmapTaskId) } },
+      attributes: ['id', 'difficulty'],
+    }) : [];
+    const difficultyOf = new Map(templates.map((t) => [t.id, t.difficulty]));
     const tasks = members.length ? await models.AssignedTask.scope('withPoolWork').findAll({
       where: { poolMemberId: { [Op.in]: members.map((m) => m.id) }, status: { [Op.ne]: 'cancelled' } },
       attributes: ['id', 'poolMemberId', 'roadmapTaskId', 'status'],
@@ -73,44 +86,56 @@ class PoolScoringService {
     }
     const taskFor = new Map(tasks.map((t) => [`${t.poolMemberId}:${t.roadmapTaskId}`, t]));
 
+    // What a perfect round is worth. Shown next to every total, so a score is
+    // readable without knowing how the pool was set up.
+    const possible = workItems.reduce(
+      (sum, w) => sum + poolService.pointsOf(pool, w, difficultyOf.get(w.roadmapTaskId)),
+      0,
+    );
+
     const rows = members.map((member) => {
       let total = 0;
       let complete = true;
-      const parts = components.map((c) => {
-        let score = null;
+      const parts = workItems.map((w) => {
+        const worth = poolService.pointsOf(pool, w, difficultyOf.get(w.roadmapTaskId));
+        const t = taskFor.get(`${member.id}:${w.roadmapTaskId}`);
+        let earned = 0;
         let status = 'missing';
-        if (c.source === 'manual') {
-          const entry = member.manualScores?.[c.key];
-          if (entry && Number.isFinite(Number(entry.score))) { score = Number(entry.score); status = 'scored'; }
-        } else {
-          const feeding = workItems.filter((w) => w.componentKey === c.key);
-          const scores = [];
-          const states = [];
-          for (const w of feeding) {
-            const t = taskFor.get(`${member.id}:${w.roadmapTaskId}`);
-            if (!t) { states.push('missing'); continue; }
-            if (t.status === 'completed') {
-              const f = latestApproved.get(t.id);
-              const rating = f ? Number(f.rating) : NaN;
-              if (Number.isFinite(rating)) { scores.push(Math.max(0, Math.min(100, rating * 20))); states.push('scored'); }
-              else states.push('pending_review');
-            } else if (t.status === 'submitted') states.push('pending_review');
-            else if (t.status === 'revision_needed') states.push('changes_requested');
-            else states.push('missing');
-          }
-          if (!feeding.length) status = 'no_work';
-          else if (states.includes('pending_review')) status = 'pending_review';
-          else if (states.every((s) => s === 'scored')) status = 'scored';
-          else if (states.includes('changes_requested')) status = 'changes_requested';
-          else status = 'missing';
-          // Only what is final counts; unfinished pieces count as 0 (flagged).
-          if (feeding.length && scores.length) score = scores.reduce((s, v) => s + v, 0) / feeding.length;
-        }
-        const weighted = score === null ? 0 : (score * c.weight) / 100;
-        total += weighted;
-        if (c.required && status !== 'scored') complete = false;
-        return { key: c.key, label: c.label, weight: c.weight, source: c.source, required: c.required, max: 100, score: score === null ? null : round2(score), weighted: round2(weighted), status };
+        if (!t) status = 'not_assigned';
+        else if (t.status === 'completed') {
+          const f = latestApproved.get(t.id);
+          const rating = f ? Number(f.rating) : NaN;
+          if (f && !Number.isFinite(rating)) {
+            // Approved with no rating: the reviewer said yes, so the work is
+            // worth what it is worth. Scoring it 0 would punish the candidate
+            // for how the review was filled in.
+            earned = worth;
+            status = 'scored';
+          } else if (Number.isFinite(rating)) {
+            earned = (worth * Math.max(0, Math.min(5, rating))) / 5;
+            status = 'scored';
+          } else status = 'pending_review';
+        } else if (t.status === 'submitted') status = 'pending_review';
+        else if (t.status === 'revision_needed') status = 'changes_requested';
+        else status = 'missing';
+        total += earned;
+        if (w.required !== false && status !== 'scored') complete = false;
+        return {
+          key: w.id,
+          label: w.title,
+          kind: w.kind,
+          required: w.required !== false,
+          points: worth,
+          earned: round2(earned),
+          status,
+        };
       });
+
+      // A judgement made off the platform. Added, never hidden inside a part.
+      const adjustmentEntry = member.manualScores?.[ADJUSTMENT_KEY];
+      const adjustment = Number.isFinite(Number(adjustmentEntry?.score)) ? Number(adjustmentEntry.score) : 0;
+      total += adjustment;
+
       return {
         memberId: member.id,
         name: models.PoolMember.displayName(member),
@@ -119,6 +144,9 @@ class PoolScoringService {
         decision: member.decision,
         createdAt: member.createdAt,
         components: parts,
+        adjustment: round2(adjustment),
+        adjustmentNote: adjustmentEntry?.note || null,
+        possible,
         total: round2(total),
         complete,
       };
@@ -129,7 +157,7 @@ class PoolScoringService {
       || a.memberId.localeCompare(b.memberId));
     // Competition ranking: equal totals share a rank (1, 2, 2, 4).
     rows.forEach((r, i) => { r.rank = i > 0 && r.total === rows[i - 1].total ? rows[i - 1].rank : i + 1; });
-    return { pool, policy, workItems, rows };
+    return { pool, policy: pool.scoringPolicy || {}, workItems, possible, rows };
   }
 
   /** The blockers and warnings for a computed ranking, plus proposed outcomes. */
@@ -140,13 +168,8 @@ class PoolScoringService {
     const blockers = [];
     const warnings = [];
 
-    if (!(policy.components || []).length) {
-      blockers.push({ code: 'policy_empty', message: 'Set up the scoring components before generating a shortlist' });
-    }
-    for (const c of policy.components || []) {
-      if (c.source !== 'manual' && !workItems.some((w) => w.componentKey === c.key)) {
-        blockers.push({ code: 'component_without_work', message: `No work feeds “${c.label}” — link work to it, or change the scoring`, componentKey: c.key });
-      }
+    if (!workItems.length) {
+      blockers.push({ code: 'no_work', message: 'Add some qualifying work before generating a shortlist — there is nothing to rank on' });
     }
     const outstanding = undecided.filter((r) => r.components.some((c) => c.required && c.status === 'pending_review'));
     if (outstanding.length) {
@@ -160,8 +183,16 @@ class PoolScoringService {
     if (missing.length) {
       warnings.push({
         code: 'missing_work',
-        message: `${missing.length} candidate${missing.length === 1 ? ' is' : 's are'} missing required work; it counts as 0`,
+        message: `${missing.length} candidate${missing.length === 1 ? ' is' : 's are'} missing required work; it earns 0 points`,
         memberIds: missing.map((r) => r.memberId),
+      });
+    }
+    const unassigned = undecided.filter((r) => r.components.some((c) => c.required && c.status === 'not_assigned'));
+    if (unassigned.length) {
+      warnings.push({
+        code: 'work_not_given',
+        message: `${unassigned.length} candidate${unassigned.length === 1 ? ' was' : 's were'} never given some required work, so they cannot earn its points`,
+        memberIds: unassigned.map((r) => r.memberId),
       });
     }
     if (pool.qualificationDueAt && new Date(pool.qualificationDueAt) > new Date()) {
@@ -195,24 +226,28 @@ class PoolScoringService {
     const payload = JSON.stringify({
       policy, quota, waitlistSize,
       rows: [...undecided].sort((a, b) => a.memberId.localeCompare(b.memberId))
-        .map((r) => [r.memberId, r.total, r.components.map((c) => [c.key, c.score, c.status])]),
+        .map((r) => [r.memberId, r.total, r.adjustment, r.components.map((c) => [c.key, c.points, c.earned, c.status])]),
     });
     return crypto.createHash('sha256').update(payload).digest('hex');
   }
 
   /** The current ranking, with what would block or warn a shortlist made from it. */
   async _current(poolId) {
-    const { pool, policy, workItems, rows } = await this.compute(poolId);
+    const { pool, policy, workItems, possible, rows } = await this.compute(poolId);
     const proposal = this._propose(pool, policy, workItems, rows);
     const fingerprint = this._fingerprint(policy, proposal.quota, proposal.waitlistSize, proposal.undecided);
-    return { pool, policy, rows, ...proposal, fingerprint };
+    return { pool, policy, workItems, possible, rows, ...proposal, fingerprint };
   }
 
   /** Live scores for the Scores tab — what a shortlist generated now would contain. */
   async liveScores(poolId) {
-    const { policy, rows, blockers, warnings, proposed } = await this._current(poolId);
+    const { policy, workItems, possible, rows, blockers, warnings, proposed } = await this._current(poolId);
     return {
       policy,
+      possible,
+      // The work, in the order the score columns read, so a table can be built
+      // from this one answer without a second request.
+      work: workItems.map((w) => ({ key: w.id, label: w.title, kind: w.kind, required: w.required !== false })),
       blockers,
       warnings,
       rows: rows.map((r) => ({ ...r, proposedOutcome: proposed.get(r.memberId) || null })),
@@ -242,6 +277,7 @@ class PoolScoringService {
           fingerprint: v.fingerprint,
           createdAt: g.createdAt,
           confirmedAt: confirmed ? confirmation.createdAt : null,
+          possible: v.possible ?? null,
           log: g,
         };
       }),
@@ -271,6 +307,8 @@ class PoolScoringService {
     const memberById = new Map(members.map((m) => [m.id, m]));
     return {
       ...meta,
+      possible: log.newValues?.possible ?? null,
+      work: log.newValues?.work || [],
       entries: entries.map((e) => {
         const m = memberById.get(e.poolMemberId);
         const final = finals.get(e.poolMemberId);
@@ -298,7 +336,7 @@ class PoolScoringService {
     if (await poolService.isSelectionConfirmed(poolId)) {
       throw new ValidationError('A shortlist is already confirmed. Change individual decisions instead.');
     }
-    const { pool, policy, rows, quota, waitlistSize, blockers, warnings, proposed, undecided, fingerprint } = await this._current(poolId);
+    const { pool, policy, possible, workItems, rows, quota, waitlistSize, blockers, warnings, proposed, undecided, fingerprint } = await this._current(poolId);
     const { versions } = await this._versions(poolId);
     const latest = versions[versions.length - 1];
     if (latest && latest.fingerprint === fingerprint) {
@@ -310,6 +348,8 @@ class PoolScoringService {
       version,
       fingerprint,
       policy: { ...policy, waitlistSize },
+      possible,
+      work: workItems.map((w) => ({ key: w.id, label: w.title, kind: w.kind, required: w.required !== false })),
       quota,
       blockers: [...blockers.map((b) => ({ ...b, severity: 'block' })), ...warnings.map((w) => ({ ...w, severity: 'warn' }))],
       entries: undecided.map((r) => ({
@@ -318,6 +358,8 @@ class PoolScoringService {
         totalScore: r.total,
         complete: r.complete,
         components: r.components,
+        adjustment: r.adjustment,
+        possible: r.possible,
         proposedOutcome: proposed.get(r.memberId),
       })),
     });
@@ -464,7 +506,7 @@ class PoolScoringService {
           recipients: [{ userId: m.userId }],
           payload: {
             ...words[outcome],
-            actionUrl: '/candidate',
+            actionUrl: '/mentee/dashboard',
             actionLabel: 'See outcome',
             ...entity,
             emailSubject: words[outcome].title,
@@ -500,3 +542,4 @@ class PoolScoringService {
 
 module.exports = new PoolScoringService();
 module.exports.HARD_BLOCKERS = HARD_BLOCKERS;
+

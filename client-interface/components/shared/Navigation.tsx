@@ -28,7 +28,8 @@ import { useNavPreferences } from '@/lib/hooks/shared';
 import { qk, useApiQuery, STALE } from '@/lib/query';
 import { platformApi } from '@/lib/services/platform-api';
 import { usePermissions } from '@/lib/hooks/usePermissions';
-import { useClan, ALL_CLANS, type ClanLite } from '@/lib/context/ClanContext';
+import { useClan, ALL_CLANS, poolScope, type ClanLite, type PoolLite } from '@/lib/context/ClanContext';
+import { useMenteeScope } from '@/lib/hooks/mentee';
 import { useNavBadges } from '@/lib/hooks/shared/useNavBadges';
 import { SelectMenu } from './SelectMenu';
 import { ClanAvatar } from './ClanAvatar';
@@ -57,7 +58,8 @@ export default function Navigation({ role }: NavigationProps) {
   const pathname = logicalPathname(usePathname());
   const router = useRouter();
   const { logout, user, availableRoles, setActiveRole } = useAuth();
-  const { clans, activeClanId, setActiveClanId, menteeClans, menteeActiveClanId, setMenteeActiveClanId } = useClan();
+  const { clans, activeClanId, setActiveClanId, menteeClans, menteePools, menteeActiveClanId, setMenteeActiveClanId } = useClan();
+  const scope = useMenteeScope();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
 
@@ -121,6 +123,42 @@ export default function Navigation({ role }: NavigationProps) {
     }
     return base;
   }, [links, permsLoading, canAccessAdmin, canAccessPools, can, canAny, role]);
+
+  /**
+   * What a candidate in a selection pool actually has.
+   *
+   * In pool scope there is no mentor, no roadmap, no clan and no cohort, so
+   * progress, meetings, roadblocks, the community and the message centre are
+   * not empty screens — they are screens about things that do not exist until
+   * they are placed. Hiding them is the difference between a product that is
+   * clear about where somebody is and one that looks broken.
+   *
+   * It is the SCOPE that decides, not the account: somebody in a clan who is
+   * also in a second round gets the full workspace back by switching scope.
+   */
+  const navLinks = React.useMemo<NavLink[]>(() => {
+    if (role !== 'mentee' || !scope.inPool) return visibleLinks;
+    const KEEP = new Set(['/mentee/dashboard', '/mentee/tasks', '/mentee/settings']);
+    return visibleLinks
+      .map((link) => {
+        if (!link.children) {
+          if (!KEEP.has(link.path)) return null;
+          // The learner groups arrive flattened, so "My learning" is a single
+          // link at /mentee/tasks that still claims the roadmap and library as
+          // its own. In a round there are neither, and it is qualifying work
+          // rather than a curriculum, so it is named for what it is.
+          return link.path === '/mentee/tasks'
+            ? { ...link, label: 'My work', activePaths: ['/mentee/tasks'] }
+            : link;
+        }
+        const kids = link.children.filter((c) => KEEP.has(c.path));
+        if (!kids.length) return null;
+        return link.workspace
+          ? { ...link, preferenceKey: link.path, path: kids[0].path, activePaths: kids.map((c) => c.path), children: undefined }
+          : { ...link, children: kids };
+      })
+      .filter((l): l is NavLink => Boolean(l));
+  }, [visibleLinks, role, scope.inPool]);
 
   // ── Collapsible group state ───────────────────────────────────────────────
   // Initialise with any group that contains the current path already open
@@ -245,6 +283,26 @@ export default function Navigation({ role }: NavigationProps) {
       icon: <ClanAvatar name={c.name} src={c.avatarUrl} size="sm" />,
     }));
 
+  /**
+   * The pools, as picker rows. Decided rounds sit below live ones and say so,
+   * for the same reason a finished programme stays in a mentor's picker: it is
+   * the only way back to what happened there.
+   */
+  const poolOptions = (list: PoolLite[]) => [...list]
+    .sort((a, b) => Number(a.decided) - Number(b.decided) || a.name.localeCompare(b.name))
+    .map((p) => ({
+      value: poolScope(p.id),
+      label: p.name,
+      description: p.decided
+        ? `${p.programName || 'Selection'} · decided`
+        : p.status === 'closed'
+          ? `${p.programName || 'Selection'} · closed`
+          : p.programName || 'Qualifying round',
+      group: 'Selection pool',
+      meta: p.decided || p.status === 'closed' ? 'Read-only' : undefined,
+      icon: <ClanAvatar name={p.name} src={p.avatarUrl} size="sm" />,
+    }));
+
   const renderClanScope = () => {
     if (role === 'mentor' && clans.length >= 2) {
       return (
@@ -260,13 +318,29 @@ export default function Navigation({ role }: NavigationProps) {
         />
       );
     }
-    if (role === 'mentee' && menteeClans.length >= 2) {
+    if (role === 'mentee') {
+      /*
+       * A learner's picker holds their clans AND the selection pools they are
+       * a candidate in, under a heading of its own.
+       *
+       * They are not the same kind of thing, which is exactly why the pool
+       * needs its own group rather than a row that looks like a clan: the
+       * workspace behaves differently in it (no mentor, no roadmap, fewer
+       * tabs), and the heading is what tells somebody that before they click.
+       *
+       * Shown from one row, not two, when that row is a pool: a candidate with
+       * no clan still needs to see where they are, and a pool is not the
+       * obvious default the way a single clan is.
+       */
+      const options = [...clanOptions(menteeClans), ...poolOptions(menteePools)];
+      if (options.length < 2 && !menteePools.length) return null;
+      if (!options.length) return null;
       return (
         <SelectMenu
-          value={menteeActiveClanId || menteeClans[0].id}
+          value={menteeActiveClanId || options[0].value}
           onChange={setMenteeActiveClanId}
-          options={clanOptions(menteeClans)}
-          ariaLabel="Switch clan"
+          options={options}
+          ariaLabel={menteePools.length ? 'Switch clan or selection pool' : 'Switch clan'}
           className="w-full"
         />
       );
@@ -394,7 +468,7 @@ export default function Navigation({ role }: NavigationProps) {
   const renderNavItems = (onNavigate?: () => void) =>
     isEditing
       ? links.map((link) => renderEditRow(link))
-      : visibleLinks.map((link) =>
+      : navLinks.map((link) =>
           link.children
             ? renderGroupLink(link, onNavigate)
             : renderFlatLink(link, onNavigate)

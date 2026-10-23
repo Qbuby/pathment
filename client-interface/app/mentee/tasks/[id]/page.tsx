@@ -1,8 +1,8 @@
 "use client";
 
 import { OpenSourceOrgAvatar } from "@/components/shared/OpenSourceOrgAvatar";
-import { use, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, use, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   CheckCircle2,
   Calendar,
@@ -35,6 +35,7 @@ import { InterviewReviewDrawer } from "@/components/mentor/InterviewReviewDrawer
 import { isMissingDescription } from "@/lib/utils/html";
 import { CourseProgressCard } from "@/components/shared/CourseProgressCard";
 import { useClan, isHistoricalCohortClan } from "@/lib/context/ClanContext";
+import { PoolTaskDetail } from "@/components/mentee/pool/PoolTaskDetail";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -42,6 +43,29 @@ interface PageProps {
 
 export default function TaskDetailsPage({ params }: PageProps) {
   const resolvedParams = use(params);
+  // `useSearchParams` needs a Suspense boundary above it to prerender.
+  return (
+    <Suspense fallback={<div className="flex justify-center py-24"><Loader2 className="h-6 w-6 animate-spin text-brand-600" /></div>}>
+      <TaskDetailsRoute id={resolvedParams.id} />
+    </Suspense>
+  );
+}
+
+function TaskDetailsRoute({ id }: { id: string }) {
+  /*
+   * `?pool=1` says this id is qualifying work, not clan work.
+   *
+   * It is a flag rather than a guess because the two live in the same table
+   * behind a fence: pool work is invisible to every ordinary task query, so
+   * asking the clan endpoint first would 404 before falling through. The
+   * links that get here all carry it (see `poolTaskHref`).
+   */
+  const isPoolWork = useSearchParams().get('pool') === '1';
+  return isPoolWork ? <PoolTaskDetail id={id} /> : <ClanTaskDetail id={id} />;
+}
+
+function ClanTaskDetail({ id }: { id: string }) {
+  const resolvedParams = { id };
   const router = useRouter();
   const { menteeClans, menteeActiveClanId } = useClan();
   const historical = isHistoricalCohortClan(

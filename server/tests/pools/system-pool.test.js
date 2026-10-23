@@ -58,7 +58,8 @@ async function world() {
     programId: program.id,
     name: 'Spring pool',
     selectionQuota: 1,
-    scoringPolicy: { components: [{ key: 'project', label: 'Project', weight: 100, source: 'task_review' }] },
+    // A piece of work is worth its difficulty's points; the curve is the policy.
+    scoringPolicy: { difficultyPoints: { easy: 5, medium: 10, hard: 20, expert: 40 } },
   }, admin);
   await poolService.setStatus(pool.id, 'open', admin);
   return { admin, program, otherProgram, lead, clan, reviewer, outsider, pool };
@@ -77,7 +78,7 @@ async function registerCandidate(email, firstName = 'Cand') {
 async function projectWork(assignTo = 'all') {
   return poolTaskService.createAssignment(ctx.pool.id, {
     kind: 'task', title: 'Build an API', description: 'A small REST API', deliverable: 'Repo link',
-    acceptanceCriteria: ['Has tests'], componentKey: 'project', assignTo,
+    acceptanceCriteria: ['Has tests'], difficulty: 'hard', assignTo,
   }, ctx.admin);
 }
 
@@ -283,15 +284,54 @@ describe('scoring, shortlist and the human decision', () => {
     return { a, b };
   }
 
-  it('explains every score and proposes the quota', async () => {
+  it('explains every score as points earned, and proposes the quota', async () => {
     const { a, b } = await twoReviewed(4, 3);
-    const { rows, blockers } = await poolScoringService.liveScores(ctx.pool.id);
+    const { rows, blockers, possible, work } = await poolScoringService.liveScores(ctx.pool.id);
     expect(blockers).toEqual([]);
+    // One hard piece of work: 20 points on offer.
+    expect(possible).toBe(20);
+    expect(work).toEqual([{ key: expect.any(String), label: 'Build an API', kind: 'task', required: true }]);
     const ra = rows.find((r) => r.memberId === a.member.id);
-    expect(ra.components[0]).toMatchObject({ key: 'project', label: 'Project', weight: 100, score: 80, weighted: 80, status: 'scored' });
-    expect(ra.total).toBe(80);
+    // Four stars of five on work worth 20 → 16 earned.
+    expect(ra.components[0]).toMatchObject({ label: 'Build an API', points: 20, earned: 16, status: 'scored', required: true });
+    expect(ra.total).toBe(16);
+    expect(ra.possible).toBe(20);
     expect(ra.proposedOutcome).toBe('selected');
-    expect(rows.find((r) => r.memberId === b.member.id).proposedOutcome).toBe('waitlisted');
+    const rb = rows.find((r) => r.memberId === b.member.id);
+    expect(rb.total).toBe(12);
+    expect(rb.proposedOutcome).toBe('waitlisted');
+  });
+
+  it('is worth what the work says, not what its difficulty says, once priced', async () => {
+    const a = await registerCandidate('a@test.com', 'Ada');
+    const { assignment } = await projectWork();
+    await poolTaskService.updateAssignment(ctx.pool.id, assignment.id, { points: 7 }, ctx.admin);
+    const t = await taskOf(a.member);
+    await submit(a.user, t);
+    await poolReviewService.review(ctx.pool.id, (await latestSubmission(t)).id, { rating: 5, decision: 'approved', feedbackText: 'ok' }, ctx.reviewer);
+    const { rows, possible } = await poolScoringService.liveScores(ctx.pool.id);
+    expect(possible).toBe(7);
+    expect(rows[0].total).toBe(7);
+  });
+
+  it('adds a hand adjustment to the points earned, and shows it apart', async () => {
+    const { a } = await twoReviewed(4, 3);
+    await poolMemberService.setManualScore(ctx.pool.id, a.member.id, { score: -4, note: 'Missed the panel' }, ctx.admin);
+    const { rows } = await poolScoringService.liveScores(ctx.pool.id);
+    const ra = rows.find((r) => r.memberId === a.member.id);
+    expect(ra.adjustment).toBe(-4);
+    expect(ra.adjustmentNote).toBe('Missed the panel');
+    // 16 earned, 4 off — and now behind the candidate who scored three stars.
+    expect(ra.total).toBe(12);
+    expect(ra.components[0].earned).toBe(16);
+  });
+
+  it('refuses to rank anybody when the pool has no work', async () => {
+    await registerCandidate('a@test.com', 'Ada');
+    const { blockers } = await poolScoringService.liveScores(ctx.pool.id);
+    expect(blockers.map((b) => b.code)).toContain('no_work');
+    const { shortlist } = await poolScoringService.generate(ctx.pool.id, ctx.admin);
+    await expect(poolScoringService.confirm(ctx.pool.id, shortlist.id, {}, ctx.admin)).rejects.toThrow(/qualifying work/i);
   });
 
   it('is idempotent, and a confirmed selection records decisions', async () => {
@@ -304,7 +344,7 @@ describe('scoring, shortlist and the human decision', () => {
     await poolScoringService.confirm(ctx.pool.id, first.shortlist.id, {}, ctx.admin);
     expect((await a.member.reload()).decision).toBe('selected');
     expect(a.member.placement.status).toBe('pending');
-    expect(Number(a.member.totalScore)).toBe(80);
+    expect(Number(a.member.totalScore)).toBe(16);
     expect((await b.member.reload()).decision).toBe('waitlisted');
   });
 
@@ -343,6 +383,108 @@ describe('scoring, shortlist and the human decision', () => {
     const { shortlist } = await poolScoringService.generate(ctx.pool.id, ctx.admin);
     await poolScoringService.confirm(ctx.pool.id, shortlist.id, {}, ctx.admin);
     await expect(submit(a.user, await taskOf(a.member))).rejects.toThrow(/decision/);
+  });
+});
+
+describe('work goes to a pool, or to one person in it', () => {
+  it('adds several roadmap steps in one pass, and skips the ones already there', async () => {
+    const roadmap = await models.Roadmap.create({
+      organizationId: ctx.program.organizationId, programId: ctx.program.id, name: 'Month one', description: 'x',
+    });
+    const step = (title, difficulty, order) => models.RoadmapTask.create({
+      organizationId: ctx.program.organizationId, roadmapId: roadmap.id, title, description: 'x',
+      type: 'project', difficulty, taskOrder: order, deliverable: 'Repo',
+    });
+    const [easy, hard] = await Promise.all([step('Warm up', 'easy', 1), step('The build', 'hard', 2)]);
+
+    const first = await poolTaskService.addRoadmapSteps(ctx.pool.id, {
+      roadmapTaskIds: [easy.id, hard.id],
+    }, ctx.admin);
+    expect(first.summary).toEqual({ added: 2, skipped: 0, failed: 0 });
+    // Each step takes its own difficulty's points off the pool's curve.
+    expect(first.assignments.map((a) => a.points).sort((x, y) => x - y)).toEqual([5, 20]);
+
+    // A second pass over the same roadmap is safe.
+    const again = await poolTaskService.addRoadmapSteps(ctx.pool.id, { roadmapTaskIds: [easy.id, hard.id] }, ctx.admin);
+    expect(again.summary).toEqual({ added: 0, skipped: 2, failed: 0 });
+  });
+
+  it('refuses a step that is assigned as its own kind of work', async () => {
+    const roadmap = await models.Roadmap.create({
+      organizationId: ctx.program.organizationId, programId: ctx.program.id, name: 'Month one', description: 'x',
+    });
+    const quizStep = await models.RoadmapTask.create({
+      organizationId: ctx.program.organizationId, roadmapId: roadmap.id, title: 'A quiz', description: 'x',
+      type: 'quiz', difficulty: 'easy', taskOrder: 1, deliverable: 'n/a',
+    });
+    const out = await poolTaskService.addRoadmapSteps(ctx.pool.id, { roadmapTaskIds: [quizStep.id] }, ctx.admin);
+    expect(out.summary.failed).toBe(1);
+    expect(out.results[0].reason).toMatch(/own kind of work/);
+  });
+
+  it('gives chosen work to ONE candidate, and nobody else', async () => {
+    const a = await registerCandidate('a@test.com', 'Ada');
+    const b = await registerCandidate('b@test.com', 'Bo');
+    // Created but handed to nobody.
+    const { assignment } = await projectWork(null);
+    expect(await taskOf(a.member)).toBeNull();
+
+    const out = await poolTaskService.assignToMember(ctx.pool.id, a.member.id, { assignmentIds: [assignment.id] }, ctx.admin);
+    expect(out.summary).toEqual({ assigned: 1, skipped: 0, failed: 0 });
+    expect(await taskOf(a.member)).not.toBeNull();
+    expect(await taskOf(b.member)).toBeNull();
+
+    // Safe to repeat: nobody holds the same work twice.
+    const twice = await poolTaskService.assignToMember(ctx.pool.id, a.member.id, { assignmentIds: [assignment.id] }, ctx.admin);
+    expect(twice.summary).toEqual({ assigned: 0, skipped: 1, failed: 0 });
+  });
+
+  it('refuses work that is not this pool\'s, and a candidate who is not in it', async () => {
+    const a = await registerCandidate('a@test.com', 'Ada');
+    await projectWork(null);
+    await expect(poolTaskService.assignToMember(ctx.pool.id, a.member.id, {
+      assignmentIds: ['11111111-1111-1111-1111-111111111111'],
+    }, ctx.admin)).rejects.toThrow(/not part of this pool/i);
+    await expect(poolTaskService.assignToMember(ctx.pool.id, '11111111-1111-1111-1111-111111111111', {}, ctx.admin))
+      .rejects.toThrow(/not in this pool/i);
+  });
+
+  it('re-prices work already handed out, and stops once a selection is confirmed', async () => {
+    const { a } = await (async () => {
+      const cand = await registerCandidate('a@test.com', 'Ada');
+      const { assignment } = await projectWork();
+      const t = await taskOf(cand.member);
+      await submit(cand.user, t);
+      await poolReviewService.review(ctx.pool.id, (await latestSubmission(t)).id, { rating: 5, decision: 'approved', feedbackText: 'ok' }, ctx.reviewer);
+      return { a: cand, assignment };
+    })();
+
+    const live = await poolTaskService.listAssignments(ctx.pool.id);
+    await poolTaskService.updateAssignment(ctx.pool.id, live[0].id, { points: 50 }, ctx.admin);
+    expect((await poolScoringService.liveScores(ctx.pool.id)).rows[0].total).toBe(50);
+
+    const { shortlist } = await poolScoringService.generate(ctx.pool.id, ctx.admin);
+    await poolScoringService.confirm(ctx.pool.id, shortlist.id, {}, ctx.admin);
+    expect((await a.member.reload()).decision).toBe('selected');
+    await expect(poolTaskService.updateAssignment(ctx.pool.id, live[0].id, { points: 1 }, ctx.admin))
+      .rejects.toThrow(/part of the record/i);
+  });
+});
+
+describe('a pool has a photo, as a clan does', () => {
+  it('saves one, shows it to its candidates, and removes it', async () => {
+    const poolAvatarService = require('../../src/services/poolAvatarService');
+    const a = await registerCandidate('a@test.com', 'Ada');
+
+    const saved = await poolAvatarService.setAvatarUrl(ctx.pool.id, ctx.admin, 'https://img.test/pool.png');
+    expect(saved.avatarUrl).toBe('https://img.test/pool.png');
+    const mine = await require('../../src/services/poolCandidateService').myPools(a.user.id);
+    expect(mine[0].pool.avatarUrl).toBe('https://img.test/pool.png');
+
+    await expect(poolAvatarService.setAvatarUrl(ctx.pool.id, ctx.admin, 'not-a-url')).rejects.toThrow(/valid image URL/i);
+    // A lead mentor of a clan is not a pool manager.
+    await expect(poolAvatarService.setAvatarUrl(ctx.pool.id, ctx.lead, 'https://img.test/x.png')).rejects.toThrow();
+    expect((await poolAvatarService.removeAvatar(ctx.pool.id, ctx.admin)).avatarUrl).toBeNull();
   });
 });
 
@@ -457,17 +599,23 @@ describe('pool permissions are scoped to the programme', () => {
     expect(await authzService.hasPoolAccess(ctx.lead)).toBe(false);
   });
 
-  it('rejects a scoring policy whose weights do not add up', async () => {
+  it('rejects a points curve that is not whole numbers, or is worth nothing', async () => {
     await expect(poolService.updatePool(ctx.pool.id, {
-      scoringPolicy: { components: [{ key: 'a', label: 'A', weight: 60, source: 'quiz' }, { key: 'b', label: 'B', weight: 30, source: 'manual' }] },
-    }, ctx.admin)).rejects.toThrow(/100/);
+      scoringPolicy: { difficultyPoints: { medium: 2.5 } },
+    }, ctx.admin)).rejects.toThrow(/whole number/i);
+    await expect(poolService.updatePool(ctx.pool.id, {
+      scoringPolicy: { difficultyPoints: { easy: 0, medium: 0, hard: 0, expert: 0 } },
+    }, ctx.admin)).rejects.toThrow(/worth some points/i);
+    // A partial curve keeps what it does not name.
+    const updated = await poolService.updatePool(ctx.pool.id, { scoringPolicy: { difficultyPoints: { hard: 30 } } }, ctx.admin);
+    expect(updated.scoringPolicy.difficultyPoints).toMatchObject({ easy: 5, medium: 10, hard: 30, expert: 40 });
   });
 });
 
 describe('lean storage: two tables, one column', () => {
   it('keeps the work list on the pool, and concurrent additions both survive', async () => {
     await Promise.all([
-      poolTaskService.createAssignment(ctx.pool.id, { kind: 'task', title: 'One', componentKey: 'project' }, ctx.admin),
+      poolTaskService.createAssignment(ctx.pool.id, { kind: 'task', title: 'One' }, ctx.admin),
       poolTaskService.createAssignment(ctx.pool.id, { kind: 'task', title: 'Two', componentKey: 'project' }, ctx.admin),
     ]);
     const pool = await models.CandidatePool.findByPk(ctx.pool.id);
@@ -535,7 +683,8 @@ describe('the reads the screens make', () => {
     // task_submissions has no created_at — every read must order and date by submitted_at.
     const queue = await poolReviewService.queue(ctx.pool.id);
     expect(queue).toHaveLength(1);
-    expect(queue[0]).toMatchObject({ taskId: task.id, kind: 'task', componentKey: 'project', title: 'Build an API' });
+    // The reviewer is told the stake: a hard piece of work, 20 points on the curve.
+    expect(queue[0]).toMatchObject({ taskId: task.id, kind: 'task', title: 'Build an API', points: 20, required: true });
     expect(new Date(queue[0].submittedAt).getTime()).not.toBeNaN();
 
     const detail = await poolReviewService.detail(ctx.pool.id, queue[0].submissionId);

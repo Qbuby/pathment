@@ -61,25 +61,40 @@ export function workspacePath(path: string, slug = activeWorkspaceSlug()): strin
   return `/w/${slug}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
+type PortalRole = 'admin' | 'mentor' | 'mentee';
 type WorkspaceUser = {
-  role: 'admin' | 'mentor' | 'mentee';
-  capabilities?: Array<'admin' | 'mentor' | 'mentee'>;
+  role: PortalRole;
+  capabilities?: Array<PortalRole | 'candidate'>;
 };
 
-/** Resolve the first authenticated screen without bouncing through `/`. */
+const PORTALS: PortalRole[] = ['admin', 'mentor', 'mentee'];
+const isPortal = (value: unknown): value is PortalRole => PORTALS.includes(value as PortalRole);
+
+/**
+ * Resolve the first authenticated screen without bouncing through `/`.
+ *
+ * A selection-pool candidate has no portal of their own: they land in the
+ * learner workspace, where their round appears in the scope picker beside any
+ * clans they are in. That used to be a separate `/candidate` area, which split
+ * one person's work across two shells.
+ */
 export function workspaceLandingPath(user: WorkspaceUser): string {
   const capabilities = user.capabilities ?? [user.role];
-  let stored: WorkspaceUser['role'] | null = null;
+  let stored: PortalRole | null = null;
   try {
     const value = localStorage.getItem('activeRole');
-    if (value === 'admin' || value === 'mentor' || value === 'mentee') stored = value;
+    if (isPortal(value)) stored = value;
   } catch { /* The user's account role remains a safe fallback. */ }
-  const role = stored && capabilities.includes(stored)
+  const portals = capabilities.filter(isPortal);
+  const role = stored && portals.includes(stored)
     ? stored
-    : capabilities.includes(user.role)
+    : isPortal(user.role) && portals.includes(user.role)
       ? user.role
-      : capabilities[0];
-  return workspacePath(role ? `/${role}/dashboard` : '/workspaces');
+      : portals[0];
+  if (role) return workspacePath(`/${role}/dashboard`);
+  // Only a pool candidate reaches this: the learner workspace in pool scope.
+  if (capabilities.includes('candidate')) return workspacePath('/mentee/dashboard');
+  return workspacePath('/workspaces');
 }
 
 export function workspaceScopeHeaders(): Record<string, string> {

@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { User, AuthResponse, LoginCredentials, RegisterData, TwoFactorLoginResponse, UserRole } from '../types';
+import { User, AuthResponse, LoginCredentials, RegisterData, TwoFactorLoginResponse, UserRole, Capability } from '../types';
 import { isAxiosError } from 'axios';
 import { activeWorkspaceSlug } from '../services/workspace-scope';
 import { apiClient } from '../services/api-client';
@@ -10,10 +10,24 @@ import { apiConfig } from '../config/api';
 import { tokenStore } from '../services/token-store';
 import { SessionExpiredError, startAuthSession, resetAuthSession, restoreAccessToken } from '../services/auth-session';
 
+const PORTAL_ROLES: UserRole[] = ['admin', 'mentor', 'mentee'];
+
 /** An explicit empty capability list grants no role views. */
-function getCapabilities(user: User | null): UserRole[] {
+function getCapabilities(user: User | null): Capability[] {
   if (!user) return [];
   return user.capabilities ?? [user.role];
+}
+
+/**
+ * Only the capabilities that are a portal of their own.
+ *
+ * `candidate` is not: a selection-pool candidate works in the learner
+ * workspace, with their round in the scope picker. Keeping it out of
+ * `availableRoles` is what stops it appearing in the role switcher as a
+ * fourth portal that does not exist.
+ */
+function getPortalRoles(user: User | null): UserRole[] {
+  return getCapabilities(user).filter((c): c is UserRole => PORTAL_ROLES.includes(c as UserRole));
 }
 
 interface RegistrationResult {
@@ -88,13 +102,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setActiveRoleState(null);
       return;
     }
-    const caps = getCapabilities(user);
+    const caps = getPortalRoles(user);
     const stored = (typeof window !== 'undefined'
       ? (localStorage.getItem('activeRole') as UserRole | null)
       : null);
+    // A pool candidate with no portal role still lands in the learner
+    // workspace (see `workspaceLandingPath`), so 'mentee' is the view there.
+    const fallback = caps.length ? null : (getCapabilities(user).includes('candidate') ? 'mentee' as UserRole : null);
     const next = stored && caps.includes(stored)
       ? stored
-      : (caps.includes(user.role) ? user.role : (caps[0] ?? null));
+      : (caps.includes(user.role) ? user.role : (caps[0] ?? fallback));
     setActiveRoleState(next);
     if (typeof window !== 'undefined') {
       if (next) localStorage.setItem('activeRole', next);
@@ -351,7 +368,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     requiresTwoFactor,
     temporaryToken,
     activeRole: activeRole && getCapabilities(user).includes(activeRole) ? activeRole : null,
-    availableRoles: getCapabilities(user),
+    availableRoles: getPortalRoles(user),
     setActiveRole,
     login,
     signInWithLink,

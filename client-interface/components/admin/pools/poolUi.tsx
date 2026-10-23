@@ -111,6 +111,38 @@ export const SOURCE_LABEL: Record<string, string> = {
   manual: 'Entered by hand',
 };
 
+// ── Points ───────────────────────────────────────────────────────────────────
+// A piece of work is worth points, set from its difficulty when it is added.
+// These four steps are the whole scale; there are no weights or percentages.
+
+export const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'] as const;
+export type Difficulty = typeof DIFFICULTIES[number];
+
+/** Mirrors the server's default curve (config/points.js). */
+export const DIFFICULTY_POINTS_FALLBACK: Record<Difficulty, number> = {
+  easy: 5, medium: 10, hard: 20, expert: 40,
+};
+
+export const DIFFICULTY_BLURB: Record<Difficulty, string> = {
+  easy: 'A warm-up, or something read and summarised.',
+  medium: 'The ordinary piece of work in a round.',
+  hard: 'A project that takes real time.',
+  expert: 'The hardest thing in the round.',
+};
+
+/** "12 pts" — plural-safe, and whole numbers stay whole. */
+export const pts = (n: number) => `${Math.round(n * 100) / 100} pt${Math.abs(n) === 1 ? '' : 's'}`;
+
+/** How one piece of work scored for one candidate. */
+export const WORK_SCORE: Record<string, { label: string; cls: string }> = {
+  scored: { label: 'Earned', cls: 'text-emerald-700' },
+  pending_review: { label: 'Waiting on review', cls: 'text-amber-700' },
+  changes_requested: { label: 'Changes requested', cls: 'text-rose-700' },
+  missing: { label: 'Not handed in', cls: 'text-slate-500' },
+  not_assigned: { label: 'Never given', cls: 'text-slate-400' },
+  no_work: { label: 'No work', cls: 'text-slate-400' },
+};
+
 export function Chip({ cls, children }: { cls: string; children: React.ReactNode }) {
   return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap ${cls}`}>{children}</span>;
 }

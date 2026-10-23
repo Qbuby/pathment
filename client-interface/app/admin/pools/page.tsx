@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { workspacePath } from '@/lib/services/workspace-scope';
+import { ClanAvatar } from '@/components/shared/ClanAvatar';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Loader2, Plus, Settings2, UsersRound } from 'lucide-react';
@@ -125,6 +126,7 @@ function PoolCard({ pool }: { pool: Pool }) {
     <EntityCard
       href={href}
       status={meta}
+      icon={<ClanAvatar name={pool.name} src={pool.avatarUrl} size="md" />}
       title={pool.name}
       description={pool.description || pool.program?.name}
       tags={pool.description && pool.program?.name ? [pool.program.name] : []}

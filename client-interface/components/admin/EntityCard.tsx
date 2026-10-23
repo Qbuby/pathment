@@ -23,6 +23,7 @@ export interface EntityCardStat {
 export function EntityCard({
   href,
   status,
+  icon,
   title,
   description,
   tags = [],
@@ -33,6 +34,8 @@ export function EntityCard({
 }: {
   href: string;
   status: { label: string; cls: string };
+  /** A photo or avatar for the thing, shown beside its name. */
+  icon?: ReactNode;
   title: string;
   description?: ReactNode;
   tags?: string[];
@@ -49,12 +52,15 @@ export function EntityCard({
       <div className="flex flex-1 flex-col p-6">
         <span className={`inline-flex w-fit items-center rounded-full border px-3 py-1 text-xs font-medium ${status.cls}`}>{status.label}</span>
 
-        <h3 className="mt-4 text-lg font-semibold text-slate-900">
-          {/* Stretched link: the whole card opens the item. */}
-          <Link href={workspacePath(href)} className="after:absolute after:inset-0 after:content-[''] focus:outline-none focus-visible:underline">
-            {title}
-          </Link>
-        </h3>
+        <div className="mt-4 flex min-w-0 items-center gap-2.5">
+          {icon}
+          <h3 className="min-w-0 text-lg font-semibold text-slate-900">
+            {/* Stretched link: the whole card opens the item. */}
+            <Link href={workspacePath(href)} className="after:absolute after:inset-0 after:content-[''] focus:outline-none focus-visible:underline">
+              {title}
+            </Link>
+          </h3>
+        </div>
         {description && <p className="mt-1.5 line-clamp-2 text-sm text-slate-500">{description}</p>}
 
         {tags.length > 0 && (

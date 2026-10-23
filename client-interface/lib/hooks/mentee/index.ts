@@ -35,3 +35,6 @@ export type { UseProgramEnrollReturn } from './useProgramEnroll';
 
 export { usePublicClanJoinPage } from './usePublicClanJoinPage';
 export type { UsePublicClanJoinPageReturn } from './usePublicClanJoinPage';
+
+export { useMenteeScope } from './useMenteeScope';
+export type { MenteeScope } from './useMenteeScope';

@@ -32,6 +32,8 @@ import {
 import { TaskDrawer } from "@/components/mentee/TaskDrawer";
 import { stripHtml } from "@/lib/utils/html";
 import { useClan, isHistoricalCohortClan } from "@/lib/context/ClanContext";
+import { useMenteeScope } from "@/lib/hooks/mentee";
+import { PoolWorkList } from "@/components/mentee/pool/PoolQualification";
 
 function MenteeTasksContent() {
   const searchParams = useSearchParams();
@@ -680,6 +682,10 @@ function MenteeTasksContent() {
 }
 
 export default function MenteeTasks() {
+  const scope = useMenteeScope();
+  // In a selection round, "my tasks" means the qualifying work — which lives
+  // outside every clan query by design (the AssignedTask pool fence).
+  if (scope.inPool) return <PoolWorkList poolId={scope.pool?.id} />;
   return (
     <Suspense fallback={<p role="status">Loading tasks…</p>}>
       <MenteeTasksContent />

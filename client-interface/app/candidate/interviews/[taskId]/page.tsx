@@ -1,3 +1,6 @@
-// A selection-pool candidate takes an interview in the same runner as a mentee:
-// the interview API authorises by ownership of the task, not by portal.
-export { default } from '@/app/mentee/interviews/[taskId]/page';
+import { CandidateRedirect } from '../../CandidateRedirect';
+
+export default async function CandidateInterviewPage({ params }: { params: Promise<{ taskId: string }> }) {
+  const { taskId } = await params;
+  return <CandidateRedirect to={`/mentee/interviews/${taskId}`} />;
+}

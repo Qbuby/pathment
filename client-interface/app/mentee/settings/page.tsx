@@ -13,7 +13,7 @@ import {
   Sparkles,
   Palette,
 } from "lucide-react";
-import { useMenteeSettings } from "@/lib/hooks/mentee";
+import { useMenteeScope, useMenteeSettings } from "@/lib/hooks/mentee";
 import { PageHeader } from "@/components/admin/ui";
 const SecurityTab = dynamic(() => import("@/components/shared/SecurityTab"));
 import { LocationDetailsFields } from "@/components/settings/LocationDetailsFields";
@@ -47,11 +47,19 @@ export default function MenteeSettings() {
     handleLearningPreferencesUpdate,
   } = useMenteeSettings();
 
+  const { poolOnly } = useMenteeScope();
+
   const settingsParams = useSearchParams();
   const requestedSection = settingsParams.get("tab");
   useSettingsLinkEffect(() => {
     if (requestedSection === "security") setActiveTab("security");
   }, [requestedSection, setActiveTab]);
+
+  // A remembered tab can name a section this account does not have — their
+  // last visit was as a mentee, or the link came from somewhere else.
+  useSettingsLinkEffect(() => {
+    if (poolOnly && (activeTab === "skills" || activeTab === "preferences")) setActiveTab("profile");
+  }, [poolOnly, activeTab, setActiveTab]);
 
   if (loading) {
     return (
@@ -61,21 +69,36 @@ export default function MenteeSettings() {
     );
   }
 
-  const tabs: Tab[] = [
+  /*
+   * A selection-pool candidate has an account, not a learning profile.
+   *
+   * Skills and Learning preferences both write to the mentee profile, which
+   * is created when somebody is PLACED into a clan — so for a candidate these
+   * two sections are not merely empty, they are settings for something that
+   * does not exist yet. Offering them is how you get a page that saves
+   * nothing and a person who thinks they have configured something.
+   *
+   * Everything that belongs to the account — who they are, how it looks, what
+   * they are emailed about, their password — stays, because all of it is real
+   * for them today.
+   */
+  const tabs: Tab[] = ([
     { id: "profile", label: "Profile", icon: User },
-    { id: "skills", label: "Skills", icon: Sparkles },
+    !poolOnly && { id: "skills", label: "Skills", icon: Sparkles },
     { id: "appearance", label: "Display", icon: Palette },
-    { id: "preferences", label: "Preferences", icon: Target },
+    !poolOnly && { id: "preferences", label: "Preferences", icon: Target },
     { id: "notifications", label: "Notifications", icon: Bell },
     { id: "security", label: "Security", icon: Shield },
-  ];
+  ].filter(Boolean)) as Tab[];
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <PageHeader
         title="Settings"
-        subtitle="Manage your account preferences and learning profile"
+        subtitle={poolOnly
+          ? "Manage your account. Your learning profile arrives when you are placed in a clan."
+          : "Manage your account preferences and learning profile"}
       />
 
       <div className="grid lg:grid-cols-[220px_minmax(0,1fr)] gap-6 items-start">

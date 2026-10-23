@@ -10,17 +10,19 @@ rounds (e.g. 300 candidates → 50 places) happen *before* that. Fake "holding" 
 corrupt enrollment, progress, analytics and permissions, so the pool is its own state.
 
 ## Data model
-Migration `140_candidate_pools`: two tables and one column, all additive.
+Migrations `140_candidate_pools` (two tables, one column) and `142_pool_photo` (one column), all additive.
 - `CandidatePool` — programme-bound round: status `draft → open → qualifying → reviewing → placing → closed`
-  (+ `archivedAt`), `selectionQuota`, `capacity`, dates, versioned `scoringPolicy`
-  (components with label, weight, source, required — weights total 100), `reminderPolicy`, `settings`
+  (+ `archivedAt`), `selectionQuota`, `capacity`, dates, `avatarUrl`, versioned `scoringPolicy`
+  (`{ version, mode: 'points', difficultyPoints: { easy, medium, hard, expert } }` — the curve a new
+  piece of work takes its points from), `reminderPolicy`, `settings`
   (`autoAssignOnActivation`, `waitlistSize`, `targetClanIds`), and
   `workItems` — the pool's work, one entry per piece (`kind`, its own task template `roadmapTaskId`,
-  `componentKey`, `required`, `dueAt`, kit `config`). Edited under a row lock.
+  `points`, `required`, `dueAt`, kit `config`). Edited under a row lock.
 - `PoolMember` — one per (pool, email). `userId` is NULL while only invited. Separate tracks:
   `status` (invited/active/qualifying/reviewing/completed), `decision`
   (selected/waitlisted/not_selected/withdrawn/disqualified), and `placedAt` (set only once enrollment and
-  clan membership exist). JSON fields: `details` (names, source, activatedAt), `manualScores`,
+  clan membership exist). JSON fields: `details` (names, source, activatedAt), `manualScores`
+  (one key, `adjustment`: points added to or taken off their total, with a note),
   `placement` (pending/failed, target clan, error, attempts), `reminders` (each reminder sent).
 - `AssignedTask.poolMemberId` — NULL for ordinary work. Partial unique index on
   `(pool_member_id, roadmap_task_id)`: the same work reaches the same member once.
@@ -40,22 +42,48 @@ Pool work must never appear in a clan — before placement, and above all after 
   reviews their own work.
 - The workspace boundary is a hook, not a scope: opting in never crosses workspaces.
 
+## Scoring: points, not percentages
+A score is **points earned**, and every point traces to one piece of work.
+
+- Each piece of work is worth a number, set when it is added — defaulted from its difficulty through
+  the pool's own curve, and editable per piece afterwards (`PATCH /pools/:id/assignments/:id`).
+  Re-pricing applies to work already handed out, and is refused once a selection is confirmed.
+- A candidate earns `points × rating ÷ 5` on work whose latest review approved it, the full points
+  when approved without a rating, and 0 otherwise. Quiz and interview reviews store their result on
+  the same 0–5 rating, so one rule covers every kind of work.
+- `manualScores.adjustment` is the only hand-typed number: points on top, or off, for a judgement
+  made away from the platform. Always shown on its own line, always with a note, always audited.
+- Ranking is by total points; `possible` (what a perfect round is worth) is returned beside it, so a
+  total reads without knowing how the pool was set up.
+- Blockers: `no_work` (nothing to rank on) and `reviews_outstanding` are hard; a tie at the cutoff
+  still blocks until each tied candidate is decided with a reason. Warnings cover missing work and
+  required work a candidate was never given.
+
+This replaced a policy of weighted components totalling 100%. That asked an operator to describe one
+round twice — as the work they hand out, and again as the percentages it feeds — and the two drifted:
+a component with no work behind it scored everybody 0 and blocked the shortlist, and the number a
+candidate earned for a project could not be read off the project. Older pools keep whatever
+`components` they stored; scoring ignores it.
+
 ## Backend
-- **Services:** `poolService` (pools, transitions, dashboard, history), `poolMemberService`
-  (import/invite/applications/withdraw/disqualify/manual scores/activation), `poolTaskService`
-  (work + idempotent assignment), `poolReviewService` (queue, review via `submissionService`),
-  `poolScoringService` (scores, shortlist, confirm, decisions), `poolPlacementService` (preview,
-  plan, idempotent placement via `clanService.addMember`), `poolReminderService` (hourly, from
-  `notificationScheduler`), `poolCandidateService` (self-only reads), `poolWorkEvents` (the shared
-  engine's pool hooks).
+- **Services:** `poolService` (pools, transitions, dashboard, history, the points curve),
+  `poolMemberService` (import/invite/applications/withdraw/disqualify/adjustment/activation),
+  `poolTaskService` (work, bulk roadmap steps, re-pricing, idempotent assignment to everybody or to
+  one person), `poolReviewService` (queue, review via `submissionService`), `poolScoringService`
+  (scores, shortlist, confirm, decisions), `poolPlacementService` (preview, plan, idempotent
+  placement via `clanService.addMember`), `poolReminderService` (hourly, from
+  `notificationScheduler`), `poolCandidateService` (self-only reads), `poolAvatarService` (the
+  photo, same two-step flow as `clanAvatarService`), `poolWorkEvents` (the shared engine's pool
+  hooks).
 - **Shared engine reused:** `submissionService.submitTaskWithFiles` / `reviewSubmission`, the quiz and
   interview runners. For pool work: never any points, no streaks/badges/mentor
   stats, no roadmap advance, reviewers (not a mentor) are notified, writes freeze once the pool closes
   or the candidate has a decision.
 - **API `/api/pools`** — each route checks a specific permission at the pool's programme:
-  `pool.manage` (create/configure/status), `pool.members` (import, invite, applications, withdraw,
-  disqualify), `pool.assign` (work), `pool.review` (queue, review, manual scores), `pool.select`
-  (shortlist, confirm, decisions, placement); any pool permission reads.
+  `pool.manage` (create/configure/status/photo), `pool.members` (import, invite, applications,
+  withdraw, disqualify), `pool.assign` (add work, re-price it, hand it to everybody or to one
+  candidate), `pool.review` (queue, review, the hand adjustment), `pool.select` (shortlist, confirm,
+  decisions, placement); any pool permission reads.
 - **API `/api/candidate`** — self only: pools, tasks, task detail, start, submit.
 - **Roles:** `pool_operator` (all five, programme scope), `pool_reviewer` (`pool.review`); `program_admin`
   holds all five. None is admin-tier: `hasPoolAccess` opens Selection pools only.
@@ -64,14 +92,37 @@ Pool work must never appear in a clan — before placement, and above all after 
 - **Admin → Admissions → Selection pools** (`/admin/pools`, `/admin/pools/[id]`): Overview,
   Candidates, Work, Review, Scores & shortlist, Placement, Settings, History. Shown to anyone with a
   `pool.*` permission; pool-only roles see nothing else in the admin area.
+- **Adding work** (`WorkTab` + `RoadmapStepPicker`): the roadmap is the unit. Open a roadmap, read
+  its steps in teaching order, tick several, add them in one request — `POST
+  /pools/:id/assignments/from-roadmap`, which reports each step as added, skipped (already there) or
+  failed. A step that is a quiz or an interview is shown and explained rather than dropped. The other
+  tab writes one custom piece, or hands out a quiz or interview kit. Points are shown and editable
+  beside each piece, inline.
+- **Handing work out** (`AssignWorkDrawer`) goes both ways: one piece of work → chosen candidates
+  (searchable, with avatars, showing who already holds it), or one candidate → chosen pieces of work
+  (from their row in Candidates). "Give to everyone" stays one click.
 - **Intake → a cohort → select applicants → "Add to pool"**: puts the selected applicants into any open
   pool. One pool can gather applicants from several cohorts, of several programmes — but only programmes
   whose intake the person adding them runs (`intake.manage` there; the pool's own programme always counts).
   A pool has no cohort of its own: selected people are placed in the pool's programme's clans, and their
   enrollment takes the cohort they applied through when it is that programme's. Their applications are not
   changed — Accept & invite and clan placement work as before.
-- **Candidate area** (`/candidate/dashboard`, `/candidate/tasks/[id]`, quiz/interview runners reused
-  under `/candidate/...`, notifications). No community, directory or mentee portal until placement.
+- **The candidate is a learner in pool scope.** There is no separate candidate area: a selection
+  pool appears in the learner workspace's scope picker under its own **Selection pool** heading,
+  beside any clans they are in, with its photo. Picking it turns `/mentee/dashboard` into their
+  round (`PoolQualification`) and `/mentee/tasks` into their qualifying work (`PoolWorkList`); one
+  piece opens at `/mentee/tasks/:id?pool=1` (`PoolTaskDetail`), and the quiz and interview runners
+  are the mentee ones.
+
+  In pool scope the nav keeps only This Week, Tasks and Settings: progress, meetings, roadblocks,
+  the community and messages are all about a mentor, a roadmap or a cohort that does not exist until
+  placement. Settings drops Skills and Learning preferences for the same reason — both write to a
+  mentee profile that is created when somebody is placed. `RoleGuard permitCandidates` lets them in
+  (`candidate` is not a portal role), and `OnboardingGuard` does not walk a pool-only candidate
+  through the learner onboarding.
+
+  `/candidate/*` remains as redirects, because notifications sent before the move carry those URLs
+  in `action_url` for as long as the account lives.
 
 ## Role flows
 - **Operator:** create pool → set scoring and reminders → add candidates (CSV/emails/applications) →

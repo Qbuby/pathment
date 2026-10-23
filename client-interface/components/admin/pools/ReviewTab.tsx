@@ -2,14 +2,15 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Check, ChevronLeft, ChevronRight, Clock, ExternalLink, History, Loader2, RotateCcw, Scale, ShieldCheck, Star } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Clock, Coins, ExternalLink, History, Loader2, RotateCcw, ShieldCheck, Star } from 'lucide-react';
 import { Drawer } from '@/components/shared/Drawer';
 import { Avatar } from '@/components/shared/Avatar';
 import { RichContent } from '@/components/shared/RichContent';
 import { SubmissionFileList } from '@/components/shared/SubmissionFileList';
 import { useApiQuery } from '@/lib/query';
 import { toExternalHref } from '@/lib/utils/url';
-import { poolApi, type ReviewQueueItem, type ScoreComponent } from '@/lib/services/pool-api';
+import { poolApi, type ReviewQueueItem } from '@/lib/services/pool-api';
+import { pts } from './poolUi';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 
 const FEEDBACK_TEMPLATES = [
@@ -83,11 +84,9 @@ function HalfStarRating({ value, onChange }: { value: number | null; onChange: (
   );
 }
 
-export function ReviewDrawer({ poolId, item, component, onClose, onDone, next, prev }: {
+export function ReviewDrawer({ poolId, item, onClose, onDone, next, prev }: {
   poolId: string;
   item: ReviewQueueItem;
-  /** The score component this work feeds, if any. */
-  component?: ScoreComponent;
   onClose: () => void;
   onDone: () => void;
   next?: { onClick: () => void; disabled: boolean; position: string };
@@ -98,6 +97,9 @@ export function ReviewDrawer({ poolId, item, component, onClose, onDone, next, p
   const [feedback, setFeedback] = useState('');
   const [checked, setChecked] = useState<string[]>([]);
   const [busy, setBusy] = useState<'approved' | 'changes' | null>(null);
+  // The detail answer is authoritative (it re-reads the pool); the queue row
+  // carries the same number so the drawer is never blank while it loads.
+  const worth = data?.task?.points ?? item.points ?? 0;
   const criteria: string[] = data?.task?.acceptanceCriteria || [];
 
   // Stepping to another submission keeps the drawer open: start the form over,
@@ -205,10 +207,10 @@ export function ReviewDrawer({ poolId, item, component, onClose, onDone, next, p
                 </div>
               )}
               <p className="flex items-center gap-1.5 text-xs text-slate-500">
-                <Scale className="h-3.5 w-3.5" aria-hidden="true" />
-                {component
-                  ? <>Counts towards <span className="font-medium text-slate-700">{component.label}</span> ({component.weight}% of the total)</>
-                  : 'Not linked to a score component, so it does not count towards the total'}
+                <Coins className="h-3.5 w-3.5" aria-hidden="true" />
+                {worth > 0
+                  ? <>Worth up to <span className="font-medium text-slate-700">{pts(worth)}</span> of this candidate&apos;s score{item.required === false ? ', and optional' : ''}</>
+                  : 'Worth no points — this one is practice'}
               </p>
             </div>
 
@@ -297,8 +299,12 @@ export function ReviewDrawer({ poolId, item, component, onClose, onDone, next, p
               <HalfStarRating value={rating} onChange={setRating} />
               <p className="mt-1.5 text-xs text-slate-400">
                 {rating !== null
-                  ? <>Scores <span className="font-medium text-slate-600">{rating * 20}/100</span>{component ? <> on {component.label}, worth up to {component.weight} points of the total.</> : '.'}</>
-                  : 'Each star is 20 points of this work’s score (out of 100). Half stars allowed.'}
+                  ? worth > 0
+                    ? <>Earns <span className="font-medium text-slate-600">{pts(Math.round((worth * rating / 5) * 100) / 100)}</span> of the {pts(worth)} this work is worth.</>
+                    : <>This work is worth no points, so the rating is feedback only.</>
+                  : worth > 0
+                    ? `Five stars earns all ${pts(worth)}; three earns three fifths. Half stars allowed.`
+                    : 'This work is worth no points, so the rating is feedback only.'}
               </p>
             </div>
 

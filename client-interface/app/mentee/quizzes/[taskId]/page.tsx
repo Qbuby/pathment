@@ -1,7 +1,8 @@
 'use client';
 
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { useRouter } from 'next/navigation';
+import { useMenteeScope } from '@/lib/hooks/mentee';
 import { toast } from 'sonner';
 import {
   Loader2, ArrowRight, ArrowLeft, CheckCircle2, AlertTriangle, Play, RotateCcw,
@@ -60,9 +61,18 @@ export default function QuizRunnerPage({ params }: { params: Promise<{ taskId: s
   const q: CandidateQuizQuestion | undefined = questions[idx];
   const opts = data?.options;
 
-  // The same runner serves selection-pool candidates under /candidate.
-  const area = usePathname()?.includes('/candidate/') ? '/candidate' : '/mentee';
-  const backToTask = () => router.push(`${area}/tasks/${taskId}`);
+  /*
+   * One runner, two kinds of work.
+   *
+   * It used to tell them apart by the URL it was mounted at — `/candidate/…`
+   * versus `/mentee/…` — which stopped working when the candidate area moved
+   * into the learner workspace. The scope answers it properly now, and the
+   * `?pool=1` the task screen needs comes with it, so "back to task" lands on
+   * the right screen instead of a 404 for work a clan query cannot see.
+   */
+  const { inPool } = useMenteeScope();
+  const taskHref = `/mentee/tasks/${taskId}${inPool ? '?pool=1' : ''}`;
+  const backToTask = () => router.push(taskHref);
 
   const isAnswered = useCallback((question: CandidateQuizQuestion): boolean => {
     const a = answersRef.current[question.id];

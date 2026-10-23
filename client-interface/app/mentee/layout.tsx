@@ -8,20 +8,26 @@ import { ActivityTrackerMount } from '@/components/shared/ActivityTrackerMount';
 import { TimezoneSync } from '@/components/shared/TimezoneSync';
 import { WalkthroughMount } from '@/components/onboarding/WalkthroughMount';
 import { ChangelogMount } from '@/components/shared/ChangelogMount';
-import { InterviewResumeBar } from '@/components/mentee/InterviewResumeBar';
-import { ReviewJoinBar } from '@/components/mentee/ReviewJoinBar';
-import { PausedBanner } from '@/components/mentee/PausedBanner';
+import { MenteeClanChrome, MenteeInterviewChrome } from '@/components/mentee/MenteeClanChrome';
 
 export default function MenteeLayout({ children }: { children: React.ReactNode }) {
   return (
-    <RoleGuard allowedRoles={['mentee']}>
+    /*
+     * `permitCandidates` is what makes this one workspace rather than two.
+     *
+     * A selection-pool candidate holds `candidate`, not `mentee` — they have
+     * no enrollment yet — so without it they would be bounced out of the very
+     * section their round now lives in. The scope picker then decides what
+     * they see: their pool, or a clan if they have one.
+     */
+    <RoleGuard allowedRoles={['mentee']} permitCandidates>
       <OnboardingGuard>
         <div data-mentee-appearance className="min-h-screen bg-canvas">
           <ActivityTrackerMount />
           <TimezoneSync />
           <WalkthroughMount role="mentee" />
           <ChangelogMount role="mentee" />
-          <InterviewResumeBar />
+          <MenteeInterviewChrome />
           <Navigation role="mentee" />
           <main className="lg:pl-64 pt-14 lg:pt-0">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -43,8 +49,7 @@ export default function MenteeLayout({ children }: { children: React.ReactNode }
                 * product open. Coming back is one submission away, which is
                 * exactly what we want to make easy.
                 */}
-              <PausedBanner />
-              <ReviewJoinBar />
+              <MenteeClanChrome />
               <MenteeWorkspaceTabs />
               {children}
             </div>

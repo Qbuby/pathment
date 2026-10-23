@@ -18,7 +18,10 @@ const orchestrator = () => require('./notificationOrchestrator');
 
 /** The candidate-facing link for one piece of qualifying work. */
 function candidateTaskUrl(taskId) {
-  return `/candidate/tasks/${taskId}`;
+  // A candidate's qualifying work opens in the mentee workspace, in the pool
+  // scope — there is no separate candidate area any more. `?pool=1` is how the
+  // task screen knows to read it as pool work rather than clan work.
+  return `/mentee/tasks/${taskId}?pool=1`;
 }
 
 /** The operator-facing link into a pool. */

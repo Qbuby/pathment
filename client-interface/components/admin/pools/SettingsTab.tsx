@@ -2,17 +2,17 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { BellRing, Info, Loader2, Plus, Save, Scale, SlidersHorizontal, Trash2, UsersRound } from 'lucide-react';
-import { useApiQuery } from '@/lib/query';
-import { poolApi, type PoolDashboard, type ScoreComponent, type ScoreSource } from '@/lib/services/pool-api';
+import { BellRing, Info, Loader2, Save, Scale, SlidersHorizontal, UsersRound } from 'lucide-react';
+import { useApiQuery, qk } from '@/lib/query';
+import { EntityAvatarEditor } from '@/components/shared/EntityAvatarEditor';
+import { poolApi, type DifficultyPoints, type PoolDashboard } from '@/lib/services/pool-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
-import { PanelHeader, SOURCE_LABEL, field, fromLocalInput, label, panel, primaryBtn, secondaryBtn, toLocalInput } from './poolUi';
+import { DIFFICULTIES, DIFFICULTY_BLURB, DIFFICULTY_POINTS_FALLBACK, PanelHeader, field, fromLocalInput, label, panel, primaryBtn, toLocalInput } from './poolUi';
 
 const body = 'space-y-4 border-t border-border p-5 sm:px-6';
 const footer = 'flex flex-wrap items-center justify-end gap-3 border-t border-border bg-muted/40 px-5 py-3 sm:px-6';
 const check = 'flex items-start gap-2.5 rounded-xl border border-border px-3 py-2.5 text-sm text-slate-700 has-checked:border-brand-300 has-checked:bg-brand-50/50';
 
-const keyOf = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 60);
 
 export function SettingsTab({ data, onChange, canManage }: { data: PoolDashboard; onChange: () => void; canManage: boolean }) {
   const { pool } = data;
@@ -23,11 +23,14 @@ export function SettingsTab({ data, onChange, canManage }: { data: PoolDashboard
     name: pool.name, description: pool.description || '', selectionQuota: String(pool.selectionQuota), capacity: pool.capacity ? String(pool.capacity) : '',
     opensAt: toLocalInput(pool.opensAt), closesAt: toLocalInput(pool.closesAt), qualificationDueAt: toLocalInput(pool.qualificationDueAt),
   });
-  const [components, setComponents] = useState<ScoreComponent[]>(pool.scoringPolicy?.components || []);
+  const [curve, setCurve] = useState<DifficultyPoints>({
+    ...DIFFICULTY_POINTS_FALLBACK,
+    ...(pool.scoringPolicy?.difficultyPoints || {}),
+  });
+  const [photo, setPhoto] = useState<string | null>(pool.avatarUrl ?? null);
   const [reminders, setReminders] = useState(pool.reminderPolicy);
   const [settings, setSettings] = useState(pool.settings);
   const [saving, setSaving] = useState<string | null>(null);
-  const total = components.reduce((s, c) => s + (Number(c.weight) || 0), 0);
 
   const save = async (section: string, body: Record<string, unknown>) => {
     setSaving(section);
@@ -68,6 +71,21 @@ export function SettingsTab({ data, onChange, canManage }: { data: PoolDashboard
           <div><label className={label}>Closes</label><input disabled={locked} type="datetime-local" value={basics.closesAt} onChange={(e) => setBasics({ ...basics, closesAt: e.target.value })} className={field} /></div>
           <div><label className={label}>Qualification deadline</label><input disabled={locked} type="datetime-local" value={basics.qualificationDueAt} onChange={(e) => setBasics({ ...basics, qualificationDueAt: e.target.value })} className={field} /></div>
         </div>
+        {/*
+          * The photo saves on its own, as a clan's does — an upload is not a
+          * draft, so it does not wait behind the Save button for the fields.
+          */}
+        {canManage && pool.status !== 'closed' && (
+          <EntityAvatarEditor
+            basePath={`/pools/${pool.id}`}
+            name={pool.name}
+            avatarUrl={photo}
+            label="Pool photo"
+            fileName="pool-avatar.jpg"
+            invalidateKeys={[qk.pool.all, ['candidate', 'pools']]}
+            onChanged={(url) => { setPhoto(url); onChange(); }}
+          />
+        )}
         </div>
         {!locked && <div className={footer}>
           <SaveBtn section="basics" onClick={() => save('basics', {
@@ -81,56 +99,44 @@ export function SettingsTab({ data, onChange, canManage }: { data: PoolDashboard
       <section className={panel}>
         <PanelHeader
           icon={Scale}
-          title="Scoring"
-          subtitle="Each component is a visible part of the total. Weights must add up to 100%. Link work to a component on the Work tab. Changing the scoring creates a new version; shortlists already made keep theirs."
+          title="What work is worth"
+          subtitle="A piece of work earns points, and a candidate's score is the points they earned. These are the defaults a new piece of work takes from its difficulty — you can change any one of them when you add it."
         />
         <div className={body}>
-        {components.length > 0 && (
-          <div className="hidden grid-cols-12 gap-2 px-1 text-xs font-medium text-muted-foreground sm:grid">
-            <span className="col-span-5">Component</span><span className="col-span-3">Scored from</span><span className="col-span-2">Weight</span><span className="col-span-2">Required</span>
-          </div>
-        )}
-        <div className="space-y-2">
-          {components.map((c, i) => (
-            <div key={i} className="grid grid-cols-12 items-center gap-2">
-              <input disabled={locked} value={c.label} placeholder="Label, e.g. Special assignment"
-                onChange={(e) => setComponents(components.map((x, j) => j === i ? { ...x, label: e.target.value, key: x.key && pool.scoringPolicy.components.some((p) => p.key === x.key) ? x.key : keyOf(e.target.value) } : x))}
-                className={`${field} col-span-12 sm:col-span-5`} />
-              <select disabled={locked} value={c.source} onChange={(e) => setComponents(components.map((x, j) => j === i ? { ...x, source: e.target.value as ScoreSource } : x))} className={`${field} col-span-6 sm:col-span-3`}>
-                {Object.entries(SOURCE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-              </select>
-              <div className="col-span-3 flex items-center gap-1 sm:col-span-2">
-                <input disabled={locked} type="number" min={1} max={100} value={c.weight} onChange={(e) => setComponents(components.map((x, j) => j === i ? { ...x, weight: Number(e.target.value) } : x))} className={field} />
-                <span className="text-sm text-slate-400">%</span>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {DIFFICULTIES.map((d) => (
+              <div key={d} className="rounded-xl border border-border p-3">
+                <label className={`${label} capitalize`} htmlFor={`pool-points-${d}`}>{d}</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    id={`pool-points-${d}`}
+                    disabled={locked}
+                    type="number"
+                    min={0}
+                    max={1000}
+                    value={curve[d]}
+                    onChange={(e) => setCurve({ ...curve, [d]: Math.max(0, Number(e.target.value) || 0) })}
+                    className={field}
+                  />
+                  <span className="shrink-0 text-sm text-muted-foreground">pts</span>
+                </div>
+                <p className="mt-1.5 text-[11px] text-muted-foreground">{DIFFICULTY_BLURB[d]}</p>
               </div>
-              <label className="col-span-2 flex items-center gap-1 text-xs text-slate-600 sm:col-span-1"><input disabled={locked} type="checkbox" checked={c.required !== false} onChange={(e) => setComponents(components.map((x, j) => j === i ? { ...x, required: e.target.checked } : x))} /> Req.</label>
-              {!locked && <button onClick={() => setComponents(components.filter((_, j) => j !== i))} className="col-span-1 justify-self-end rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button>}
-            </div>
-          ))}
+            ))}
+          </div>
+          <p className="rounded-xl bg-muted/60 px-4 py-3 text-xs text-slate-600">
+            A review&apos;s rating decides how much of a piece of work is earned: five stars earns all of its points,
+            three earns three fifths. Work that is never approved earns nothing. There are no weights to add up —
+            a score is the points on the work itself.
+          </p>
         </div>
-        {!components.length && <p className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">No components yet. Add one for each part of the score, e.g. Quiz, Special assignment, Interview.</p>}
-        {components.length > 0 && <div>
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>Weights</span>
-            <span className={`font-semibold ${Math.abs(total - 100) < 0.01 || !components.length ? 'text-emerald-700' : 'text-rose-600'}`}>Total {total}%</span>
-          </div>
-          <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-muted">
-            <div className={`h-full rounded-full transition-all ${Math.abs(total - 100) < 0.01 ? 'bg-emerald-500' : total > 100 ? 'bg-rose-500' : 'bg-brand-500'}`} style={{ width: `${Math.min(100, total)}%` }} />
-          </div>
+        {!locked && <div className={footer}>
+          <SaveBtn
+            section="scoring"
+            disabled={!Object.values(curve).some((n) => n > 0)}
+            onClick={() => save('scoring', { scoringPolicy: { difficultyPoints: curve } })}
+          />
         </div>}
-        </div>
-        {!locked && (
-          <div className={`${footer} justify-between`}>
-            <button onClick={() => setComponents([...components, { key: '', label: '', weight: 0, source: 'task_review', required: true }])} className={secondaryBtn}>
-              <Plus className="h-4 w-4" /> Add component
-            </button>
-            <SaveBtn
-              section="scoring"
-              disabled={Boolean(components.length) && Math.abs(total - 100) > 0.01}
-              onClick={() => save('scoring', { scoringPolicy: { components: components.map((c) => ({ ...c, key: c.key || keyOf(c.label) })) } })}
-            />
-          </div>
-        )}
       </section>
 
       <section className={panel}>

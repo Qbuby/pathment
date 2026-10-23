@@ -21,7 +21,7 @@ class PoolCandidateService {
     const members = await models.PoolMember.findAll({
       where: { userId },
       include: [
-        { model: models.CandidatePool, as: 'pool', attributes: ['id', 'name', 'description', 'status', 'qualificationDueAt', 'closesAt', 'archivedAt'],
+        { model: models.CandidatePool, as: 'pool', attributes: ['id', 'name', 'description', 'status', 'qualificationDueAt', 'closesAt', 'archivedAt', 'avatarUrl', 'programId'],
           include: [{ model: models.Program, as: 'program', attributes: ['id', 'name'] }] },
         { model: models.Clan, as: 'placedClan', attributes: ['id', 'name'] },
       ],
@@ -35,7 +35,16 @@ class PoolCandidateService {
       const mine = tasks.filter((t) => t.poolMemberId === m.id);
       return {
         memberId: m.id,
-        pool: { id: m.pool.id, name: m.pool.name, description: m.pool.description, status: m.pool.status, qualificationDueAt: m.pool.qualificationDueAt, program: m.pool.program },
+        pool: {
+          id: m.pool.id,
+          name: m.pool.name,
+          description: m.pool.description,
+          status: m.pool.status,
+          qualificationDueAt: m.pool.qualificationDueAt,
+          // The photo, so a pool looks like a clan in the workspace picker.
+          avatarUrl: m.pool.avatarUrl,
+          program: m.pool.program,
+        },
         progress: {
           total: mine.length,
           completed: mine.filter((t) => t.status === 'completed').length,

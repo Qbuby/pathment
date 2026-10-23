@@ -9,10 +9,29 @@ import { apiClient } from './api-client';
 export type PoolStatus = 'draft' | 'open' | 'qualifying' | 'reviewing' | 'placing' | 'closed';
 export type PoolDecision = 'selected' | 'waitlisted' | 'not_selected' | 'withdrawn' | 'disqualified';
 export type ScoreSource = 'quiz' | 'task_review' | 'interview_review' | 'manual';
+export type Difficulty = 'easy' | 'medium' | 'hard' | 'expert';
+/** How one piece of work turned out for one candidate. */
+export type WorkScoreStatus = 'scored' | 'pending_review' | 'changes_requested' | 'missing' | 'not_assigned' | 'no_work';
 export type PoolBucket =
   | 'invite_pending' | 'not_started' | 'in_progress' | 'needs_review' | 'changes_requested'
   | 'completed' | 'stalled' | 'withdrawn';
 
+/**
+ * What a piece of work is worth, per difficulty.
+ *
+ * This replaced a list of weighted components that had to total 100%. Points
+ * are decided on the work itself when it is added, so there is one number to
+ * read and nothing to reconcile.
+ */
+export type DifficultyPoints = Record<Difficulty, number>;
+
+export interface ScoringPolicy {
+  version: number;
+  mode?: 'points';
+  difficultyPoints?: Partial<DifficultyPoints>;
+}
+
+/** Legacy shape, still present on pools created before points. Ignored by scoring. */
 export interface ScoreComponent {
   key: string;
   label: string;
@@ -49,7 +68,8 @@ export interface Pool {
   opensAt: string | null;
   closesAt: string | null;
   qualificationDueAt: string | null;
-  scoringPolicy: { version: number; components: ScoreComponent[] };
+  avatarUrl: string | null;
+  scoringPolicy: ScoringPolicy & { components?: ScoreComponent[] };
   reminderPolicy: ReminderPolicy;
   settings: PoolSettings;
   archivedAt: string | null;
@@ -65,12 +85,17 @@ export interface PoolAssignment {
   id: string;
   kind: 'task' | 'quiz' | 'interview';
   title: string;
-  componentKey: string | null;
+  /** What finishing it is worth. Always a number, even on older work. */
+  points: number;
   required: boolean;
   dueAt: string | null;
   cancelledAt: string | null;
-  roadmapTask?: { id: string; title: string; type: string } | null;
+  roadmapTask?: { id: string; title: string; type: string; difficulty?: Difficulty | null } | null;
   counts?: Record<string, number>;
+  /** The template's difficulty, which the default points come from. */
+  difficulty?: Difficulty | null;
+  /** Retired: work used to feed a weighted component. Old rows still carry it. */
+  componentKey?: string | null;
 }
 
 export interface PoolMemberRow {
@@ -78,6 +103,7 @@ export interface PoolMemberRow {
   email: string;
   name: string;
   userId: string | null;
+  avatarUrl?: string | null;
   source: string;
   status: string;
   bucket: PoolBucket;
@@ -89,6 +115,7 @@ export interface PoolMemberRow {
   placementError: string | null;
   placedClan: { id: string; name: string } | null;
   targetClan: { id: string; name: string } | null;
+  /** `adjustment` is the one hand-entered number: points added to or taken off a total. */
   manualScores: Record<string, { score: number; note: string | null }>;
   invite: { expired: boolean; revoked: boolean; expiresAt: string } | null;
   work: { assignmentId: string; taskId: string | null; status: string | null; dueDate: string | null; isLate: boolean }[];
@@ -107,10 +134,15 @@ export interface ImportResult {
   results: RowResult[];
 }
 
-export interface ScoredComponent extends ScoreComponent {
-  score: number | null;
-  weighted: number;
-  status: 'scored' | 'pending_review' | 'changes_requested' | 'missing' | 'no_work';
+/** One piece of work, as it scored for one candidate. */
+export interface ScoredWork {
+  key: string;
+  label: string;
+  kind: 'task' | 'quiz' | 'interview';
+  required: boolean;
+  points: number;
+  earned: number;
+  status: WorkScoreStatus;
 }
 
 export interface Blocker {
@@ -126,10 +158,16 @@ export interface ScoreRow {
   email: string;
   rank: number;
   total: number;
+  possible: number;
+  adjustment: number;
+  adjustmentNote: string | null;
   complete: boolean;
-  components: ScoredComponent[];
+  components: ScoredWork[];
   proposedOutcome: 'selected' | 'waitlisted' | 'not_selected' | null;
 }
+
+/** The work a score table has a column for, in the order the columns read. */
+export interface ScoreColumn { key: string; label: string; kind: 'task' | 'quiz' | 'interview'; required: boolean }
 
 export interface Shortlist {
   id: string;
@@ -139,13 +177,18 @@ export interface Shortlist {
   blockers: Blocker[];
   createdAt: string;
   confirmedAt: string | null;
+  /** What a perfect round was worth when this version was generated. */
+  possible?: number | null;
+  work?: ScoreColumn[];
   entries?: {
     id: string;
     poolMemberId: string;
     rank: number;
     totalScore: string;
     complete: boolean;
-    components: ScoredComponent[];
+    adjustment?: number;
+    possible?: number;
+    components: ScoredWork[];
     proposedOutcome: string;
     finalOutcome: string | null;
     overrideReason: string | null;
@@ -161,7 +204,12 @@ export interface ReviewQueueItem {
   isLate: boolean;
   kind: 'task' | 'quiz' | 'interview';
   title: string;
-  componentKey: string | null;
+  /** What approving it can earn the candidate (rating out of 5, pro rata). */
+  points?: number;
+  required?: boolean;
+  /** Which piece of the pool's work this submission is. */
+  assignmentId?: string | null;
+  componentKey?: string | null;
   member: { id: string; name: string; email: string };
 }
 
@@ -172,13 +220,41 @@ export interface PlacementPreview {
   insufficientCapacity: boolean;
 }
 
+/** A roadmap step as the work picker shows it. */
+export interface RoadmapStepOption {
+  id: string;
+  title: string;
+  type: string;
+  difficulty?: Difficulty | null;
+  taskOrder?: number;
+  estimatedHours?: number | null;
+  /** False for a quiz or interview step: it is assigned through its own kit. */
+  assignable: boolean;
+}
+
+export interface RoadmapOption {
+  id: string;
+  name: string;
+  description: string | null;
+  published: boolean;
+  source: string;
+  totalWeeks: number | null;
+  stepCount: number;
+  assignableCount: number;
+  steps: RoadmapStepOption[];
+}
+
 export interface PoolOptions {
   programs: { id: string; name: string }[];
   cohorts: { id: string; name: string }[];
   clans: { id: string; name: string; maxMentees: number | null }[];
   quizKits: { id: string; title: string }[];
   interviewKits: { id: string; title: string }[];
-  roadmapSteps: { id: string; title: string; type: string; difficulty?: string | null; roadmap?: { name: string } }[];
+  /** Roadmaps with their steps, in teaching order — what the picker opens. */
+  roadmaps: RoadmapOption[];
+  /** Flat list of assignable steps. Kept for search; the tree is the picker. */
+  roadmapSteps: (RoadmapStepOption & { roadmapId: string; roadmap?: { id: string; name: string } })[];
+  difficultyPoints: DifficultyPoints;
 }
 
 export interface PoolHistoryEvent {
@@ -214,12 +290,27 @@ export interface ReviewVersion {
 
 export interface ReviewDetail {
   submissionId: string;
-  task: { id: string; status: string; kind: string; title: string; description?: string; deliverable?: string; acceptanceCriteria: string[]; dueDate: string | null; isLate: boolean };
+  task: {
+    id: string; status: string; kind: string; title: string;
+    description?: string; deliverable?: string; acceptanceCriteria: string[];
+    dueDate: string | null; isLate: boolean;
+    /** What approving it earns, and whether it is required. */
+    points?: number; required?: boolean; assignmentId?: string | null;
+  };
   candidate: { id: string; name: string; email: string } | null;
   versions: ReviewVersion[];
 }
 
 export interface BatchResult { summary: Record<string, number>; results: { memberId?: string; result: string; reason?: string; code?: string }[] }
+export interface RoadmapBatchResult {
+  assignments: PoolAssignment[];
+  summary: { added: number; skipped: number; failed: number };
+  results: { roadmapTaskId: string; result: 'added' | 'skipped' | 'failed'; reason?: string; assignmentId?: string }[];
+}
+export interface MemberAssignResult {
+  summary: { assigned: number; skipped: number; failed: number };
+  results: { assignmentId: string; title: string; result: string; reason?: string; taskId?: string }[];
+}
 
 /** Every endpoint answers `{ success, message, data }`; `apiClient` hands back that body. */
 type Envelope<T> = { data: T };
@@ -244,7 +335,8 @@ export const poolApi = {
   resendInvite: (id: string, memberId: string) => apiClient.post(`/pools/${id}/members/${memberId}/resend-invite`, {}),
   withdraw: (id: string, memberId: string, reason: string) => apiClient.post(`/pools/${id}/members/${memberId}/withdraw`, { reason }),
   disqualify: (id: string, memberId: string, reason: string) => apiClient.post(`/pools/${id}/members/${memberId}/disqualify`, { reason }),
-  setManualScore: (id: string, memberId: string, body: { componentKey: string; score: number | null; note?: string }) =>
+  /** The one hand-entered number: points added to or taken off a candidate's total. */
+  setAdjustment: (id: string, memberId: string, body: { score: number | null; note?: string }) =>
     apiClient.put(`/pools/${id}/members/${memberId}/manual-score`, body),
 
   assignments: (id: string) => apiClient.get<Envelope<{ assignments: PoolAssignment[] }>>(`/pools/${id}/assignments`).then((r) => r.data.assignments ?? []),
@@ -252,6 +344,20 @@ export const poolApi = {
     apiClient.post<Envelope<{ assignment: PoolAssignment; assigned: BatchResult | null }>>(`/pools/${id}/assignments`, body).then((r) => r.data),
   assign: (id: string, assignmentId: string, memberIds?: string[]) =>
     apiClient.post<Envelope<BatchResult>>(`/pools/${id}/assignments/${assignmentId}/assign`, memberIds ? { memberIds } : {}).then((r) => r.data),
+  /** Several roadmap steps in one go — one request per pass over a roadmap. */
+  addRoadmapSteps: (id: string, body: {
+    roadmapTaskIds: string[];
+    required?: boolean;
+    dueAt?: string | null;
+    points?: Record<string, number>;
+    assignTo?: 'all' | string[] | null;
+  }) => apiClient.post<Envelope<RoadmapBatchResult>>(`/pools/${id}/assignments/from-roadmap`, body).then((r) => r.data),
+  /** Re-price a piece of work, or change whether it is required / when it is due. */
+  updateAssignment: (id: string, assignmentId: string, body: { points?: number; required?: boolean; dueAt?: string | null }) =>
+    apiClient.patch<Envelope<{ assignment: PoolAssignment }>>(`/pools/${id}/assignments/${assignmentId}`, body).then((r) => r.data.assignment),
+  /** Chosen work → one candidate. Omit `assignmentIds` for everything in the pool. */
+  assignToMember: (id: string, memberId: string, assignmentIds?: string[]) =>
+    apiClient.post<Envelope<MemberAssignResult>>(`/pools/${id}/members/${memberId}/assign`, assignmentIds ? { assignmentIds } : {}).then((r) => r.data),
   cancelAssignment: (id: string, assignmentId: string, reason?: string) =>
     apiClient.post(`/pools/${id}/assignments/${assignmentId}/cancel`, { reason }),
 
@@ -261,7 +367,10 @@ export const poolApi = {
     apiClient.post<Envelope<ReviewDetail>>(`/pools/${id}/submissions/${submissionId}/review`, body).then((r) => r.data),
 
   scores: (id: string) =>
-    apiClient.get<Envelope<{ rows: ScoreRow[]; blockers: Blocker[]; warnings: Blocker[] }>>(`/pools/${id}/scores`).then((r) => r.data),
+    apiClient.get<Envelope<{
+      rows: ScoreRow[]; blockers: Blocker[]; warnings: Blocker[];
+      possible: number; work: ScoreColumn[]; policy: ScoringPolicy;
+    }>>(`/pools/${id}/scores`).then((r) => r.data),
   shortlists: (id: string) => apiClient.get<Envelope<{ shortlists: Shortlist[] }>>(`/pools/${id}/shortlists`).then((r) => r.data.shortlists ?? []),
   generateShortlist: (id: string) =>
     apiClient.post<Envelope<{ shortlist: Shortlist; reused: boolean }>>(`/pools/${id}/shortlists`, {}).then((r) => r.data),
@@ -277,11 +386,22 @@ export const poolApi = {
     apiClient.put(`/pools/${id}/placement/targets`, { targets }),
   place: (id: string, memberIds?: string[]) =>
     apiClient.post<Envelope<BatchResult>>(`/pools/${id}/placement/run`, memberIds ? { memberIds } : {}).then((r) => r.data),
+
+  // The pool photo. Crop → upload file → save URL, as a clan photo does.
+  uploadAvatar: (id: string, body: FormData) =>
+    apiClient.post<Envelope<{ url: string }>>(`/pools/${id}/avatar/upload`, body).then((r) => r.data),
+  setAvatar: (id: string, avatarUrl: string) =>
+    apiClient.put<Envelope<{ avatarUrl: string }>>(`/pools/${id}/avatar`, { avatarUrl }).then((r) => r.data),
+  removeAvatar: (id: string) => apiClient.delete(`/pools/${id}/avatar`),
 };
 
 export interface CandidatePoolSummary {
   memberId: string;
-  pool: { id: string; name: string; description: string | null; status: PoolStatus; qualificationDueAt: string | null; program?: { name: string } };
+  pool: {
+    id: string; name: string; description: string | null; status: PoolStatus;
+    qualificationDueAt: string | null; avatarUrl?: string | null;
+    program?: { id?: string; name: string };
+  };
   progress: { total: number; completed: number; submitted: number; changesRequested: number };
   outcome: { decision: PoolDecision; placedClan: { id: string; name: string } | null } | null;
 }

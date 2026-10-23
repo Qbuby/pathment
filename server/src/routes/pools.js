@@ -65,8 +65,18 @@ pools.put('/:id/members/:memberId/manual-score', can(P.POOL_REVIEW), pool.setMan
 // Qualifying work
 pools.get('/:id/assignments', canRead, pool.listAssignments);
 pools.post('/:id/assignments', can(P.POOL_ASSIGN), pool.createAssignment);
+// Several roadmap steps at once — the picker is a browse, not one form per step.
+pools.post('/:id/assignments/from-roadmap', can(P.POOL_ASSIGN), pool.addRoadmapSteps);
+pools.patch('/:id/assignments/:assignmentId', can(P.POOL_ASSIGN), pool.updateAssignment);
 pools.post('/:id/assignments/:assignmentId/assign', can(P.POOL_ASSIGN), pool.assign);
 pools.post('/:id/assignments/:assignmentId/cancel', can(P.POOL_ASSIGN), pool.cancelAssignment);
+// Chosen work → one candidate (the mirror of assigning one piece to everybody).
+pools.post('/:id/members/:memberId/assign', can(P.POOL_ASSIGN), pool.assignToMember);
+
+// The pool photo. Crop → upload file → save URL, exactly as a clan photo does.
+pools.post('/:id/avatar/upload', can(P.POOL_MANAGE), upload.singleSafe('file'), pool.uploadAvatar);
+pools.put('/:id/avatar', can(P.POOL_MANAGE), pool.setAvatar);
+pools.delete('/:id/avatar', can(P.POOL_MANAGE), pool.removeAvatar);
 
 // Review
 pools.get('/:id/review-queue', can(P.POOL_REVIEW), pool.reviewQueue);

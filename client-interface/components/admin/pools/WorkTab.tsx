@@ -2,17 +2,19 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { CalendarClock, Check, ClipboardList, FileQuestion, FileText, ListChecks, Loader2, Mic, Plus, Route, Scale, Search, Send, Trash2 } from 'lucide-react';
+import { CalendarClock, Check, ClipboardList, Coins, FileQuestion, FileText, ListChecks, Loader2, Mic, Plus, Route, Send, Trash2, UserPlus, Users } from 'lucide-react';
 import { Drawer } from '@/components/shared/Drawer';
 import RichTextEditor from '@/components/shared/RichTextEditor';
 import { TaskTimingRow, type TaskDueDraft } from '@/components/mentor/TaskTimingRow';
 import { initialTaskSchedule } from '@/components/mentor/TaskScheduleFields';
 import { cleanHtml } from '@/lib/utils/html';
-import { useApiQuery } from '@/lib/query';
+import { qk, useApiQuery } from '@/lib/query';
 import { useConfirm } from '@/lib/context/ConfirmContext';
 import { poolApi, type PoolAssignment, type PoolDashboard } from '@/lib/services/pool-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
-import { Chip, EmptyState, PanelHeader, SOURCE_LABEL, Spinner, WORK_STATUS, fmtDate, panel, primaryBtn, secondaryBtn } from './poolUi';
+import { AssignWorkDrawer } from './AssignWorkDrawer';
+import { RoadmapStepPicker } from './RoadmapStepPicker';
+import { Chip, DIFFICULTY_POINTS_FALLBACK, EmptyState, PanelHeader, Spinner, WORK_STATUS, fmtDate, panel, primaryBtn, pts, secondaryBtn } from './poolUi';
 
 const KIND_ICON = { task: ClipboardList, quiz: FileQuestion, interview: Mic } as const;
 const KIND_TONE = { task: 'bg-brand-50 text-brand-600', quiz: 'bg-blue-50 text-blue-600', interview: 'bg-amber-50 text-amber-600' } as const;
@@ -38,13 +40,27 @@ const checkboxCls = 'mt-0.5 w-4 h-4 rounded border-slate-300 text-brand-600 focu
 /** 'YYYY-MM-DD' in the viewer's zone. */
 const dayKey = (d: Date) => d.toLocaleDateString('en-CA');
 
+/**
+ * Adding a piece of qualifying work.
+ *
+ * Two ways in, because they are two different jobs. "From roadmap" is a browse
+ * — open a roadmap, read its steps, tick several — and it adds as many pieces
+ * of work as were ticked in one request. "Custom" is an author: one piece,
+ * written here, which is also how a quiz or an interview kit is handed out.
+ *
+ * What a piece of work is WORTH is settled here, next to the work, defaulted
+ * from its difficulty. That replaced a separate scoring policy of weighted
+ * components: an operator had to describe the round twice and the two drifted
+ * apart.
+ */
 function AddWorkDrawer({ data, onClose, onDone }: { data: PoolDashboard; onClose: () => void; onDone: () => void }) {
   const { pool } = data;
-  const components = pool.scoringPolicy?.components || [];
-  const scorable = components.filter((c) => c.source !== 'manual');
-  const { data: options } = useApiQuery({ queryKey: ['pools', 'options', pool.programId], queryFn: () => poolApi.options(pool.programId) });
+  const { data: options, loading: optionsLoading } = useApiQuery({
+    queryKey: qk.pool.options(pool.programId),
+    queryFn: () => poolApi.options(pool.programId),
+  });
 
-  const [source, setSource] = useState<'custom' | 'roadmap'>('custom');
+  const [source, setSource] = useState<'roadmap' | 'custom'>('roadmap');
   const [type, setType] = useState<WorkType>('assignment');
   const kind = type === 'quiz' ? 'quiz' : type === 'interview' ? 'interview' : 'task';
   const [title, setTitle] = useState('');
@@ -52,19 +68,25 @@ function AddWorkDrawer({ data, onClose, onDone }: { data: PoolDashboard; onClose
   const [difficulty, setDifficulty] = useState<typeof DIFFICULTIES[number]>('medium');
   const [deliverable, setDeliverable] = useState('');
   const [criteria, setCriteria] = useState<string[]>([]);
-  const [roadmapTaskId, setRoadmapTaskId] = useState('');
-  const [stepQuery, setStepQuery] = useState('');
+  const [steps, setSteps] = useState<string[]>([]);
   const [kitId, setKitId] = useState('');
   const [evaluationMode, setEvaluationMode] = useState<'auto' | 'review'>('auto');
   const [allowRetake, setAllowRetake] = useState(false);
-  const [componentKey, setComponentKey] = useState('');
   const [required, setRequired] = useState(true);
-  const [assignNow, setAssignNow] = useState(true);
+  const [who, setWho] = useState<'all' | 'later'>('all');
+  // Blank means "whatever its difficulty is worth" — the common case, and the
+  // one an operator should not have to type.
+  const [points, setPoints] = useState('');
   // Due defaults to the pool's qualification deadline, as before.
   const deadline = pool.qualificationDueAt ? new Date(pool.qualificationDueAt) : null;
   const [due, setDue] = useState<TaskDueDraft>(deadline ? { days: 7, exact: dayKey(deadline) } : { days: 7, exact: '' });
   const [schedule, setSchedule] = useState(initialTaskSchedule);
   const [busy, setBusy] = useState(false);
+
+  const curve = { ...DIFFICULTY_POINTS_FALLBACK, ...(options?.difficultyPoints || {}), ...(pool.scoringPolicy?.difficultyPoints || {}) };
+  // Steps already in this pool, so the picker can say so instead of hiding them.
+  const taken = new Set(data.assignments.filter((a) => !a.cancelledAt).map((a) => a.roadmapTask?.id).filter(Boolean) as string[]);
+  const kits = (kind === 'quiz' ? options?.quizKits : options?.interviewKits) || [];
 
   // Switching between a quiz and an interview means a different kit list.
   const pickType = (t: WorkType) => {
@@ -80,39 +102,69 @@ function AddWorkDrawer({ data, onClose, onDone }: { data: PoolDashboard; onClose
     return d.toISOString();
   };
 
-  const steps = options?.roadmapSteps || [];
-  const q = stepQuery.trim().toLowerCase();
-  const shownSteps = q ? steps.filter((s) => `${s.title} ${s.roadmap?.name || ''} ${s.type}`.toLowerCase().includes(q)) : steps;
-  const kits = (kind === 'quiz' ? options?.quizKits : options?.interviewKits) || [];
+  /** What the selection adds up to, so the round's weight is visible as it is built. */
+  const selectedWorth = (() => {
+    const flat = options?.roadmapSteps || [];
+    const typed = points === '' ? null : Number(points);
+    return steps.reduce((sum, id) => {
+      const step = flat.find((sp) => sp.id === id);
+      return sum + (typed ?? curve[String(step?.difficulty || 'medium') as keyof typeof curve] ?? curve.medium);
+    }, 0);
+  })();
+
+  const customWorth = points === '' ? (curve[difficulty] ?? curve.medium) : Number(points) || 0;
+  const assignTo = who === 'all' ? 'all' as const : null;
 
   const submit = async () => {
-    const body: Record<string, unknown> = {
-      componentKey: componentKey || null,
-      required,
-      dueAt: dueAt(),
-      assignTo: assignNow ? 'all' : undefined,
-    };
-    if (source === 'roadmap') {
-      if (!roadmapTaskId) return toast.error('Choose a roadmap step');
-      Object.assign(body, { kind: 'task', roadmapTaskId });
-    } else if (kind === 'task') {
-      if (!title.trim()) return toast.error('Give the work a title');
-      Object.assign(body, {
-        kind, title: title.trim(), description: cleanHtml(description), type, difficulty,
-        deliverable, acceptanceCriteria: criteria.map((c) => c.trim()).filter(Boolean),
-      });
-    } else {
-      if (!kitId) return toast.error(kind === 'quiz' ? 'Choose a quiz' : 'Choose an interview kit');
-      Object.assign(body, {
-        kind, kitId, title: title.trim() || undefined, description: cleanHtml(description) || undefined,
-        ...(kind === 'quiz' ? { evaluationMode, allowRetake } : {}),
-      });
+    const typedPoints = points === '' ? undefined : Number(points);
+    if (typedPoints !== undefined && (!Number.isInteger(typedPoints) || typedPoints < 0)) {
+      return toast.error('Points must be a whole number, or left blank to use the difficulty');
     }
     setBusy(true);
     try {
-      const out = await poolApi.createAssignment(pool.id, body);
-      const s = out?.assigned?.summary;
-      toast.success(s ? `Work created and given to ${s.assigned} candidate${s.assigned === 1 ? '' : 's'}` : 'Work created');
+      if (source === 'roadmap') {
+        if (!steps.length) { setBusy(false); return toast.error('Choose at least one roadmap step'); }
+        const out = await poolApi.addRoadmapSteps(pool.id, {
+          roadmapTaskIds: steps,
+          required,
+          dueAt: dueAt(),
+          // One typed number applies to every step chosen; left blank, each
+          // step keeps its own difficulty's points.
+          points: typedPoints === undefined ? undefined : Object.fromEntries(steps.map((id) => [id, typedPoints])),
+          assignTo,
+        });
+        const { added, skipped, failed } = out.summary;
+        if (added) toast.success(`${added} ${added === 1 ? 'piece' : 'pieces'} of work added${skipped ? ` · ${skipped} already there` : ''}`);
+        else if (skipped) toast.info('Every step chosen was already part of this pool');
+        if (failed) {
+          const first = out.results.find((r) => r.result === 'failed');
+          toast.error(`${failed} could not be added${first?.reason ? `: ${first.reason}` : ''}`);
+        }
+        if (!added && !skipped) { setBusy(false); return; }
+      } else {
+        const body: Record<string, unknown> = {
+          required,
+          dueAt: dueAt(),
+          points: typedPoints,
+          assignTo: assignTo ?? undefined,
+        };
+        if (kind === 'task') {
+          if (!title.trim()) { setBusy(false); return toast.error('Give the work a title'); }
+          Object.assign(body, {
+            kind, title: title.trim(), description: cleanHtml(description), type, difficulty,
+            deliverable, acceptanceCriteria: criteria.map((c) => c.trim()).filter(Boolean),
+          });
+        } else {
+          if (!kitId) { setBusy(false); return toast.error(kind === 'quiz' ? 'Choose a quiz' : 'Choose an interview kit'); }
+          Object.assign(body, {
+            kind, kitId, title: title.trim() || undefined, description: cleanHtml(description) || undefined,
+            ...(kind === 'quiz' ? { evaluationMode, allowRetake } : {}),
+          });
+        }
+        const out = await poolApi.createAssignment(pool.id, body);
+        const n = out?.assigned?.summary?.assigned;
+        toast.success(n ? `Work created and given to ${n} candidate${n === 1 ? '' : 's'}` : 'Work created');
+      }
       onDone();
       onClose();
     } catch (e) {
@@ -122,6 +174,10 @@ function AddWorkDrawer({ data, onClose, onDone }: { data: PoolDashboard; onClose
     }
   };
 
+  const cta = source === 'roadmap'
+    ? steps.length ? `Add ${steps.length} ${steps.length === 1 ? 'step' : 'steps'}` : 'Add work'
+    : who === 'all' ? 'Add & give it out' : 'Add work';
+
   return (
     <Drawer
       open
@@ -130,35 +186,53 @@ function AddWorkDrawer({ data, onClose, onDone }: { data: PoolDashboard; onClose
       subtitle={`For the candidates in ${pool.name}`}
       width="lg"
       footer={(dismiss) => (
-        <div className="flex justify-end gap-2">
-          <button onClick={dismiss} className="px-4 py-2 border border-slate-200 text-slate-700 rounded-xl text-sm hover:bg-slate-50">Cancel</button>
-          <button onClick={submit} disabled={busy} className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm font-medium inline-flex items-center gap-2 disabled:opacity-50">
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} {assignNow ? 'Add & assign' : 'Add work'}
-          </button>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {source === 'roadmap'
+              ? steps.length ? `Worth ${pts(selectedWorth)} in total` : 'Nothing chosen yet'
+              : `Worth ${pts(customWorth)}`}
+          </span>
+          <div className="flex gap-2">
+            <button onClick={dismiss} className="rounded-xl border border-slate-200 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">Cancel</button>
+            <button onClick={submit} disabled={busy} className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} {cta}
+            </button>
+          </div>
         </div>
       )}
     >
       <div className="space-y-5">
-        {/* Source tabs — a new piece of work vs a step from a roadmap. */}
-        <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl">
-          {([['custom', 'Custom task', FileText], ['roadmap', 'From roadmap', Route]] as const).map(([key, text, Icon]) => (
+        {/* Where the work comes from. A roadmap first: most rounds reuse the curriculum. */}
+        <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1">
+          {([['roadmap', 'From a roadmap', Route], ['custom', 'Write one', FileText]] as const).map(([key, text, Icon]) => (
             <button key={key} type="button" onClick={() => setSource(key)} aria-pressed={source === key}
-              className={`inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${source === key ? 'bg-card text-brand-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>
-              <Icon className="w-4 h-4" />{text}
+              className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${source === key ? 'bg-card text-brand-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>
+              <Icon className="h-4 w-4" />{text}
             </button>
           ))}
         </div>
 
+        {source === 'roadmap' && (
+          <RoadmapStepPicker
+            roadmaps={options?.roadmaps}
+            loading={optionsLoading}
+            takenTaskIds={taken}
+            selected={steps}
+            onSelectedChange={setSteps}
+            difficultyPoints={curve}
+          />
+        )}
+
         {source === 'custom' && (<>
           <div>
-            <label htmlFor="pool-work-title" className="block text-sm font-medium text-slate-700 mb-1">
+            <label htmlFor="pool-work-title" className="mb-1 block text-sm font-medium text-slate-700">
               Title {kind === 'task' ? <span className="text-red-500">*</span> : <span className="font-normal text-slate-400">(optional — defaults to the kit&apos;s name)</span>}
             </label>
             <input id="pool-work-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Build a small REST API" className={inputCls} />
           </div>
 
           <div>
-            <span className="block text-sm font-medium text-slate-700 mb-1.5">Type</span>
+            <span className="mb-1.5 block text-sm font-medium text-slate-700">Type</span>
             <div className="flex flex-wrap gap-2">
               {TYPES.map((t) => (
                 <button key={t} type="button" onClick={() => pickType(t)} className={pill(type === t)} aria-pressed={type === t}>{TYPE_LABEL[t]}</button>
@@ -167,13 +241,13 @@ function AddWorkDrawer({ data, onClose, onDone }: { data: PoolDashboard; onClose
           </div>
 
           {kind !== 'task' && (
-            <div className="rounded-xl border border-brand-200 bg-brand-50/50 dark:bg-brand-500/5 p-4 space-y-3">
+            <div className="space-y-3 rounded-xl border border-brand-200 bg-brand-50/50 p-4 dark:bg-brand-500/5">
               <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
-                {kind === 'quiz' ? <ListChecks className="w-4 h-4 text-brand-600" /> : <Mic className="w-4 h-4 text-brand-600" />}
+                {kind === 'quiz' ? <ListChecks className="h-4 w-4 text-brand-600" /> : <Mic className="h-4 w-4 text-brand-600" />}
                 {kind === 'quiz' ? 'Quiz' : 'Interview kit'} <span className="text-red-500">*</span>
               </div>
-              {!options ? (
-                <div className="flex items-center gap-2 text-sm text-slate-400 py-1"><Loader2 className="w-4 h-4 animate-spin text-brand-600" />Loading…</div>
+              {optionsLoading ? (
+                <div className="flex items-center gap-2 py-1 text-sm text-slate-400"><Loader2 className="h-4 w-4 animate-spin text-brand-600" />Loading…</div>
               ) : kits.length === 0 ? (
                 <p className="text-sm text-slate-500">No <span className="font-medium">published</span> {kind === 'quiz' ? 'quizzes' : 'interview kits'} to assign.</p>
               ) : (
@@ -184,21 +258,21 @@ function AddWorkDrawer({ data, onClose, onDone }: { data: PoolDashboard; onClose
               )}
               {kind === 'quiz' && (<>
                 <div>
-                  <span className="block text-xs font-medium text-slate-600 mb-1.5">How to grade</span>
+                  <span className="mb-1.5 block text-xs font-medium text-slate-600">How to grade</span>
                   <div className="grid grid-cols-2 gap-2">
                     {([
                       ['auto', 'Auto-grade', 'The score counts the moment they submit'],
                       ['review', 'Reviewer confirms', 'Auto-scored, but a reviewer confirms it'],
                     ] as const).map(([val, text, hint]) => (
                       <button key={val} type="button" onClick={() => setEvaluationMode(val)}
-                        className={`text-left rounded-lg border p-2.5 ${evaluationMode === val ? 'border-brand-400 bg-brand-50 dark:bg-brand-500/10' : 'border-slate-200 hover:border-slate-300'}`}>
+                        className={`rounded-lg border p-2.5 text-left ${evaluationMode === val ? 'border-brand-400 bg-brand-50 dark:bg-brand-500/10' : 'border-slate-200 hover:border-slate-300'}`}>
                         <span className="block text-sm font-medium text-slate-800">{text}</span>
-                        <span className="block text-[11px] text-slate-500 mt-0.5">{hint}</span>
+                        <span className="mt-0.5 block text-[11px] text-slate-500">{hint}</span>
                       </button>
                     ))}
                   </div>
                 </div>
-                <label className="flex items-start gap-2.5 cursor-pointer pt-1">
+                <label className="flex cursor-pointer items-start gap-2.5 pt-1">
                   <input type="checkbox" checked={allowRetake} onChange={(e) => setAllowRetake(e.target.checked)} className={checkboxCls} />
                   <span className="text-sm text-slate-700">Allow re-attempt<span className="block text-[11px] text-slate-400">Off = strict one-take</span></span>
                 </label>
@@ -208,69 +282,38 @@ function AddWorkDrawer({ data, onClose, onDone }: { data: PoolDashboard; onClose
           )}
         </>)}
 
-        {source === 'roadmap' && (
-          <div>
-            <div className="flex items-baseline justify-between gap-2 mb-1.5">
-              <span className="block text-sm font-medium text-slate-700">Pick a roadmap step</span>
-              {steps.length > 0 && <span className="text-xs text-slate-400 tabular-nums">{shownSteps.length} of {steps.length}</span>}
-            </div>
-            <div className="relative mb-2">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
-              <input value={stepQuery} onChange={(e) => setStepQuery(e.target.value)} placeholder="Search steps or roadmaps…" aria-label="Search roadmap steps" className={`${inputCls} pl-9`} />
-            </div>
-            {!options ? (
-              <div className="flex items-center gap-2 text-sm text-slate-400 py-1"><Loader2 className="w-4 h-4 animate-spin text-brand-600" />Loading steps…</div>
-            ) : shownSteps.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-500">
-                {steps.length ? 'No step matches that search.' : 'This programme has no roadmap steps that can be handed in.'}
-              </p>
-            ) : (
-              <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
-                {shownSteps.map((s) => (
-                  <button key={s.id} type="button" onClick={() => setRoadmapTaskId(s.id)} aria-pressed={roadmapTaskId === s.id}
-                    className={`flex w-full items-start justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${roadmapTaskId === s.id ? 'border-brand-400 bg-brand-50 dark:bg-brand-500/10' : 'border-slate-200 hover:border-slate-300'}`}>
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-medium text-slate-800">{s.title}</span>
-                      <span className="block truncate text-[11px] text-slate-500">{s.roadmap?.name || 'Roadmap'} · <span className="capitalize">{s.type.replace('_', ' ')}</span>{s.difficulty ? <> · <span className="capitalize">{s.difficulty}</span></> : null}</span>
-                    </span>
-                    {roadmapTaskId === s.id && <Check className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" />}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
         {/* The same timing control as the mentor drawer. A pool round does not repeat. */}
-        <TaskTimingRow due={due} onDueChange={setDue} schedule={schedule} onScheduleChange={setSchedule} repeat={false} assigning={assignNow} />
+        <TaskTimingRow due={due} onDueChange={setDue} schedule={schedule} onScheduleChange={setSchedule} repeat={false} assigning={who === 'all'} />
 
         {source === 'custom' && (<>
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Brief</label>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Brief</label>
             <RichTextEditor content={description} onChange={setDescription} placeholder="Optional — what should they do?" minHeight="120px" />
           </div>
 
           {kind === 'task' && (<>
             <div>
-              <span className="block text-sm font-medium text-slate-700 mb-1.5">Difficulty</span>
+              <span className="mb-1.5 block text-sm font-medium text-slate-700">Difficulty</span>
               <div className="flex flex-wrap gap-1.5">
                 {DIFFICULTIES.map((d) => (
-                  <button key={d} type="button" onClick={() => setDifficulty(d)} className={`${pill(difficulty === d)} capitalize`} aria-pressed={difficulty === d}>{d}</button>
+                  <button key={d} type="button" onClick={() => setDifficulty(d)} className={`${pill(difficulty === d)} capitalize`} aria-pressed={difficulty === d}>
+                    {d} <span className="font-normal opacity-60">· {curve[d] ?? curve.medium} pts</span>
+                  </button>
                 ))}
               </div>
             </div>
 
             <details className="rounded-xl border border-border p-4">
-              <summary className="cursor-pointer text-sm font-medium">Deliverable &amp; checks <span className="text-muted-foreground font-normal">(optional)</span></summary>
-              <div className="space-y-4 mt-4">
+              <summary className="cursor-pointer text-sm font-medium">Deliverable &amp; checks <span className="font-normal text-muted-foreground">(optional)</span></summary>
+              <div className="mt-4 space-y-4">
                 <div>
-                  <label htmlFor="pool-work-deliverable" className="block text-sm font-medium text-slate-700 mb-1">Deliverable</label>
+                  <label htmlFor="pool-work-deliverable" className="mb-1 block text-sm font-medium text-slate-700">Deliverable</label>
                   <input id="pool-work-deliverable" value={deliverable} onChange={(e) => setDeliverable(e.target.value)} placeholder="What should they submit?" className={inputCls} />
                 </div>
                 <div>
-                  <div className="flex items-center justify-between mb-1.5">
+                  <div className="mb-1.5 flex items-center justify-between">
                     <span className="text-sm font-medium text-slate-700">Acceptance criteria</span>
-                    <button type="button" onClick={() => setCriteria((c) => [...c, ''])} className="text-xs font-medium text-brand-600 hover:text-brand-700 inline-flex items-center gap-1"><Plus className="w-3 h-3" /> Add check</button>
+                    <button type="button" onClick={() => setCriteria((c) => [...c, ''])} className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700"><Plus className="h-3 w-3" /> Add check</button>
                   </div>
                   <div className="space-y-2">
                     {criteria.length === 0 && <p className="text-xs text-slate-400">No criteria yet. Add checks the candidate must meet — reviewers tick them off.</p>}
@@ -278,7 +321,7 @@ function AddWorkDrawer({ data, onClose, onDone }: { data: PoolDashboard; onClose
                       <div key={i} className="flex items-center gap-2">
                         <input value={c} onChange={(e) => setCriteria((prev) => prev.map((x, j) => (j === i ? e.target.value : x)))}
                           placeholder={`Check ${i + 1}`} aria-label={`Acceptance criterion ${i + 1}`} className={inputCls} />
-                        <button type="button" onClick={() => setCriteria((prev) => prev.filter((_, j) => j !== i))} aria-label="Remove criterion" className="p-2 text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
+                        <button type="button" onClick={() => setCriteria((prev) => prev.filter((_, j) => j !== i))} aria-label="Remove criterion" className="p-2 text-slate-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
                       </div>
                     ))}
                   </div>
@@ -288,34 +331,114 @@ function AddWorkDrawer({ data, onClose, onDone }: { data: PoolDashboard; onClose
           </>)}
         </>)}
 
-        {/* What only a pool has: how the work counts, and who gets it. */}
-        <div className="rounded-xl border border-slate-200 p-4 space-y-4">
+        {/* What it is worth, and who gets it. */}
+        <div className="space-y-4 rounded-xl border border-slate-200 p-4">
           <div>
-            <span className="flex items-center gap-1.5 text-sm font-medium text-slate-700 mb-1.5"><Scale className="h-4 w-4 text-brand-600" />Counts towards</span>
-            {scorable.length ? (
-              <div className="flex flex-wrap gap-1.5">
-                <button type="button" onClick={() => setComponentKey('')} className={pill(componentKey === '')} aria-pressed={componentKey === ''}>Not scored</button>
-                {scorable.map((c) => (
-                  <button key={c.key} type="button" onClick={() => setComponentKey(c.key)} className={pill(componentKey === c.key)} aria-pressed={componentKey === c.key}>
-                    {c.label} <span className="font-normal opacity-70">· {c.weight}%</span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Set up scoring in Settings to link work to a score component.</p>
-            )}
+            <label htmlFor="pool-work-points" className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700">
+              <Coins className="h-4 w-4 text-brand-600" />What finishing it is worth
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                id="pool-work-points"
+                type="number"
+                min={0}
+                max={1000}
+                value={points}
+                onChange={(e) => setPoints(e.target.value)}
+                placeholder={source === 'roadmap' ? 'From each step’s difficulty' : String(curve[difficulty] ?? curve.medium)}
+                className={`${inputCls} max-w-40`}
+              />
+              <span className="text-sm text-slate-500">points</span>
+            </div>
+            <p className="mt-1.5 text-[11px] text-slate-400">
+              {source === 'roadmap'
+                ? 'Leave blank and each step is worth its own difficulty. A number here applies to every step chosen.'
+                : 'Leave blank to use the difficulty above. A five-star review earns all of it; three stars earns three fifths.'}
+            </p>
           </div>
-          <label className="flex items-start gap-2.5 cursor-pointer">
+
+          <label className="flex cursor-pointer items-start gap-2.5">
             <input type="checkbox" checked={required} onChange={(e) => setRequired(e.target.checked)} className={checkboxCls} />
             <span className="text-sm text-slate-700">Required<span className="block text-[11px] text-slate-400">Missing it is flagged on the shortlist</span></span>
           </label>
-          <label className="flex items-start gap-2.5 cursor-pointer">
-            <input type="checkbox" checked={assignNow} onChange={(e) => setAssignNow(e.target.checked)} className={checkboxCls} />
-            <span className="text-sm text-slate-700">Give it to every active candidate now<span className="block text-[11px] text-slate-400">Off = add it to the pool and assign it later from this tab</span></span>
-          </label>
+
+          <div>
+            <span className="mb-1.5 block text-sm font-medium text-slate-700">Who gets it</span>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {([
+                ['all', 'Every active candidate', Users, 'The usual case — everyone in the round'],
+                ['later', 'Nobody yet', UserPlus, 'Add it now and choose people from the Work tab'],
+              ] as const).map(([val, text, Icon, hint]) => (
+                <button key={val} type="button" onClick={() => setWho(val)} aria-pressed={who === val}
+                  className={`rounded-lg border p-2.5 text-left ${who === val ? 'border-brand-400 bg-brand-50 dark:bg-brand-500/10' : 'border-slate-200 hover:border-slate-300'}`}>
+                  <span className="flex items-center gap-1.5 text-sm font-medium text-slate-800"><Icon className="h-3.5 w-3.5 text-brand-600" />{text}</span>
+                  <span className="mt-0.5 block text-[11px] text-slate-500">{hint}</span>
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     </Drawer>
+  );
+}
+
+/** Re-pricing one piece of work in place, without a drawer for one number. */
+function PointsField({ poolId, assignment, onDone, disabled }: { poolId: string; assignment: PoolAssignment; onDone: () => void; disabled: boolean }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(String(assignment.points));
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 0 || n > 1000) return toast.error('Points must be a whole number from 0 to 1000');
+    if (n === assignment.points) { setEditing(false); return; }
+    setBusy(true);
+    try {
+      await poolApi.updateAssignment(poolId, assignment.id, { points: n });
+      toast.success(`“${assignment.title}” is now worth ${pts(n)}`);
+      setEditing(false);
+      onDone();
+    } catch (e) {
+      toast.error(extractApiErrorMessage(e, 'Could not change the points'));
+      setValue(String(assignment.points));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (disabled) {
+    return <Chip cls="bg-brand-50 text-brand-700 border-brand-200">{pts(assignment.points)}</Chip>;
+  }
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => { setValue(String(assignment.points)); setEditing(true); }}
+        title="Change what this is worth"
+        className="inline-flex items-center gap-1 rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700 transition-colors hover:border-brand-400"
+      >
+        <Coins className="h-3 w-3" aria-hidden="true" /> {pts(assignment.points)}
+      </button>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1">
+      <input
+        type="number"
+        min={0}
+        max={1000}
+        autoFocus
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') void save(); if (e.key === 'Escape') setEditing(false); }}
+        aria-label={`Points for ${assignment.title}`}
+        className="w-16 rounded-lg border border-brand-300 px-2 py-0.5 text-xs tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-500"
+      />
+      <button type="button" onClick={save} disabled={busy} aria-label="Save points" className="rounded p-0.5 text-brand-600 hover:bg-brand-50 disabled:opacity-50">
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+      </button>
+    </span>
   );
 }
 
@@ -323,9 +446,12 @@ export function WorkTab({ data, onChange, canAssign }: { data: PoolDashboard; on
   const { pool } = data;
   const confirm = useConfirm();
   const [adding, setAdding] = useState(false);
+  const [giving, setGiving] = useState<PoolAssignment | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const { data: assignments, loading, refetch } = useApiQuery({ queryKey: ['pools', pool.id, 'assignments'], queryFn: () => poolApi.assignments(pool.id) });
-  const components = pool.scoringPolicy?.components || [];
+  const { data: assignments, loading, refetch } = useApiQuery({
+    queryKey: qk.pool.assignments(pool.id),
+    queryFn: () => poolApi.assignments(pool.id),
+  });
   const reload = async () => { await refetch(); onChange(); };
 
   const giveToAll = async (a: PoolAssignment) => {
@@ -353,29 +479,36 @@ export function WorkTab({ data, onChange, canAssign }: { data: PoolDashboard; on
   };
 
   const list = assignments || [];
+  const live = list.filter((a) => !a.cancelledAt);
+  // What a candidate who finishes everything would earn. Worth stating: it is
+  // the denominator every score on the Shortlist tab is read against.
+  const totalWorth = live.reduce((sum, a) => sum + a.points, 0);
+  const requiredWorth = live.filter((a) => a.required).reduce((sum, a) => sum + a.points, 0);
+  const editable = canAssign && pool.status !== 'closed';
   return (
     <div className="space-y-4">
       <section className={panel}>
         <PanelHeader
           icon={ClipboardList}
           title="Qualifying work"
-          count={list.filter((a) => !a.cancelledAt).length}
-          subtitle="Tasks, quizzes and interviews candidates complete to earn their score."
-          actions={canAssign && pool.status !== 'closed' && (
+          count={live.length}
+          subtitle={live.length
+            ? `Tasks, quizzes and interviews candidates complete to earn points. A perfect round is worth ${pts(totalWorth)}${requiredWorth !== totalWorth ? ` (${pts(requiredWorth)} of it required)` : ''}.`
+            : 'Tasks, quizzes and interviews candidates complete to earn points.'}
+          actions={editable && (
             <button onClick={() => setAdding(true)} className={primaryBtn}><Plus className="h-4 w-4" /> Add work</button>
           )}
         />
         {loading && <Spinner />}
         {!loading && list.length === 0 && (
           <div className="border-t border-border">
-            <EmptyState icon={ClipboardList} title="No qualifying work yet" text="Add a special assignment, a roadmap step, a quiz or an interview, and link it to a score component." />
+            <EmptyState icon={ClipboardList} title="No qualifying work yet" text="Open a roadmap and pick the steps this round should use, or write a custom task, a quiz or an interview." />
           </div>
         )}
         {list.length > 0 && (
           <ul className="divide-y divide-border border-t border-border">
             {list.map((a) => {
               const Icon = KIND_ICON[a.kind];
-              const component = components.find((c) => c.key === a.componentKey);
               const counts = a.counts || {};
               const total = Object.entries(counts).filter(([k]) => k !== 'cancelled').reduce((s, [, n]) => s + n, 0);
               const approved = counts.completed || 0;
@@ -392,16 +525,18 @@ export function WorkTab({ data, onChange, canAssign }: { data: PoolDashboard; on
                           <span className="rounded-full bg-muted px-2 py-0.5 font-medium capitalize text-slate-600">{a.kind === 'task' ? (a.roadmapTask?.type || 'task').replace('_', ' ') : a.kind}</span>
                           <span className={`rounded-full px-2 py-0.5 font-medium ${a.required ? 'bg-brand-50 text-brand-700' : 'bg-muted text-slate-500'}`}>{a.required ? 'Required' : 'Optional'}</span>
                           <span className="inline-flex items-center gap-1 text-muted-foreground"><CalendarClock className="h-3.5 w-3.5" /> Due {fmtDate(a.dueAt)}</span>
-                          <span className="text-muted-foreground">
-                            · {component ? `Feeds “${component.label}” (${component.weight}%, ${SOURCE_LABEL[component.source]})` : 'Not scored'}
-                          </span>
+                          <PointsField poolId={pool.id} assignment={a} onDone={reload} disabled={!editable || Boolean(a.cancelledAt)} />
                         </div>
                       </div>
                     </div>
-                    {a.cancelledAt ? <Chip cls="bg-slate-100 text-slate-500 border-slate-200">Cancelled</Chip> : canAssign && pool.status !== 'closed' && (
-                      <div className="flex gap-2">
+                    {a.cancelledAt ? <Chip cls="bg-slate-100 text-slate-500 border-slate-200">Cancelled</Chip> : editable && (
+                      <div className="flex flex-wrap gap-2">
                         <button onClick={() => giveToAll(a)} disabled={busyId === a.id} className={secondaryBtn}>
-                          {busyId === a.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Give to everyone
+                          {busyId === a.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />} Give to everyone
+                        </button>
+                        {/* The half that was missing: this work, these people. */}
+                        <button onClick={() => setGiving(a)} className={secondaryBtn}>
+                          <Send className="h-4 w-4" /> Choose who
                         </button>
                         <button onClick={() => cancel(a)} title="Cancel this work" aria-label="Cancel this work" className={`${secondaryBtn} text-rose-600 hover:bg-rose-50`}><Trash2 className="h-4 w-4" /></button>
                       </div>
@@ -430,6 +565,7 @@ export function WorkTab({ data, onChange, canAssign }: { data: PoolDashboard; on
         )}
       </section>
       {adding && <AddWorkDrawer data={data} onClose={() => setAdding(false)} onDone={reload} />}
+      {giving && <AssignWorkDrawer data={data} assignment={giving} onClose={() => setGiving(null)} onDone={reload} />}
     </div>
   );
 }

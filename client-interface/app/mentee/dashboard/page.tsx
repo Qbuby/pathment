@@ -35,6 +35,8 @@ import {
   type SubmitTaskTarget,
 } from "@/components/mentee/SubmitTaskDrawer";
 import { useClan, isHistoricalCohortClan } from "@/lib/context/ClanContext";
+import { useMenteeScope } from "@/lib/hooks/mentee";
+import { PoolQualification } from "@/components/mentee/pool/PoolQualification";
 
 function WhatsAppGroupCard({
   enrollment,
@@ -895,6 +897,16 @@ export default function MenteeDashboard() {
   // Standing and cohort clans share the same mentee home — clan scope (X-Active-Clan)
   // and useMenteeTasks already isolate standing work from completed-cohort enrollments.
   // Frozen-clan notice only on This Week (not every mentee tab).
+  const scope = useMenteeScope();
+
+  /*
+   * A selection-pool candidate has no clan, no mentor and no roadmap, so the
+   * clan home has nothing to show them — it would be a page of empty cards
+   * about things that only exist once they are placed. Their round is the
+   * same workspace with the scope switched, so the home switches with it.
+   */
+  if (scope.inPool) return <PoolQualification poolId={scope.pool?.id} />;
+
   return (
     <>
       <ClanWorkspaceNotice role="mentee" />
