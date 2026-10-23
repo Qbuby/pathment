@@ -21,8 +21,10 @@ interface FollowUpPage {
     avatarUrl?: string;
     risk: string;
     riskReason: string;
+    /** Stepped away rather than fallen behind: a reason, not a risk level. */
+    paused?: boolean;
     absoluteProgress: number;
-    clans: { id: string; name: string }[];
+    clans: { id: string; name: string; frozen?: boolean }[];
   }[];
   total: number;
   page: number;
@@ -136,6 +138,12 @@ function FollowUps() {
           <option value="">All flagged mentees</option>
           <option value="high">High priority</option>
           <option value="watch">Needs follow-up</option>
+          {/*
+            * Paused people never register as a risk level - stepping away stops
+            * the signals risk is computed from - so without this they could
+            * only ever be found by scrolling.
+            */}
+          <option value="paused">Paused</option>
         </select>
         <ProgramClanFilter
           labels={false}
@@ -204,11 +212,19 @@ function FollowUps() {
                     </td>
                     <td>
                       <span
-                        className={`text-xs font-semibold ${row.risk === "high" ? "text-rose-600 dark:text-rose-300" : "text-amber-700 dark:text-amber-300"}`}
+                        className={`text-xs font-semibold ${
+                          row.risk === "high"
+                            ? "text-rose-600 dark:text-rose-300"
+                            : row.paused && row.risk === "low"
+                              ? "text-slate-600 dark:text-slate-300"
+                              : "text-amber-700 dark:text-amber-300"
+                        }`}
                       >
                         {row.risk === "high"
                           ? "High priority"
-                          : "Needs follow-up"}
+                          : row.paused && row.risk === "low"
+                            ? "Paused"
+                            : "Needs follow-up"}
                       </span>
                       <p className="mt-1 max-w-md text-xs text-muted-foreground">
                         {row.riskReason}
@@ -216,7 +232,7 @@ function FollowUps() {
                     </td>
                     <td>
                       {row.clans.map((clan) => (
-                        <div key={clan.id}>
+                        <div key={clan.id} className="flex items-center gap-1.5">
                           {can("clan.create") ? (
                             <Link
                               className="hover:underline"
@@ -226,6 +242,20 @@ function FollowUps() {
                             </Link>
                           ) : (
                             clan.name
+                          )}
+                          {/*
+                            * Says why somebody is stranded. A finished cohort
+                            * cannot have its roster changed, so "move them" is
+                            * not the answer and an admin needs to know that
+                            * before they try.
+                            */}
+                          {clan.frozen && (
+                            <span
+                              title="This cohort has finished. Its roster is locked."
+                              className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                            >
+                              finished
+                            </span>
                           )}
                         </div>
                       ))}

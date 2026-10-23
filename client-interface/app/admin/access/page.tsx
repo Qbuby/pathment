@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ProgramClanFilter } from '@/components/shared/ProgramClanFilter';
 import { Loader2, Plus, Search, ShieldCheck, SlidersHorizontal, Trash2, UserPlus, Pencil, Ban, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -100,6 +101,11 @@ function PeopleTab() {
   const [query, setQuery] = useState('');
   const debouncedSearch = useDebounce(query, 350);
   const [roleFilter, setRoleFilter] = useState('');
+  /**
+   * On a workspace of a thousand people, "All" is a list nobody can act on.
+   * Finding the members of one fellowship meant already knowing their names.
+   */
+  const [programId, setProgramId] = useState('');
   const [users, setUsers] = useState<DirectoryUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<DirectoryUser | null>(null);
@@ -120,6 +126,7 @@ function PeopleTab() {
         search: debouncedSearch.trim() || undefined,
         role: activeTab.role,
         status: activeTab.status,
+        programId: programId || undefined,
         page: pagination.page,
         limit: pagination.limit,
       });
@@ -129,15 +136,17 @@ function PeopleTab() {
     } catch { if (token === reqRef.current) setUsers([]); }
     finally { if (token === reqRef.current) setLoading(false); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, activeTab.role, activeTab.status, pagination.page, pagination.limit]);
+  }, [debouncedSearch, activeTab.role, activeTab.status, programId, pagination.page, pagination.limit]);
 
   // Single load effect. When the search/role filter changes we snap back to
   // page 1 FIRST (and skip this run) so we never fetch a now-out-of-range page;
   // the page change re-triggers the effect and fetches page 1 exactly once.
-  const prevFilters = useRef({ s: debouncedSearch, r: roleFilter });
+  const prevFilters = useRef({ s: debouncedSearch, r: roleFilter, p: programId });
   useEffect(() => {
-    const changed = prevFilters.current.s !== debouncedSearch || prevFilters.current.r !== roleFilter;
-    prevFilters.current = { s: debouncedSearch, r: roleFilter };
+    const changed = prevFilters.current.s !== debouncedSearch
+      || prevFilters.current.r !== roleFilter
+      || prevFilters.current.p !== programId;
+    prevFilters.current = { s: debouncedSearch, r: roleFilter, p: programId };
     if (changed && pagination.page !== 1) { pagination.goToPage(1); return; }
     load();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -171,6 +180,21 @@ function PeopleTab() {
               </button>
             ))}
             <span className="ml-auto text-xs text-slate-400 tabular-nums shrink-0">{pagination.total} {pagination.total === 1 ? 'person' : 'people'}</span>
+          </div>
+
+          {/*
+            * Narrow to one programme. Somebody counts as being on it if they
+            * are enrolled, belong to one of its clans in any capacity, or hold
+            * a role scoped to it - an admin asking for "the people on Qantara"
+            * means all three, not just the mentees.
+            */}
+          <div className="mt-3">
+            <ProgramClanFilter
+              labels={false}
+              showClan={false}
+              value={{ programId, clanId: '' }}
+              onChange={(next) => setProgramId(next.programId)}
+            />
           </div>
 
           {/* Adaptive height: the list grows with its content but is capped to the

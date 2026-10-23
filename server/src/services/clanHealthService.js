@@ -1,4 +1,5 @@
 const { Op } = require('sequelize');
+const { VISIBLE_MEMBERSHIP_STATUSES } = require('../config/membership');
 const { models, sequelize } = require('../db');
 const clanService = require('./clanService');
 const cohortService = require('./cohortService');
@@ -20,17 +21,31 @@ function nameOf(user) {
  * multiplies rows), so we fetch active memberships for these clans in one
  * grouped query and return a Map<clanId, [{ userId, role }]>.
  */
-async function membershipsByClan(clans) {
+/**
+ * Clan members, by clan.
+ *
+ * `statuses` defaults to active only, which is right for the health dashboards:
+ * a paused mentee is deliberately out of clan averages and reminders, because
+ * averaging in somebody who has stepped away makes every clan look worse than
+ * it is being run.
+ *
+ * It is exactly wrong for the follow-up queue, which is the one screen whose
+ * job is to find the people nobody is currently reaching. config/membership.js
+ * says it plainly: a paused mentee "is still in the clan, still their mentor's
+ * responsibility, and the whole point of the pause feature is that someone
+ * brings them back". So that caller asks for the wider set.
+ */
+async function membershipsByClan(clans, statuses = ['active']) {
   const byClan = new Map(clans.map((c) => [c.id, []]));
   const ids = clans.map((c) => c.id);
   if (!ids.length) return byClan;
   const rows = await models.ClanMembership.findAll({
-    where: { clanId: { [Op.in]: ids }, status: 'active' },
-    attributes: ['clanId', 'userId', 'role'],
+    where: { clanId: { [Op.in]: ids }, status: { [Op.in]: statuses } },
+    attributes: ['clanId', 'userId', 'role', 'status'],
     raw: true,
   });
   for (const r of rows) {
-    if (byClan.has(r.clanId)) byClan.get(r.clanId).push({ userId: r.userId, role: r.role });
+    if (byClan.has(r.clanId)) byClan.get(r.clanId).push({ userId: r.userId, role: r.role, status: r.status });
   }
   return byClan;
 }
@@ -90,14 +105,24 @@ function deriveStatus({ memberCount, atRisk, avgCompletion, avgOnTime }) {
 // Only compact metrics survive each batch; completed task objects are discarded.
 const snapshots = new Map();
 const SNAPSHOT_TTL_MS = 30000;
-async function loadSnapshot(programIds = null) {
-  const key = `${require('../utils/workspaceExecution').requireWorkspaceId()}:${programIds === null ? '*' : [...programIds].sort().join(',')}`;
+/**
+ * @param {{includeStanding?: boolean, statuses?: string[]}} [options]
+ *   `includeStanding` brings in the clans a cohort continues into after its
+ *   programme ends. The dashboards leave them out because they measure a
+ *   programme's delivery and a standing clan is not part of one; the follow-up
+ *   queue needs them, because that is where the still-active people are.
+ */
+async function loadSnapshot(programIds = null, options = {}) {
+  const { includeStanding = false, statuses = ['active'] } = options;
+  // The widened views are cached separately: same workspace, different question.
+  const key = `${require('../utils/workspaceExecution').requireWorkspaceId()}:${programIds === null ? '*' : [...programIds].sort().join(',')}:${includeStanding ? 'all' : 'cohort'}:${[...statuses].sort().join('+')}`;
   const cached = snapshots.get(key);
   if (cached && cached.expires > Date.now()) return cached.promise;
   const entry = { expires: Infinity };
   entry.promise = (async () => {
-    const clans = (await clanService.listClans({ programIds })).filter(c => c.kind !== 'standing');
-    const byClan = await membershipsByClan(clans);
+    const clans = (await clanService.listClans({ programIds }))
+      .filter(c => includeStanding || c.kind !== 'standing');
+    const byClan = await membershipsByClan(clans, statuses);
     const rowById = new Map();
     const rowByClan = new Map();
     for (const clan of clans) {
@@ -305,33 +330,75 @@ class ClanHealthService {
   }
 
   async followUps(filters = {}, programIds = null) {
-    const { clans, byClan, rowByClan, generatedAt } = await loadSnapshot(programIds);
+    /**
+     * The widest view in the service, on purpose.
+     *
+     * This queue returned nothing at all on a workspace of a thousand people,
+     * while the Overview beside it advertised a hundred and forty-seven who
+     * needed support. Three filters were stacking up, and between them they
+     * excluded everybody:
+     *
+     *   - the snapshot dropped STANDING clans, which is where the 353 still
+     *     active people had been moved to;
+     *   - it loaded only ACTIVE memberships, so the 465 paused were invisible
+     *     exactly where somebody was meant to notice them;
+     *   - and this function skipped FROZEN clans, which is where the 567 the
+     *     Overview was counting actually were.
+     *
+     * Every mentee sat in one of those three buckets, so the union was zero.
+     */
+    const { clans, byClan, rowByClan, generatedAt } = await loadSnapshot(programIds, {
+      includeStanding: true,
+      statuses: VISIBLE_MEMBERSHIP_STATUSES,
+    });
     const rowById = new Map();
     const clanForUser = new Map();
+    const pausedUsers = new Set();
     for (const clan of clans) {
-      if (clan.frozenAt) continue;
       if (filters.programId && clan.programId !== filters.programId) continue;
       if (filters.clanId && clan.id !== filters.clanId) continue;
       for (const member of byClan.get(clan.id) || []) {
         if (member.role !== 'mentee') continue;
         const row = rowByClan.get(clan.id)?.get(member.userId);
         if (row) rowById.set(member.userId, row);
+        if (member.status === 'paused') pausedUsers.add(member.userId);
         if (!clanForUser.has(member.userId)) clanForUser.set(member.userId, []);
-        clanForUser.get(member.userId).push({ id: clan.id, name: clan.name });
+        clanForUser.get(member.userId).push({ id: clan.id, name: clan.name, frozen: Boolean(clan.frozenAt) });
       }
     }
     const search = (filters.search || '').trim().toLowerCase();
-    const rows = [...rowById.values()].filter(row => clanForUser.has(row.id) && row.risk !== 'low' &&
-      (!filters.risk || row.risk === filters.risk) &&
+    /**
+     * Paused is a reason on its own, not a risk score.
+     *
+     * Somebody who stepped away stops generating the signals the risk model
+     * reads: no overdue work, no missed sessions, so they settle at 'low' and
+     * drop out of a queue filtered on risk. That is the person most likely to
+     * never come back, and the one this screen exists to surface.
+     */
+    const needsFollowUp = (row) => row.risk !== 'low' || pausedUsers.has(row.id);
+    const matchesRisk = (row) => {
+      if (!filters.risk) return true;
+      if (filters.risk === 'paused') return pausedUsers.has(row.id);
+      return row.risk === filters.risk;
+    };
+    const rows = [...rowById.values()].filter(row => clanForUser.has(row.id) && needsFollowUp(row) &&
+      matchesRisk(row) &&
       (!search || `${row.name} ${row.email}`.toLowerCase().includes(search)))
-      .sort((a,b) => Number(b.risk === 'high') - Number(a.risk === 'high') || a.absoluteProgress - b.absoluteProgress || a.id.localeCompare(b.id));
+      .sort((a,b) => Number(b.risk === 'high') - Number(a.risk === 'high')
+        || Number(pausedUsers.has(b.id)) - Number(pausedUsers.has(a.id))
+        || a.absoluteProgress - b.absoluteProgress || a.id.localeCompare(b.id));
     const limit = Math.min(50, Math.max(1, Number(filters.limit) || 20));
     const pages = Math.max(1, Math.ceil(rows.length / limit));
     const page = Math.min(pages, Math.max(1, Number(filters.page) || 1));
     return { total: rows.length, page, limit, pages, generatedAt,
       rows: rows.slice((page - 1) * limit, page * limit).map(row => ({
         id: row.id, name: row.name, avatarUrl: row.profilePictureUrl,
-        risk: row.risk, riskReason: row.riskReason, absoluteProgress: row.absoluteProgress,
+        risk: row.risk,
+        // Says WHY they are here. A paused mentee has no risk reason of their
+        // own, and "no reason given" on a follow-up queue is not actionable.
+        riskReason: row.riskReason || (pausedUsers.has(row.id) ? 'Paused - nobody is currently reaching them' : null),
+        paused: pausedUsers.has(row.id),
+        absoluteProgress: row.absoluteProgress,
         clans: clanForUser.get(row.id),
       })) };
   }

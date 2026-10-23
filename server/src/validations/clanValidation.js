@@ -10,7 +10,10 @@ module.exports = {
     limit: Joi.number().integer().min(1).max(50).default(20),
     programId: Joi.string().uuid().optional(),
     clanId: Joi.string().uuid().optional(),
-    risk: Joi.string().valid('high', 'watch').optional(),
+    // 'paused' is not a risk level, it is a reason to be in this queue: somebody
+    // who stepped away stops producing the signals risk is computed from, so
+    // they settle at 'low' and would otherwise never appear.
+    risk: Joi.string().valid('high', 'watch', 'paused').optional(),
     search: Joi.string().trim().max(120).allow('').optional(),
   }),
   listQuery: Joi.object({
