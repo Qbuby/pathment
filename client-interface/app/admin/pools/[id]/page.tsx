@@ -6,7 +6,7 @@ import { workspacePath } from '@/lib/services/workspace-scope';
 import { ClanAvatar } from '@/components/shared/ClanAvatar';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
-import { Archive, ArrowLeft, CalendarClock, ChevronRight, ClipboardList, GraduationCap, History, LayoutGrid, ListOrdered, Lock, Settings2, SlidersHorizontal, Target, UsersRound } from 'lucide-react';
+import { Archive, ArrowLeft, CalendarClock, ChevronRight, GraduationCap, History, LayoutGrid, ListOrdered, Lock, Settings2, SlidersHorizontal, Target, UsersRound } from 'lucide-react';
 import { TabBar } from '@/components/admin/ui';
 import { Drawer } from '@/components/shared/Drawer';
 import { useApiQuery, useInvalidate } from '@/lib/query';
@@ -238,14 +238,15 @@ export default function PoolDetailPage({ params }: { params: Promise<{ id: strin
               </div>
             </section>
 
-            {/* Set up once, looked back on rarely. Work is here rather than in
-                the tab bar because that is what it is: a list you write at the
-                start of a round and then barely touch. */}
+            {/* Set up once, looked back on rarely. Work is deliberately NOT
+                here: it is the round's content, not its configuration, and
+                filing it beside Settings made it read as a thing you tune
+                rather than a thing you hand to people. It opens from
+                Candidates, where handing it out happens. */}
             <section>
               <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Pool</h3>
               <div className="mt-2 divide-y divide-slate-200 overflow-hidden rounded-xl border border-slate-200">
                 {([
-                  ['work', ClipboardList, 'Work in this round', `${work} piece${work === 1 ? '' : 's'}. Add it, price it, and hand it out.`],
                   ['settings', Settings2, 'Settings', can('pool.manage') ? 'Name, dates, scoring, reminders and placement' : 'View the name, dates, scoring and reminders'],
                   ['history', History, 'History', 'Everything that happened, who did it and why'],
                 ] as const).map(([key, Icon, text, hint]) => (
@@ -306,7 +307,7 @@ export default function PoolDetailPage({ params }: { params: Promise<{ id: strin
       )}
 
       {tab === 'overview' && <OverviewTab data={data} onGo={go} />}
-      {tab === 'candidates' && <CandidatesTab data={data} onChange={reload} canManage={can('pool.members')} canSelect={can('pool.select')} canReview={canReview} canAssign={can('pool.assign')} initialFilter={candidateFilter} />}
+      {tab === 'candidates' && <CandidatesTab data={data} onChange={reload} canManage={can('pool.members')} canSelect={can('pool.select')} canReview={canReview} canAssign={can('pool.assign')} initialFilter={candidateFilter} workCount={work ?? 0} onOpenWork={() => go('work')} />}
 
       {/* Work: what candidates are given. Reached from Manage pool, because it
           is set up once; handing it out happens where the people are. */}

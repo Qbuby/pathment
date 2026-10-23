@@ -106,7 +106,7 @@ function CandidateChip({ member, active, onClick }: { member: PoolMemberRow; act
 const KIND_ICON = { task: ClipboardList, quiz: FileQuestion, interview: Mic } as const;
 const iconBtn = 'rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800';
 
-export function CandidateReview({ data, onChange, canManage, canSelect, canReview, canAssign, onAdd, onResend, onExit, onDecide, initialFilter = 'all' }: {
+export function CandidateReview({ data, onChange, canManage, canSelect, canReview, canAssign, onAdd, onResend, onExit, onDecide, initialFilter = 'all', workCount = 0, onOpenWork }: {
   data: PoolDashboard;
   /** Where to start, e.g. 'review' when arriving from a "needs review" link. */
   initialFilter?: Filter;
@@ -120,6 +120,10 @@ export function CandidateReview({ data, onChange, canManage, canSelect, canRevie
   onResend: (m: PoolMemberRow) => void;
   onExit: (m: PoolMemberRow, kind: 'withdraw' | 'disqualify') => void;
   onDecide: (m: PoolMemberRow) => void;
+  /** How many live pieces of work the round has, for the Work button. */
+  workCount?: number;
+  /** Opens the round's work. Lives here because this is where it is handed out. */
+  onOpenWork?: () => void;
 }) {
   const { pool, members, assignments } = data;
   const live = assignments.filter((a) => !a.cancelledAt);
@@ -239,6 +243,17 @@ export function CandidateReview({ data, onChange, canManage, canSelect, canRevie
               >
                 <ClipboardCheck className="h-4 w-4" /> Review queue
                 <span className="rounded-full bg-brand-600 px-1.5 py-0.5 text-xs font-semibold text-white tabular-nums">{waiting.length}</span>
+              </button>
+            )}
+            {/* The round's work, from where it is given out. It is content,
+                not configuration, so it is not filed with the settings. */}
+            {onOpenWork && (
+              <button
+                onClick={onOpenWork}
+                className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3.5 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-muted"
+              >
+                <ClipboardList className="h-4 w-4" /> Work
+                <span className="rounded-full bg-muted px-1.5 py-0.5 text-xs font-semibold text-slate-600 tabular-nums">{workCount}</span>
               </button>
             )}
             {canManage && pool.status !== 'closed' && (

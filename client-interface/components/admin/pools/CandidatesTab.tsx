@@ -338,7 +338,7 @@ function DecisionDrawer({ member, onClose, onSubmit }: { member: PoolMemberRow; 
   );
 }
 
-export function CandidatesTab({ data, onChange, canManage, canSelect, canReview = false, canAssign = false, initialFilter }: { data: PoolDashboard; onChange: () => void; canManage: boolean; canSelect: boolean; canReview?: boolean; canAssign?: boolean; initialFilter?: CandidateFilter }) {
+export function CandidatesTab({ data, onChange, canManage, canSelect, canReview = false, canAssign = false, initialFilter, workCount = 0, onOpenWork }: { data: PoolDashboard; onChange: () => void; canManage: boolean; canSelect: boolean; canReview?: boolean; canAssign?: boolean; initialFilter?: CandidateFilter; workCount?: number; onOpenWork?: () => void }) {
   const { pool } = data;
   const [adding, setAdding] = useState(false);
   const [exit, setExit] = useState<{ member: PoolMemberRow; kind: 'withdraw' | 'disqualify' } | null>(null);
@@ -364,6 +364,8 @@ export function CandidatesTab({ data, onChange, canManage, canSelect, canReview 
         canSelect={canSelect}
         canReview={canReview}
         canAssign={canAssign}
+        workCount={workCount}
+        onOpenWork={onOpenWork}
         onAdd={() => setAdding(true)}
         onResend={resend}
         onExit={(member, kind) => setExit({ member, kind })}
