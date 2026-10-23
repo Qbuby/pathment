@@ -1,6 +1,6 @@
 const { Op } = require('sequelize');
 const { models } = require('../db');
-const { NotFoundError, ForbiddenError } = require('../utils/errors/errorTypes');
+const { NotFoundError, ForbiddenError, ValidationError } = require('../utils/errors/errorTypes');
 const authzService = require('./authzService');
 const notificationOrchestrator = require('./notificationOrchestrator');
 const { NOTIFICATION_EVENTS } = require('../config/notificationMatrix');
@@ -28,20 +28,45 @@ class MentorshipPauseService {
   }
 
   /**
-   * The clans this requester acts within: an admin in the admin portal sees
-   * every clan; the mentor portal sees only clans they run. Accepts a user object
-   * (preferred) or a bare mentorId string. Returns { clanIds, clanNameById }.
+   * Every clan this requester oversees, finished ones included.
+   *
+   * This answers "may they" — authority — and nothing else. It is separate
+   * from `_scopeClans` below, which answers "does it apply here", because
+   * conflating the two told a mentor "You do not oversee this clan" about a
+   * clan they lead, for the sole reason that its programme had ended. Clan
+   * review asks for pause suggestions on every load, so after issue 6 made a
+   * finished clan a normal place to be working, that page logged a 403 every
+   * time it opened.
+   *
+   * Accepts a user object (preferred) or a bare mentorId string.
+   */
+  async _overseenClans(user) {
+    const where = (await this._isAdmin(user))
+      // Portal-aware on purpose: a multi-role admin working in /mentor sees
+      // only the clans they mentor. In /admin the same account is org-wide.
+      ? {}
+      : { id: { [Op.in]: await authzService.mentoredClanIds((user && user.id) ? user.id : user) } };
+    if (where.id && !where.id[Op.in].length) return { clanIds: [], clanNameById: new Map(), finished: new Set() };
+
+    const clans = await models.Clan.findAll({ where, attributes: ['id', 'name', 'frozenAt'] });
+    return {
+      clanIds: clans.map((c) => c.id),
+      clanNameById: new Map(clans.map((c) => [c.id, c.name || 'Clan'])),
+      /** The subset that has finished — authority without applicability. */
+      finished: new Set(clans.filter((c) => c.frozenAt).map((c) => c.id)),
+    };
+  }
+
+  /**
+   * The clans a pause can actually be APPLIED to: the overseen ones that are
+   * still running. Pausing somebody in a clan whose programme has ended is
+   * meaningless — there is nothing left for them to miss — so the write paths
+   * and the win-back cadence keep using this.
    */
   async _scopeClans(user) {
-    if (await this._isAdmin(user)) {
-      const clans = await models.Clan.findAll({ attributes: ['id', 'name'] });
-      return { clanIds: clans.map((c) => c.id), clanNameById: new Map(clans.map((c) => [c.id, c.name || 'Clan'])) };
-    }
-    const userId = (user && user.id) ? user.id : user;
-    const clanIds = await authzService.mentoredClanIds(userId);
-    if (!clanIds.length) return { clanIds: [], clanNameById: new Map() };
-    const clans = await models.Clan.findAll({ where: { id: { [Op.in]: clanIds } }, attributes: ['id', 'name'] });
-    return { clanIds, clanNameById: new Map(clans.map((c) => [c.id, c.name || 'Clan'])) };
+    const { clanIds, clanNameById, finished } = await this._overseenClans(user);
+    const live = clanIds.filter((id) => !finished.has(id));
+    return { clanIds: live, clanNameById: new Map(live.map((id) => [id, clanNameById.get(id)])) };
   }
 
   /** Lead + co-mentors of a clan (recipients for pause/return notifications). */
@@ -55,7 +80,8 @@ class MentorshipPauseService {
 
   /**
    * Resolve which clan to act on. If clanId is given it must be one the mentor
-   * runs; otherwise we pick the mentee's (first) clan among the mentor's clans.
+   * runs. When omitted, only auto-pick if the mentee shares exactly one clan
+   * with the mentor — never an arbitrary first row (standing vs cohort).
    */
   async _resolveClanId(user, menteeId, clanId) {
     const { clanIds } = await this._scopeClans(user);
@@ -64,12 +90,15 @@ class MentorshipPauseService {
       if (!clanIds.includes(clanId)) throw new ForbiddenError('You do not mentor this clan');
       return clanId;
     }
-    const m = await models.ClanMembership.findOne({
+    const rows = await models.ClanMembership.findAll({
       where: { userId: menteeId, role: 'mentee', clanId: { [Op.in]: clanIds } },
       attributes: ['clanId'], raw: true,
     });
-    if (!m) throw new NotFoundError('Mentee not found in your clans');
-    return m.clanId;
+    if (!rows.length) throw new NotFoundError('Mentee not found in your clans');
+    if (rows.length > 1) {
+      throw new ValidationError('clanId is required when the mentee belongs to more than one of your clans');
+    }
+    return rows[0].clanId;
   }
 
   // ── pause / resume (manual, mentor-driven) ────────────────────────────────
@@ -113,6 +142,7 @@ class MentorshipPauseService {
           actionUrl: '/mentee/dashboard',
           actionLabel: 'Ask my mentor to unpause me',
           emailSubject: `You've been paused in ${clanName}`,
+          clanId,
           // No relatedEntityId: a later pause episode must not be deduped against
           // an earlier one — each pause should send its own notice.
         },
@@ -269,9 +299,20 @@ class MentorshipPauseService {
    * @param {string} [clanId] restrict to one clan (admin "check this clan").
    */
   async listSuggestions(user, clanId = null) {
-    let { clanIds, clanNameById } = await this._scopeClans(user);
+    /**
+     * Authority and applicability are asked separately here.
+     *
+     * A mentor who leads a finished clan DOES oversee it — refusing the read
+     * with "you do not oversee this clan" is simply false, and clan review
+     * asks for this on every load. There is just nothing to suggest, because
+     * nobody can be paused out of a programme that has already ended. So an
+     * unrecognised clan is still forbidden, and a finished one is empty.
+     */
+    const { clanIds: overseen, clanNameById, finished } = await this._overseenClans(user);
+    let clanIds = overseen.filter((id) => !finished.has(id));
     if (clanId) {
-      if (!clanIds.includes(clanId)) throw new ForbiddenError('You do not oversee this clan');
+      if (!overseen.includes(clanId)) throw new ForbiddenError('You do not oversee this clan');
+      if (finished.has(clanId)) return [];
       clanIds = [clanId];
     }
     if (!clanIds.length) return [];
@@ -377,8 +418,15 @@ class MentorshipPauseService {
   }
 
   // ── paused list (for the mentor's "Paused" filter) ────────────────────────
-  async listPaused(user) {
-    const { clanIds, clanNameById } = await this._scopeClans(user);
+  async listPaused(user, clanId = null) {
+    /**
+     * Read against the OVERSEEN clans, not the running ones. Somebody paused
+     * in a clan whose programme has since ended is still paused, and a mentor
+     * who cannot see them cannot bring them back.
+     */
+    const { clanIds: overseen, clanNameById } = await this._overseenClans(user);
+    if (clanId && !overseen.includes(clanId)) throw new ForbiddenError('You do not oversee this clan');
+    const clanIds = clanId ? [clanId] : overseen;
     if (!clanIds.length) return [];
     const rows = await models.ClanMembership.findAll({
       where: { clanId: { [Op.in]: clanIds }, role: 'mentee', status: 'paused' },
@@ -386,22 +434,32 @@ class MentorshipPauseService {
       raw: true,
     });
     if (!rows.length) return [];
-    const users = await models.User.findAll({ where: { id: { [Op.in]: rows.map((r) => r.userId) } }, attributes: ['id', 'firstName', 'lastName', 'email'] });
+    const users = await models.User.findAll({
+      where: { id: { [Op.in]: rows.map((r) => r.userId) } },
+      // The avatar comes along so a caller can render these beside the active
+      // roster without a second round trip per person.
+      attributes: ['id', 'firstName', 'lastName', 'email', 'profilePictureUrl'],
+    });
     const userById = new Map(users.map((u) => [u.id, u]));
     return rows.map((r) => ({
       menteeId: r.userId, clanId: r.clanId, clanName: clanNameById.get(r.clanId) || 'Clan',
       name: this._name(userById.get(r.userId)), email: userById.get(r.userId)?.email || null,
+      profilePictureUrl: userById.get(r.userId)?.profilePictureUrl || null,
       pausedAt: r.pausedAt, pausedReason: r.pausedReason, pausedBy: r.pausedBy,
       reengageCount: r.reengageCount, lastReengagedAt: r.lastReengagedAt,
     }));
   }
 
   /** Pause state of one mentee within the viewer's clans (for the profile). */
-  async menteeState(user, menteeId) {
-    const { clanIds, clanNameById } = await this._scopeClans(user);
+  async menteeState(user, menteeId, preferredClanId = null) {
+    // Overseen, not running: a paused mentee in a finished clan is still
+    // paused, and the card that says so must not go blank when it closes.
+    const { clanIds, clanNameById } = await this._overseenClans(user);
     if (!clanIds.length) return { paused: false, clanId: null };
+    const where = { userId: menteeId, role: 'mentee', clanId: { [Op.in]: clanIds } };
+    if (preferredClanId && clanIds.includes(preferredClanId)) where.clanId = preferredClanId;
     const m = await models.ClanMembership.findOne({
-      where: { userId: menteeId, role: 'mentee', clanId: { [Op.in]: clanIds } },
+      where,
       attributes: ['clanId', 'status', 'pausedAt', 'pausedReason'], raw: true,
     });
     if (!m) return { paused: false, clanId: null };
@@ -412,6 +470,7 @@ class MentorshipPauseService {
   async runReengagement() {
     const paused = await models.ClanMembership.findAll({
       where: { status: 'paused', role: 'mentee', reengageStage: { [Op.lt]: REENGAGE_CADENCE_DAYS.length } },
+      include: [{ model: models.Clan, as: 'clan', required: true, where: { frozenAt: null }, attributes: [] }],
       attributes: ['id', 'userId', 'clanId', 'pausedAt', 'reengageStage', 'reengageCount'],
     });
     const now = Date.now();
@@ -459,9 +518,12 @@ class MentorshipPauseService {
    * clan's mentors they're back. Safe to call on attendance / submission /
    * activity events (no-op when not paused). Never throws into the caller.
    */
-  async autoResumeIfPaused(menteeId, trigger = 'activity') {
+  async autoResumeIfPaused(menteeId, trigger = 'activity', clanId = null) {
     try {
-      const paused = await models.ClanMembership.findAll({ where: { userId: menteeId, role: 'mentee', status: 'paused' } });
+      // An event in one clan must never resume memberships in another space.
+      if (!clanId) return 0;
+      const paused = await models.ClanMembership.findAll({ where: { userId: menteeId, clanId, role: 'mentee', status: 'paused' },
+        include: [{ model: models.Clan, as: 'clan', required: true, where: { frozenAt: null }, attributes: [] }] });
       if (!paused.length) return 0;
       const mentee = await models.User.findByPk(menteeId, { attributes: ['id', 'firstName', 'lastName'] });
       for (const m of paused) {

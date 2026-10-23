@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const withPostgres = require('../helpers/privatePostgres.cjs');
 
-test('workspace creation provisions an isolated owner, plan and defaults through the real API', async () => {
+test('workspace creation provisions an isolated owner and plan through the real API', async () => {
   await withPostgres(async adminDb => {
     await adminDb.query('CREATE DATABASE pathment_isolation_test');
     Object.assign(process.env, {
@@ -48,6 +48,13 @@ test('workspace creation provisions an isolated owner, plan and defaults through
       const ownerIdentity = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${token}`).set('X-Pathment-Workspace', workspace.slug);
       assert.equal(ownerIdentity.status, 200);
       assert.ok(ownerIdentity.body.data.user.capabilities.includes('admin'), 'workspace ownership grants admin despite the original account role');
+      const neutralIdentity = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${token}`);
+      assert.equal(neutralIdentity.status, 200);
+      assert.deepEqual(neutralIdentity.body.data.user.capabilities, [], 'account bootstrap must not inherit the default workspace');
+      assert.equal(neutralIdentity.body.data.user.workspaceAccess, false);
+      const neutralWorkspaces = await request(app).get('/api/organizations/me').set('Authorization', `Bearer ${token}`);
+      assert.equal(neutralWorkspaces.status, 200);
+      assert.ok(neutralWorkspaces.body.data.organizations.some(row => row.slug === workspace.slug));
       const rejected = await request(app).get('/api/organizations/current').set('Authorization', `Bearer ${otherToken}`).set('X-Pathment-Workspace', workspace.slug);
       assert.equal(rejected.status, 403);
       const account = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${otherToken}`).set('X-Pathment-Workspace', workspace.slug);
@@ -56,7 +63,7 @@ test('workspace creation provisions an isolated owner, plan and defaults through
       assert.equal(account.body.data.user.adminProfile, undefined);
       await runWithRequestContext({ organizationId: workspace.id, userId: owner.id }, async () => {
         assert.equal(await models.AdminProfile.count(), 1);
-        assert.ok(await models.Badge.count() > 0);
+        assert.equal(await models.Badge.count(), 0, 'new workspaces do not receive system badges');
         assert.equal(await models.MenteeProfile.count(), 0);
         assert.equal(await models.User.count(), 1, 'the member directory is not imported');
         await models.RegistrationInvite.create({

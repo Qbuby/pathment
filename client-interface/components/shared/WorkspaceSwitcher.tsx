@@ -2,10 +2,11 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Building2, Check, ChevronDown, Plus, Settings2 } from 'lucide-react';
+import { Check, ChevronDown, Plus, Settings2 } from 'lucide-react';
 import { useOrganization } from '@/lib/context/OrganizationContext';
 import { workspacePath } from '@/lib/services/workspace-scope';
 import { CreateWorkspaceDrawer } from '@/components/settings/OrganizationSettingsTab';
+import { WorkspaceLogo } from '@/components/shared/WorkspaceLogo';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 interface WorkspaceSwitcherProps {
@@ -40,9 +41,7 @@ export function WorkspaceSwitcher({ compact = false, onNavigate }: WorkspaceSwit
           aria-label="Switch workspace"
           className={`flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-card text-left text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-60 ${compact ? 'px-3 py-2' : 'px-3 py-2.5'}`}
         >
-          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand-50 text-brand-700">
-            <Building2 className="h-4 w-4" aria-hidden="true" />
-          </span>
+          <WorkspaceLogo name={current?.name || 'Workspace'} src={current?.logoUrl} size="sm" />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm font-semibold">{current?.name || 'Loading workspace…'}</span>
             {!compact && <span className="block truncate text-[11px] capitalize text-slate-500">{current?.membershipRole || 'member'} workspace</span>}
@@ -50,7 +49,17 @@ export function WorkspaceSwitcher({ compact = false, onNavigate }: WorkspaceSwit
           <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" sideOffset={6} className="w-[var(--radix-popover-trigger-width)] min-w-64 overflow-hidden rounded-xl border-slate-200 p-0 shadow-xl">
+      {/*
+        Width tracks the trigger exactly.
+
+        `min-w-64` used to sit here, and in the sidebar the trigger is narrower
+        than 16rem — so the panel grew past the sidebar's right edge and hung
+        over the page content, not as a deliberate overhang but as a ragged
+        40px of overshoot. A switcher should look like it belongs to the control
+        that opened it. `max-w` keeps it honest if this is ever used somewhere
+        the trigger is wider than the viewport.
+      */}
+      <PopoverContent align="start" sideOffset={6} className="w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-xl border-slate-200 p-0 shadow-xl">
         <div className="border-b border-slate-100 px-3 py-2.5">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Your workspaces</p>
         </div>
@@ -64,9 +73,7 @@ export function WorkspaceSwitcher({ compact = false, onNavigate }: WorkspaceSwit
               aria-current={selected ? 'page' : undefined}
               className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left transition-colors ${selected ? 'bg-brand-50 text-brand-900' : 'text-slate-700 hover:bg-slate-50'}`}
             >
-              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-slate-200 bg-card text-xs font-bold uppercase text-brand-700">
-                {organization.name.slice(0, 2)}
-              </span>
+              <WorkspaceLogo name={organization.name} src={organization.logoUrl} size="md" />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium">{organization.name}</span>
                 <span className="block truncate text-xs capitalize text-slate-500">{organization.membershipRole || 'member'}</span>

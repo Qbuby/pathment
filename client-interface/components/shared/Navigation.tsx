@@ -21,13 +21,17 @@ import {
   MessageSquarePlus,
   ShieldCheck,
   Search,
+  TerminalSquare,
 } from 'lucide-react';
 import { NavLink } from '@/lib/config/navigation';
 import { useNavPreferences } from '@/lib/hooks/shared';
+import { qk, useApiQuery, STALE } from '@/lib/query';
+import { platformApi } from '@/lib/services/platform-api';
 import { usePermissions } from '@/lib/hooks/usePermissions';
-import { useClan, ALL_CLANS } from '@/lib/context/ClanContext';
+import { useClan, ALL_CLANS, type ClanLite } from '@/lib/context/ClanContext';
 import { useNavBadges } from '@/lib/hooks/shared/useNavBadges';
 import { SelectMenu } from './SelectMenu';
+import { ClanAvatar } from './ClanAvatar';
 import { CommandPalette } from './CommandPalette';
 import { LiveMeetingBanner } from './LiveMeetingBanner';
 import { FeedbackDrawer } from './FeedbackDrawer';
@@ -58,7 +62,33 @@ export default function Navigation({ role }: NavigationProps) {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   const { links, pinned, isEditing, toggleEdit, togglePin, moveUp, moveDown, reset, recordUsage, adaptive, toggleAdaptive } = useNavPreferences(role);
-  const { can, canAny, canAccessAdmin, loading: permsLoading } = usePermissions();
+  const { can, canAny, canAccessAdmin, canAccessPools, loading: permsLoading } = usePermissions();
+
+  // Platform console entry: shown only to platform operators (platform_admins
+  // rows / env bootstrap), resolved once and cached. Workspace roles never
+  // grant it, and for everyone else the sidebar simply never mentions it.
+  const { data: platformMe } = useApiQuery({
+    queryKey: qk.platform.me,
+    queryFn: platformApi.me,
+    enabled: Boolean(user?.id),
+    staleTime: STALE.long,
+  });
+  const isPlatformAdmin = Boolean(platformMe?.isPlatformAdmin);
+
+  const renderPlatformConsoleLink = (onNavigate?: () => void) => isPlatformAdmin ? (
+    <Link
+      href="/platform"
+      onClick={onNavigate}
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors text-left group ${
+        pathname.startsWith('/platform')
+          ? 'bg-brand-600 text-white shadow-sm shadow-brand-200'
+          : 'text-slate-500 hover:text-brand-700 hover:bg-brand-50'
+      }`}
+    >
+      <TerminalSquare className="w-4 h-4 text-slate-400 group-hover:text-brand-500" />
+      <span className="text-sm font-medium">Platform console</span>
+    </Link>
+  ) : null;
 
   // Permission-filtered nav: hide items the user can't use, drop empty groups,
   // and surface an "Admin area" entry for org/program admins in their own nav.
@@ -70,7 +100,7 @@ export default function Navigation({ role }: NavigationProps) {
           .map((link) => {
             if (link.requiresAdminArea && !canAccessAdmin) return null;
             if (link.children) {
-              const kids = link.children.filter((c) => !c.permission || can(c.permission));
+              const kids = link.children.filter((c) => (!c.permission || can(c.permission)) && (!c.anyOf || canAny(c.anyOf)));
               if (!kids.length) return null;
               if (link.workspace) return { ...link, preferenceKey: link.path, path: kids[0].path, activePaths: kids.map((child) => child.path), children: undefined };
               return { ...link, children: kids };
@@ -84,8 +114,13 @@ export default function Navigation({ role }: NavigationProps) {
     if (role !== 'admin' && canAccessAdmin) {
       return [...base, { path: '/admin', icon: ShieldCheck, label: 'Admin area', requiresAdminArea: true }];
     }
+    // A pool reviewer/operator who is not an admin: their one way into the
+    // admin area is Selection pools, and that is all it shows them.
+    if (role !== 'admin' && canAccessPools) {
+      return [...base, { path: '/admin/pools', icon: ShieldCheck, label: 'Selection pools' }];
+    }
     return base;
-  }, [links, permsLoading, canAccessAdmin, can, canAny, role]);
+  }, [links, permsLoading, canAccessAdmin, canAccessPools, can, canAny, role]);
 
   // ── Collapsible group state ───────────────────────────────────────────────
   // Initialise with any group that contains the current path already open
@@ -120,7 +155,13 @@ export default function Navigation({ role }: NavigationProps) {
   // The badge follows the sidebar clan picker so it always matches the page:
   // 'All clans' = the full queue, otherwise just that clan's share.
   const isMentorNav = role === 'mentor';
-  const { unreadMessageCount, approvalCounts } = useNavBadges({ userId: user?.id, isMentor: isMentorNav, portal: role, activeClanId });
+  const { unreadMessageCount, approvalCounts } = useNavBadges({
+    userId: user?.id,
+    isMentor: isMentorNav,
+    portal: role,
+    activeClanId,
+    menteeActiveClanId,
+  });
   const approvalsBadgeCount = activeClanId === ALL_CLANS
     ? approvalCounts.total
     : (approvalCounts.byClan[activeClanId] || 0);
@@ -141,7 +182,10 @@ export default function Navigation({ role }: NavigationProps) {
   const renderRoleSwitcher = () => {
     if (!availableRoles || availableRoles.length <= 1) return null;
     const order: UserRole[] = ['admin', 'mentor', 'mentee'];
+    // Only the three portal roles switch; other capabilities (a selection-pool
+    // candidate) have their own area and never appear here.
     const roles = order.filter((r) => availableRoles.includes(r));
+    if (roles.length <= 1) return null;
     return (
       <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl">
         {roles.map((r) => (
@@ -161,19 +205,56 @@ export default function Navigation({ role }: NavigationProps) {
     );
   };
 
-  // ── Clan scope (multi-clan mentors) ───────────────────────────────────────
-  // Only meaningful in the mentor view, and only when the user mentors 2+ clans.
+  // ── Clan scope (multi-clan mentors / mentees) ─────────────────────────────
+  /**
+   * One row per clan, grouped by what the clan IS rather than sorted by it.
+   *
+   * A clan from a closed programme stays in this list on purpose. It is the
+   * only way to scope the rest of the app — Approvals, Mentees, Review — to
+   * that clan, which is exactly how somebody looks back at what happened
+   * there, and the app already enforces read-only on that scope
+   * (`isHistoricalCohortClan`). Taking it out of the picker would not archive
+   * the work, it would just make it unreachable.
+   *
+   * What it must not do is sit in the same list as live work with no visible
+   * difference. So it goes under its own heading, below everything current,
+   * marked read-only.
+   */
+  const clanGroupOf = (c: ClanLite) => (
+    c.kind === 'standing' ? 'Standing clans'
+      : c.frozenAt ? 'Past programmes'
+        : 'Active programme'
+  );
+  // Current work first, history last; alphabetical inside each group.
+  const GROUP_ORDER = ['Active programme', 'Standing clans', 'Past programmes'];
+  const clanOptions = (list: ClanLite[]) => [...list]
+    .sort((a, b) => GROUP_ORDER.indexOf(clanGroupOf(a)) - GROUP_ORDER.indexOf(clanGroupOf(b))
+      || a.name.localeCompare(b.name))
+    .map((c) => ({
+      value: c.id,
+      // The clan's own name owns the full width. Everything that qualifies it
+      // moves to the second line, where it no longer competes for room.
+      label: c.name,
+      description: c.kind === 'standing'
+        ? `Standing${c.programName ? ` · ${c.programName}` : ''}`
+        : c.frozenAt
+          ? `${c.programName || 'Programme'} · finished`
+          : c.programName || 'Active programme',
+      group: clanGroupOf(c),
+      meta: c.kind !== 'standing' && c.frozenAt ? 'Read-only' : undefined,
+      icon: <ClanAvatar name={c.name} src={c.avatarUrl} size="sm" />,
+    }));
+
   const renderClanScope = () => {
     if (role === 'mentor' && clans.length >= 2) {
-      const options = [
-        { value: ALL_CLANS, label: 'All clans' },
-        ...clans.map((c) => ({ value: c.id, label: c.name })),
-      ];
       return (
         <SelectMenu
           value={activeClanId}
           onChange={setActiveClanId}
-          options={options}
+          options={[
+            { value: ALL_CLANS, label: 'All clans', description: 'Everything you mentor' },
+            ...clanOptions(clans),
+          ]}
           ariaLabel="Filter by clan"
           className="w-full"
         />
@@ -184,7 +265,7 @@ export default function Navigation({ role }: NavigationProps) {
         <SelectMenu
           value={menteeActiveClanId || menteeClans[0].id}
           onChange={setMenteeActiveClanId}
-          options={menteeClans.map((c) => ({ value: c.id, label: c.name }))}
+          options={clanOptions(menteeClans)}
           ariaLabel="Switch clan"
           className="w-full"
         />
@@ -400,7 +481,7 @@ export default function Navigation({ role }: NavigationProps) {
           {/* Role switcher (only for users who hold more than one role view) */}
           <div className="px-3 pt-3"><WorkspaceSwitcher /></div>
 
-          {availableRoles && availableRoles.length > 1 && (
+          {renderRoleSwitcher() && (
             <div className="px-3 pt-3">{renderRoleSwitcher()}</div>
           )}
 
@@ -427,6 +508,7 @@ export default function Navigation({ role }: NavigationProps) {
 
           {/* Bottom Section */}
           <div className="px-3 py-4 border-t border-slate-100 space-y-1">
+            {renderPlatformConsoleLink()}
             <UserProfileCard />
             <button
               onClick={handleLogout}
@@ -485,11 +567,12 @@ export default function Navigation({ role }: NavigationProps) {
           <div className="border-t border-slate-100 bg-card">
             <nav className="px-3 py-3 space-y-0.5">
               <div className="pb-3"><WorkspaceSwitcher compact onNavigate={() => setMobileMenuOpen(false)} /></div>
-              {availableRoles && availableRoles.length > 1 && (
+              {renderRoleSwitcher() && (
                 <div className="pb-2">{renderRoleSwitcher()}</div>
               )}
               {renderClanScope() && <div className="pb-2">{renderClanScope()}</div>}
               {renderNavItems(() => setMobileMenuOpen(false))}
+              {renderPlatformConsoleLink(() => setMobileMenuOpen(false))}
               <button
                 onClick={handleLogout}
                 className="flex items-center gap-3 px-3 py-2.5 w-full text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors text-left"

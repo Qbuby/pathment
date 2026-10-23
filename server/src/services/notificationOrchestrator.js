@@ -39,8 +39,11 @@ class NotificationOrchestrator {
    *   bell (and a toast) the instant this fired — mailing them too is noise. Used
    *   for time-sensitive asks that need a nudge if the person isn't looking.
    *   Still subject to the user's email preferences and the global switches.
+   * @param {string[]} [silentFor] User ids who get the notification as usual
+   *   (bell, unread count, email) but no live snackbar — for the person whose
+   *   own action caused it and who has already been told it worked.
    */
-  async dispatch({ eventKey, recipients, payload, dedupe = null, channelOverrides = null, emailOnlyIfOffline = false }) {
+  async dispatch({ eventKey, recipients, payload, dedupe = null, channelOverrides = null, emailOnlyIfOffline = false, silentFor = null }) {
     const matrix = NOTIFICATION_MATRIX[eventKey];
     if (!matrix || !Array.isArray(recipients) || recipients.length === 0) {
       return { delivered: 0, skipped: recipients?.length || 0 };
@@ -70,11 +73,16 @@ class NotificationOrchestrator {
         model: models.UserSettings,
         as: 'settings',
         required: false,
-        attributes: ['emailNotifications', 'quietHours']
+        // pushNotifications was missing, and the push gate below reads it. A
+        // column that is not selected is undefined, which the preference helper
+        // treats as "no preference recorded" and allows, so every per-event push
+        // switch a person turned off in the app went on buzzing their phone.
+        attributes: ['emailNotifications', 'pushNotifications', 'quietHours']
       }]
     });
 
     const userById = new Map(users.map((u) => [u.id, u]));
+    const silentIds = new Set(Array.isArray(silentFor) ? silentFor.filter(Boolean) : []);
     let delivered = 0;
     let skipped = 0;
 
@@ -124,7 +132,8 @@ class NotificationOrchestrator {
               relatedEntityType: created.relatedEntityType,
               relatedEntityId: created.relatedEntityId,
               clanId: created.clanId || null,
-              createdAt: created.createdAt
+              createdAt: created.createdAt,
+              ...(silentIds.has(recipient.userId) ? { silent: true } : {})
             });
           } catch (e) {
             console.error('[Notifications] socket emit failed:', e.message);
@@ -236,6 +245,62 @@ class NotificationOrchestrator {
     return { delivered, skipped };
   }
 
+  /**
+   * The phone, without the bell.
+   *
+   * For an event that already writes its own Notification row and emits its own
+   * socket event, and needs nothing from this class except the question "may we
+   * buzz this person right now". A direct message is the one that matters: it
+   * has always written its row inside the send transaction, so routing it
+   * through `dispatch` would either duplicate the row or mean rewriting the
+   * send path, and the thing that was actually missing was the push.
+   *
+   * Same gate as `dispatch`: the per event push preference, the master push
+   * switch, and quiet hours, which are respected for push and deliberately not
+   * for email, because a buzz at 3am wakes somebody and an email does not.
+   *
+   * Never awaited by a caller and never throws. A phone that could not be
+   * reached must not fail the thing that triggered it.
+   */
+  async pushOnly({ eventKey, recipients, payload }) {
+    const matrix = NOTIFICATION_MATRIX[eventKey];
+    const ids = [...new Set((recipients || []).map((r) => r.userId).filter(Boolean))];
+    if (!matrix || ids.length === 0) return { sent: 0 };
+
+    const users = await models.User.findAll({
+      where: { id: ids, status: 'active' },
+      attributes: ['id'],
+      include: [{
+        model: models.UserSettings,
+        as: 'settings',
+        required: false,
+        attributes: ['pushNotifications', 'quietHours']
+      }]
+    });
+
+    const allowed = users
+      .filter((user) => shouldCreateNotification(user.settings || null, matrix.preferenceKey, {
+        checkEmail: false,
+        checkPush: true,
+        respectQuietHours: true
+      }).should_create)
+      .map((user) => user.id);
+
+    if (allowed.length === 0) return { sent: 0 };
+
+    return pushService.send(allowed, {
+      title: payload.title,
+      body: payload.message,
+      data: {
+        actionUrl: payload.actionUrl || null,
+        type: matrix.type,
+        relatedEntityType: payload.relatedEntityType || null,
+        relatedEntityId: payload.relatedEntityId || null,
+        ...(payload.data || {})
+      }
+    });
+  }
+
   async shouldSkipByDedupe(userId, type, dedupe, payload = null) {
     const dedupeType = dedupe?.relatedEntityType || null;
     const dedupeId = dedupe?.relatedEntityId || null;
@@ -330,8 +395,63 @@ class NotificationOrchestrator {
     });
   }
 
-  async sendEmailVerificationEmail(user, verificationToken) {
-    const verifyUrl = verifyLink(verificationToken);
+  /**
+   * Operator-provisioned workspace: the single-use link that lets the new
+   * owner set their own password. Nothing secret travels in this email except
+   * the one-time token itself - no password exists until the owner chooses
+   * one. Transactional and never suppressed.
+   */
+  async sendWorkspaceOwnerActivationEmail(user, organization, activationToken) {
+    const url = `${clientUrl()}/activate?token=${encodeURIComponent(activationToken)}`;
+    const heading = `Your ${organization.name} workspace is ready`;
+
+    return emailService.sendEmail({
+      to: user.email,
+      emailType: 'workspace_owner_activation',
+      subject: `Activate your ${organization.name} workspace on Pathment`,
+      text: plainText({
+        heading,
+        bodyText: `Hi ${user.firstName || 'there'}, a Pathment workspace named "${organization.name}" has been set up for you. Open the link below to choose your password and sign in as its owner. The link works once and expires in 72 hours.`,
+        cta: { label: 'Activate workspace', url },
+      }),
+      html: renderEmail({
+        heading,
+        bodyHtml: `<p style="margin:0 0 14px;">Hi ${escHtml(user.firstName || 'there')}, a Pathment workspace named <strong>${escHtml(organization.name)}</strong> has been set up for you.</p><p style="margin:0 0 14px;">Choose your password below and you are in as its owner.</p>`,
+        cta: { label: 'Activate workspace', url },
+        preheader: `Choose your password to open ${organization.name}`,
+        footerNote: "This link works once and expires in 72 hours. Didn't expect it? Ignore this email and nothing happens.",
+      }),
+    });
+  }
+
+  /**
+   * Operator provisioned a workspace onto an EXISTING Pathment account: no
+   * activation needed, just tell the owner where their new workspace lives.
+   */
+  async sendWorkspaceReadyEmail(user, organization) {
+    const url = `${clientUrl()}/w/${organization.slug}/login`;
+    const heading = `${organization.name} is ready`;
+
+    return emailService.sendEmail({
+      to: user.email,
+      emailType: 'workspace_ready',
+      subject: `Your new Pathment workspace: ${organization.name}`,
+      text: plainText({
+        heading,
+        bodyText: `Hi ${user.firstName || 'there'}, the workspace "${organization.name}" has been created and your existing Pathment account is its owner. Sign in with your usual credentials.`,
+        cta: { label: 'Open workspace', url },
+      }),
+      html: renderEmail({
+        heading,
+        bodyHtml: `<p style="margin:0 0 14px;">Hi ${escHtml(user.firstName || 'there')}, the workspace <strong>${escHtml(organization.name)}</strong> has been created and your existing Pathment account is its owner.</p><p style="margin:0 0 14px;">Sign in with your usual credentials.</p>`,
+        cta: { label: 'Open workspace', url },
+        preheader: `Your account now owns ${organization.name}`,
+      }),
+    });
+  }
+
+  async sendEmailVerificationEmail(user, verificationToken, workspaceSlug) {
+    const verifyUrl = verifyLink(verificationToken, workspaceSlug);
 
     // Transactional auth email: always send, no unsubscribe.
     const heading = 'Verify your email';

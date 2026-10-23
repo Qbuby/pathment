@@ -23,7 +23,7 @@ module.exports = (sequelize, DataTypes) => {
     },
     enrollmentId: {
       type: DataTypes.UUID,
-      allowNull: false,
+      allowNull: true,
       field: 'enrollment_id'
     },
     status: {
@@ -89,6 +89,31 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: false,
       field: 'is_late'
     },
+    /**
+     * The mentee put this on their own plan.
+     *
+     * Still a real task — it keeps the progress log, the clan scoping and the
+     * lifecycle — but it is not the mentor's to approve, so it never enters
+     * their approvals queue and earns no points. See migration 128.
+     */
+    /**
+     * How this item repeats, or null when it does not.
+     *
+     * The rule rides on the task and the next occurrence is written when one
+     * is finished — no scheduler has to be alive for a repeat to work. See
+     * src/utils/repeatRule.js and migration 130.
+     */
+    repeatRule: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+      field: 'repeat_rule'
+    },
+    selfAssigned: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      field: 'self_assigned'
+    },
     isCustomTask: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
@@ -129,6 +154,22 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       field: 'clan_id'
     },
+    // Provenance for an assignment intentionally continued from historical
+    // work into a standing clan. It is also the idempotency key: retries reuse
+    // the same new assignment instead of creating duplicates.
+    continuedFromTaskId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      field: 'continued_from_task_id'
+    },
+    // Pool work (migration 140): qualifying work given to a candidate in the
+    // System Pool, before they are in any clan. NULL — every task that existed
+    // before the pool — means ordinary work.
+    poolMemberId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      field: 'pool_member_id'
+    },
     // ── Per-mentee overrides (null = use the RoadmapTask default) ────────────
     typeOverride: { type: DataTypes.STRING(20), allowNull: true, field: 'type_override' },
     titleOverride: { type: DataTypes.STRING(255), allowNull: true, field: 'title_override' },
@@ -142,6 +183,24 @@ module.exports = (sequelize, DataTypes) => {
   }, {
     tableName: 'assigned_tasks',
     underscored: true,
+    /**
+     * The fence around System Pool work.
+     *
+     * Every ordinary query sees ordinary work only. Pool work belongs to people
+     * who are not in a clan yet, and it must never surface in a clan list, a
+     * mentor's approvals, a progress figure or a leaderboard — including after
+     * the candidate is placed into a clan, when every clan-scoped query would
+     * otherwise start matching their earlier qualifying work.
+     *
+     * A filter at each of the ~60 call sites would be one forgotten filter away
+     * from a leak; a default scope fails safe instead. Code that genuinely
+     * deals in pool work opts in with `AssignedTask.scope('withPoolWork')` and
+     * then authorises on its own — an ownership check, or `canActOnTask`, which
+     * demands `pool.review` for pool work. The workspace boundary is a hook, not
+     * a scope, so opting in never crosses a workspace.
+     */
+    defaultScope: { where: { poolMemberId: null } },
+    scopes: { withPoolWork: {} },
     indexes: [
       { fields: ['mentee_id'] },
       { fields: ['mentor_id'] },
@@ -151,7 +210,8 @@ module.exports = (sequelize, DataTypes) => {
       { fields: ['roadmap_task_id'] },
       { fields: ['track_id'] },
       { fields: ['schedule_slot_id'] },
-      { fields: ['mentee_id', 'clan_id'] }
+      { fields: ['mentee_id', 'clan_id'] },
+      { fields: ['continued_from_task_id'] }
     ]
   });
 
@@ -162,6 +222,8 @@ module.exports = (sequelize, DataTypes) => {
     AssignedTask.belongsTo(models.Enrollment, { foreignKey: 'enrollment_id', as: 'enrollment' });
     AssignedTask.belongsTo(models.Track, { foreignKey: 'track_id', as: 'track' });
     if (models.Clan) AssignedTask.belongsTo(models.Clan, { foreignKey: 'clan_id', as: 'clan' });
+    AssignedTask.belongsTo(models.AssignedTask, { foreignKey: 'continued_from_task_id', as: 'continuedFromTask' });
+    if (models.PoolMember) AssignedTask.belongsTo(models.PoolMember, { foreignKey: 'pool_member_id', as: 'poolMember' });
     AssignedTask.hasMany(models.TaskSubmission, { foreignKey: 'assigned_task_id', as: 'submissions' });
     AssignedTask.hasMany(models.TaskFeedback, { foreignKey: 'assigned_task_id', as: 'feedback' });
     AssignedTask.hasMany(models.Message, { foreignKey: 'related_task_id', as: 'messages' });

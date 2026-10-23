@@ -5,6 +5,7 @@ import { qk, useApiQuery } from '@/lib/query';
 import { menteeApi } from '@/lib/services/mentee-api';
 import { usePagination } from '@/lib/hooks/shared/usePagination';
 import { useDebounce } from '@/lib/hooks/shared/useDebounce';
+import { useAdminScope } from '@/lib/context/AdminScopeContext';
 
 export interface MenteeListItem {
   id: string;
@@ -48,12 +49,17 @@ export function useMenteesList(): UseMenteesListReturn {
   const pagination = usePagination({ initialPage: 1, initialLimit: 20 });
   const [search, setSearchInput] = useState('');
   const debouncedSearch = useDebounce(search, 400);
+  // The programme/clan chosen in the admin scope picker. Empty object when
+  // nothing is chosen, so the request is byte-for-byte what it always was.
+  const { query: scope } = useAdminScope();
+  const scopeKey = `${scope.programId || ''}:${scope.clanId || ''}`;
 
   const { data, loading, error, refetch } = useApiQuery<MenteePage>({
-    queryKey: qk.admin.menteeList(pagination.page, pagination.limit, debouncedSearch.trim()),
+    queryKey: [...qk.admin.menteeList(pagination.page, pagination.limit, debouncedSearch.trim()), scopeKey],
     queryFn: async () => {
       const response = await menteeApi.getAll({
         ...(debouncedSearch.trim() && { search: debouncedSearch.trim() }),
+        ...scope,
         page: pagination.page,
         limit: pagination.limit,
       });
@@ -68,11 +74,12 @@ export function useMenteesList(): UseMenteesListReturn {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [total]);
 
-  // Reset to page 1 on search change
+  // Reset to page 1 when the search OR the scope changes — page 4 of the old
+  // filter is rarely page 4 of the new one.
   useEffect(() => {
     pagination.reset();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch]);
+  }, [debouncedSearch, scopeKey]);
 
   return {
     mentees: data?.mentees ?? NO_MENTEES,

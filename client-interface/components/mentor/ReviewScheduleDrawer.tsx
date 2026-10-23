@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { CalendarClock, Loader2, Trash2, Plus, Repeat, Clock } from 'lucide-react';
+import { CalendarClock, Loader2, Trash2, Plus, Repeat, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Drawer } from '@/components/shared/Drawer';
 import { SelectMenu } from '@/components/shared/SelectMenu';
 import { mentorApi } from '@/lib/services/mentor-api';
@@ -26,7 +26,6 @@ interface ReviewSchedule {
 }
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const DAY_OPTIONS = DAYS.map((d, i) => ({ value: String(i), label: d }));
 const INTERVAL_OPTIONS = [
   { value: '1', label: 'Every week' },
   { value: '2', label: 'Every other week' },
@@ -41,6 +40,93 @@ const todayLocal = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
+const parseKey = (key: string) => {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(y, (m || 1) - 1, d || 1);
+};
+const keyOf = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const niceDay = (key: string) =>
+  parseKey(key).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+
+/**
+ * A month grid for choosing the first review.
+ *
+ * It replaces a weekday dropdown AND a typed date field, which between them
+ * let you pick "Monday" and a start date that falls on a Sunday — two
+ * controls disagreeing about the same fact, with nothing on screen to say
+ * which one won. Choosing a day on a calendar settles both at once, and a
+ * date is easier to pick than to type.
+ */
+function MonthCalendar({ value, min, onChange }: {
+  value: string;
+  min: string;
+  onChange: (key: string) => void;
+}) {
+  const selected = value ? parseKey(value) : new Date();
+  const [cursor, setCursor] = useState(new Date(selected.getFullYear(), selected.getMonth(), 1));
+  const minKey = min;
+  const todayKey = todayLocal();
+
+  const firstWeekday = new Date(cursor.getFullYear(), cursor.getMonth(), 1).getDay();
+  const daysInMonth = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0).getDate();
+  const cells: (Date | null)[] = [
+    ...Array.from({ length: firstWeekday }, () => null),
+    ...Array.from({ length: daysInMonth }, (_, i) => new Date(cursor.getFullYear(), cursor.getMonth(), i + 1)),
+  ];
+  const shift = (months: number) =>
+    setCursor((c) => new Date(c.getFullYear(), c.getMonth() + months, 1));
+
+  return (
+    <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+      <div className="mb-2 flex items-center justify-between">
+        <button type="button" onClick={() => shift(-1)} aria-label="Previous month"
+          className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
+          {cursor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+        </p>
+        <button type="button" onClick={() => shift(1)} aria-label="Next month"
+          className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="grid grid-cols-7 gap-0.5 text-center">
+        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
+          <span key={i} className="pb-1 text-[10px] font-medium uppercase text-slate-400">{d}</span>
+        ))}
+        {cells.map((d, i) => {
+          if (!d) return <span key={`pad-${i}`} />;
+          const key = keyOf(d);
+          const disabled = key < minKey;
+          const isSelected = key === value;
+          return (
+            <button
+              key={key}
+              type="button"
+              disabled={disabled}
+              aria-pressed={isSelected}
+              onClick={() => onChange(key)}
+              className={`aspect-square rounded-lg text-sm tabular-nums transition-colors ${
+                isSelected
+                  ? 'bg-brand-600 font-semibold text-white'
+                  : disabled
+                    ? 'text-slate-300 dark:text-slate-700'
+                    : key === todayKey
+                      ? 'font-semibold text-brand-700 ring-1 ring-brand-300 hover:bg-brand-50 dark:text-brand-300'
+                      : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+              }`}
+            >
+              {d.getDate()}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 const to12h = (hhmm: string) => {
   const [h, m] = hhmm.split(':').map(Number);
   const ap = h < 12 ? 'AM' : 'PM';
@@ -53,6 +139,7 @@ interface Props {
   onClose: () => void;
   clans: ClanLite[];
   defaultClanId: string | null;
+  readOnly?: boolean;
 }
 
 /**
@@ -61,7 +148,7 @@ interface Props {
  * occurrence as a session (room auto-opens at the time) and emails everyone a
  * timezone-correct invite + reminders with a calendar attachment.
  */
-export function ReviewScheduleDrawer({ open, onClose, clans, defaultClanId }: Props) {
+export function ReviewScheduleDrawer({ open, onClose, clans, defaultClanId, readOnly = false }: Props) {
   const confirm = useConfirm();
   const [loading, setLoading] = useState(true);
   const [schedules, setSchedules] = useState<ReviewSchedule[]>([]);
@@ -77,7 +164,15 @@ export function ReviewScheduleDrawer({ open, onClose, clans, defaultClanId }: Pr
   const [durationMinutes, setDurationMinutes] = useState('60');
   const [startsOn, setStartsOn] = useState(todayLocal());
   const [endsOn, setEndsOn] = useState('');
+  /** An end date is rare, so it is behind a disclosure rather than on the form. */
+  const [showEnd, setShowEnd] = useState(false);
   const tz = useMemo(browserTz, []);
+
+  /** One date, chosen once: it fixes the first review AND the weekday it repeats on. */
+  const pickFirstReview = (key: string) => {
+    setStartsOn(key);
+    setDayOfWeek(String(parseKey(key).getDay()));
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -96,8 +191,10 @@ export function ReviewScheduleDrawer({ open, onClose, clans, defaultClanId }: Pr
     load();
     // Reset the create form each open.
     setClanId(defaultClanId || clans[0]?.id || '');
-    setTitle(''); setDayOfWeek('1'); setTimeLocal('17:00');
-    setIntervalWeeks('1'); setDurationMinutes('60'); setStartsOn(todayLocal()); setEndsOn('');
+    setTitle(''); setTimeLocal('17:00');
+    setIntervalWeeks('1'); setDurationMinutes('60'); setEndsOn(''); setShowEnd(false);
+    const today = todayLocal();
+    setStartsOn(today); setDayOfWeek(String(parseKey(today).getDay()));
   }, [open, load, defaultClanId, clans]);
 
   const clanName = (id: string) => clans.find((c) => c.id === id)?.name || 'Clan';
@@ -166,7 +263,8 @@ export function ReviewScheduleDrawer({ open, onClose, clans, defaultClanId }: Pr
           <button onClick={onClose} className="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 text-sm hover:bg-slate-50">Close</button>
           <button
             onClick={submit}
-            disabled={creating}
+            disabled={creating || readOnly}
+            title={readOnly ? 'Completed programs are read-only' : undefined}
             className="px-4 py-2 rounded-lg bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 disabled:opacity-60 inline-flex items-center gap-1.5"
           >
             {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
@@ -199,9 +297,9 @@ export function ReviewScheduleDrawer({ open, onClose, clans, defaultClanId }: Pr
                   </div>
                   <button
                     onClick={() => cancel(s)}
-                    disabled={busyId === s.id}
+                    disabled={busyId === s.id || readOnly}
                     className="shrink-0 p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-50"
-                    title="Cancel this recurring review"
+                    title={readOnly ? 'Completed programs are read-only' : 'Cancel this recurring review'}
                   >
                     {busyId === s.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                   </button>
@@ -228,64 +326,112 @@ export function ReviewScheduleDrawer({ open, onClose, clans, defaultClanId }: Pr
             </div>
           )}
 
+          {/*
+              Seven fields in a grid, two of which could contradict each other,
+              is a form people get wrong and then distrust. This asks for the
+              things in the order somebody actually decides them — which day,
+              what time, how long, how often — and says the answer back in one
+              sentence so nobody has to reassemble it from the controls.
+          */}
           <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">Title <span className="text-slate-400 font-normal">(optional)</span></label>
+            <label className="block text-xs font-medium text-slate-600 mb-1.5">First review</label>
+            <MonthCalendar value={startsOn} min={todayLocal()} onChange={pickFirstReview} />
+          </div>
+
+          <div>
+            <label htmlFor="review-time" className="block text-xs font-medium text-slate-600 mb-1">Time</label>
             <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder={`${clanName(clanId)} clan review`}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-card focus:outline-none focus:ring-2 focus:ring-brand-500"
+              id="review-time"
+              type="time"
+              value={timeLocal}
+              onChange={(e) => setTimeLocal(e.target.value)}
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-card focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-slate-700"
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Day</label>
-              <SelectMenu value={dayOfWeek} onChange={setDayOfWeek} options={DAY_OPTIONS} ariaLabel="Day of week" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Time</label>
-              <input
-                type="time"
-                value={timeLocal}
-                onChange={(e) => setTimeLocal(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-card focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Repeats</label>
-              <SelectMenu value={intervalWeeks} onChange={setIntervalWeeks} options={INTERVAL_OPTIONS} ariaLabel="Cadence" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Duration</label>
-              <SelectMenu value={durationMinutes} onChange={setDurationMinutes} options={DURATION_OPTIONS} ariaLabel="Duration" />
+          {/* Pills, not dropdowns: four short options each, and seeing them
+              beats opening a menu to find out what the choices are. */}
+          <div>
+            <span className="block text-xs font-medium text-slate-600 mb-1.5">Lasts</span>
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Duration">
+              {DURATION_OPTIONS.map((o) => (
+                <button key={o.value} type="button" aria-pressed={durationMinutes === o.value}
+                  onClick={() => setDurationMinutes(o.value)}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                    durationMinutes === o.value
+                      ? 'border-brand-400 bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300'
+                      : 'border-slate-200 text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:text-slate-300'
+                  }`}>
+                  {o.label}
+                </button>
+              ))}
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Starts on</label>
-              <input
-                type="date"
-                value={startsOn}
-                min={todayLocal()}
-                onChange={(e) => setStartsOn(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-card focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
+          <div>
+            <span className="block text-xs font-medium text-slate-600 mb-1.5">Repeats</span>
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Cadence">
+              {INTERVAL_OPTIONS.map((o) => (
+                <button key={o.value} type="button" aria-pressed={intervalWeeks === o.value}
+                  onClick={() => setIntervalWeeks(o.value)}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                    intervalWeeks === o.value
+                      ? 'border-brand-400 bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300'
+                      : 'border-slate-200 text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:text-slate-300'
+                  }`}>
+                  {o.label}
+                </button>
+              ))}
             </div>
+          </div>
+
+          {/* The whole form, read back as a sentence. */}
+          {startsOn && (
+            <p className="rounded-xl border border-brand-200 bg-brand-50/50 px-3.5 py-2.5 text-sm text-slate-700 dark:border-brand-500/20 dark:bg-brand-500/5 dark:text-slate-200">
+              {INTERVAL_OPTIONS.find((o) => o.value === intervalWeeks)?.label.replace('Every', 'Every')}
+              {' '}on <strong>{DAYS[Number(dayOfWeek)]}</strong> at <strong>{to12h(timeLocal)}</strong> for {durationMinutes} minutes,
+              {' '}starting <strong>{niceDay(startsOn)}</strong>
+              {endsOn ? <> until <strong>{niceDay(endsOn)}</strong></> : ''}.
+            </p>
+          )}
+
+          {/* Optional, and almost always left empty — so it is a link, not a field. */}
+          {showEnd || endsOn ? (
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Ends on <span className="text-slate-400 font-normal">(optional)</span></label>
-              <input
-                type="date"
-                value={endsOn}
-                min={startsOn}
-                onChange={(e) => setEndsOn(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-card focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
+              <label htmlFor="review-ends" className="block text-xs font-medium text-slate-600 mb-1">
+                Ends on <span className="text-slate-400 font-normal">(optional)</span>
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  id="review-ends"
+                  type="date"
+                  value={endsOn}
+                  min={startsOn}
+                  onChange={(e) => setEndsOn(e.target.value)}
+                  className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm bg-card focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-slate-700"
+                />
+                <button type="button" onClick={() => { setEndsOn(''); setShowEnd(false); }}
+                  className="shrink-0 text-xs font-medium text-slate-500 hover:text-slate-800 dark:hover:text-slate-200">
+                  Remove
+                </button>
+              </div>
             </div>
+          ) : (
+            <button type="button" onClick={() => setShowEnd(true)}
+              className="text-xs font-medium text-brand-700 hover:underline dark:text-brand-300">
+              + Add an end date
+            </button>
+          )}
+
+          <div>
+            <label htmlFor="review-title" className="block text-xs font-medium text-slate-600 mb-1">Title <span className="text-slate-400 font-normal">(optional)</span></label>
+            <input
+              id="review-title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder={`${clanName(clanId)} clan review`}
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-card focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-slate-700"
+            />
           </div>
 
           <p className="text-xs text-slate-400 inline-flex items-center gap-1">

@@ -1,20 +1,28 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useCallback, useState, useEffect, useRef } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/context/AuthContext';
 import { TwoFactorCodeInput } from '@/components/shared/TwoFactorCodeInput';
 import { extractApiErrorMessage, getRateLimit, formatRetryAfter, getErrorCode } from '@/lib/utils/api-error';
-import { Mail, Lock, ArrowRight, AlertCircle, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Mail, Lock, ArrowRight, ArrowLeft, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { toast } from 'sonner';
-import { workspaceLandingPath, workspacePath } from '@/lib/services/workspace-scope';
+import { workspaceLandingPath, workspacePath, workspaceSlugFromPathname } from '@/lib/services/workspace-scope';
+import { tokenStore } from '@/lib/services/token-store';
 
 export default function LoginPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { login, verify2FA, user, isLoading, requiresTwoFactor } = useAuth();
-  const [formData, setFormData] = useState({ email: '', password: '' });
+  const { login, signInWithLink, verify2FA, user, isLoading, requiresTwoFactor } = useAuth();
+  const initialEmail = searchParams.get('email')?.trim() || '';
+  // A one-time sign-in link lands here: /w/<workspace>/login?link=<token>.
+  const linkToken = searchParams.get('link')?.trim() || '';
+  const [spendingLink, setSpendingLink] = useState(Boolean(linkToken));
+  const [formData, setFormData] = useState({ email: initialEmail, password: '' });
+  const [step, setStep] = useState<'email' | 'password'>(initialEmail ? 'password' : 'email');
   const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState('');
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
@@ -25,6 +33,11 @@ export default function LoginPage() {
   const [cooldownUntil, setCooldownUntil] = useState(0);
   const [now, setNow] = useState(() => Date.now());
   const cooldownSec = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
+  // A neutral `/login` must stay account-level even when this browser has a
+  // workspace cookie from an earlier visit. Only an explicit `/w/:slug/login`
+  // is workspace-scoped.
+  const scopedWorkspace = workspaceSlugFromPathname(pathname);
+  const authPath = (path: string) => scopedWorkspace ? workspacePath(path, scopedWorkspace) : path;
 
   // Tick every second while a cooldown is active so the countdown updates live.
   useEffect(() => {
@@ -39,6 +52,10 @@ export default function LoginPage() {
   // only: anything else is ignored so the param can't be used as an open redirect.
   const nextParam = searchParams.get('next');
   const returnTo = nextParam && nextParam.startsWith('/') && !nextParam.startsWith('//') ? nextParam : null;
+  const destinationFor = useCallback((currentUser: Parameters<typeof workspaceLandingPath>[0]) => {
+    if (!scopedWorkspace) return '/';
+    return returnTo ? workspacePath(returnTo) : workspaceLandingPath(currentUser);
+  }, [returnTo, scopedWorkspace]);
 
   // Check if redirected due to expired session
   useEffect(() => {
@@ -48,13 +65,59 @@ export default function LoginPage() {
     }
   }, [searchParams]);
 
+  /**
+   * Spend the sign-in link, once, on arrival.
+   *
+   * The whole promise of the link is that nobody types anything, so this runs
+   * before the form is ever shown. A link is single use: a second attempt
+   * fails even when the first one worked, which is what the ref is for, and
+   * React's development double render alone would have burned it.
+   *
+   * A failure is not a dead end. The password form is right underneath it with
+   * the address already filled in where we know it.
+   */
+  const spentLink = useRef(false);
+  useEffect(() => {
+    if (!linkToken || spentLink.current) return;
+    spentLink.current = true;
+
+    void signInWithLink(linkToken)
+      .then((result) => {
+        // An account with two factor still answers for it. The modal below
+        // takes over from here.
+        if (result.requiresTwoFactor) {
+          setSpendingLink(false);
+          return;
+        }
+        if (!result.user) {
+          // Nothing to open and nothing to say: fall through to the form
+          // rather than spinning at somebody indefinitely.
+          setSpendingLink(false);
+          return;
+        }
+        setRedirecting(true);
+        router.replace(destinationFor(result.user));
+      })
+      .catch((err: unknown) => {
+        setSpendingLink(false);
+        const rl = getRateLimit(err);
+        setError(
+          rl.limited
+            ? 'Too many attempts with that link. Ask for a fresh one in a few minutes.'
+            : 'That sign-in link has expired or was already used. Ask for a new one, or sign in with your password.',
+        );
+      });
+  }, [linkToken, signInWithLink, router, destinationFor]);
+
   // Redirect if already logged in
   useEffect(() => {
-    if (!isLoading && user && !requiresTwoFactor && !redirecting) {
-      const destination = returnTo ? workspacePath(returnTo) : workspaceLandingPath(user);
-      router.replace(destination);
+    if (isLoading || requiresTwoFactor || redirecting) return;
+    if (!scopedWorkspace && tokenStore.getToken()) {
+      router.replace('/');
+    } else if (user) {
+      router.replace(destinationFor(user));
     }
-  }, [user, isLoading, requiresTwoFactor, redirecting, router, returnTo]);
+  }, [user, isLoading, requiresTwoFactor, redirecting, router, destinationFor, scopedWorkspace]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -66,7 +129,7 @@ export default function LoginPage() {
       const result = await login(formData, rememberMe);
       // Use returned result instead of state to avoid stale value race.
       if (!result.requiresTwoFactor && result.user) {
-        const destination = returnTo ? workspacePath(returnTo) : workspaceLandingPath(result.user);
+        const destination = destinationFor(result.user);
         setRedirecting(true);
         toast.success('Welcome back!');
         router.replace(destination);
@@ -89,21 +152,36 @@ export default function LoginPage() {
     }
   };
 
+  const continueWithEmail = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!formData.email.trim()) return;
+    setError('');
+    setWorkspaceError(null);
+    setStep('password');
+  };
+
   const handle2FAVerify = async (code: string) => {
     const verifiedUser = await verify2FA(code, rememberMe);
     // After successful 2FA, resume where they were (or the dashboard).
-    const destination = returnTo ? workspacePath(returnTo) : workspaceLandingPath(verifiedUser);
+    const destination = destinationFor(verifiedUser);
     setRedirecting(true);
     router.replace(destination);
   };
 
   // Show loading while checking auth
-  if (isLoading || redirecting || (user && !requiresTwoFactor)) {
+  if (isLoading || redirecting || spendingLink || (user && !requiresTwoFactor)) {
     return (
-      <div role="status" className="flex min-h-64 flex-col items-center justify-center gap-3 text-slate-600">
-        <Loader2 className="h-8 w-8 animate-spin text-brand-600" aria-hidden="true" />
-        <span>{redirecting || user ? 'Opening your workspace…' : 'Checking your account…'}</span>
-      </div>
+      <LoadingSpinner
+        variant="page"
+        className="min-h-64"
+        message={
+          spendingLink && !redirecting && !user
+            ? 'Signing you in from your email link…'
+            : redirecting || user
+            ? 'Opening your workspace…'
+            : 'Checking your account…'
+        }
+      />
     );
   }
 
@@ -117,7 +195,7 @@ export default function LoginPage() {
           // Reset form and logout user to go back to login if they cancel
           setFormData({ email: '', password: '' });
           setError('');
-          window.location.href = workspacePath('/login');
+          window.location.href = authPath('/login');
         }}
         userEmail={user?.email}
       />
@@ -128,10 +206,10 @@ export default function LoginPage() {
     <div className="space-y-6">
       {/* Logo & Header */}
       <div className="text-center">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/logo-tile.png" alt="Pathment" className="inline-block w-16 h-16 rounded-2xl shadow-sm mb-4" />
-        <h1 className="text-brand-900 mb-2">Welcome back to Pathment</h1>
-        <p className="text-slate-600">Sign in to pick up where you left off.</p>
+        <h1 className="text-brand-900 mb-3">{step === 'email' ? 'Sign in to Pathment' : 'Enter your password'}</h1>
+        <p className="text-slate-600">
+          {step === 'email' ? 'Use the email address connected to your organization.' : 'Continue with your Pathment account.'}
+        </p>
       </div>
 
       {/* Login Form */}
@@ -148,7 +226,7 @@ export default function LoginPage() {
                   ? `You can try again in ${formatRetryAfter(cooldownSec)}.`
                   : 'Please check your credentials and try again'}
               </p>
-              {workspaceError === 'WORKSPACE_NOT_FOUND' && (
+              {scopedWorkspace && workspaceError === 'WORKSPACE_NOT_FOUND' && (
                 <Link className="mt-2 inline-block text-sm underline" href="/">
                   Choose another workspace
                 </Link>
@@ -168,107 +246,62 @@ export default function LoginPage() {
           </div>
         </div> */}
 
-        <form onSubmit={handleSubmit} className="space-y-5">
-          {/* Email */}
-          <div>
-            <label htmlFor="login-email" className="block text-slate-700 text-sm mb-2">Email Address</label>
+        {step === 'email' ? (
+          <form onSubmit={continueWithEmail} className="space-y-4">
+            <label htmlFor="login-email" className="sr-only">Email address</label>
             <div className="relative">
-              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+              <Mail className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" aria-hidden="true" />
               <input
-                id="login-email" autoComplete="email" type="email"
+                id="login-email" autoComplete="email" type="email" autoFocus
                 value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                className="w-full pl-11 pr-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
-                placeholder="you@example.com"
+                onChange={(event) => setFormData((current) => ({ ...current, email: event.target.value }))}
+                className="w-full rounded-xl border border-slate-300 py-3.5 pl-12 pr-4 text-base focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                placeholder="name@work-email.com"
                 required
               />
             </div>
-          </div>
-
-          {/* Password */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label htmlFor="login-password" className="block text-slate-700 text-sm">Password</label>
-              <Link href="/reset-password" className="text-brand-600 hover:text-brand-700 text-sm">
-                Forgot?
-              </Link>
+            <button type="submit" className="group flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 py-3.5 font-semibold text-white transition-colors hover:bg-brand-700">
+              Continue <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <span className="min-w-0 truncate text-sm font-medium text-slate-800">{formData.email}</span>
+              <button type="button" onClick={() => { setStep('email'); setFormData((current) => ({ ...current, password: '' })); setError(''); }} className="ml-3 shrink-0 text-sm font-semibold text-brand-700 hover:text-brand-800">Change</button>
             </div>
-            <div className="relative">
-              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-              <input
-                id="login-password" autoComplete="current-password" type={showPassword ? 'text' : 'password'}
-                value={formData.password}
-                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                className="w-full pl-11 pr-12 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
-                placeholder="••••••••"
-                required
-              />
-              <button
-                type="button"
-                aria-label={showPassword ? 'Hide password' : 'Show password'}
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-              >
-                {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-              </button>
+            <input type="email" autoComplete="email" value={formData.email} readOnly className="sr-only" tabIndex={-1} aria-hidden="true" />
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <label htmlFor="login-password" className="text-sm font-medium text-slate-700">Password</label>
+                <Link href={authPath('/reset-password')} className="text-sm font-medium text-brand-700 hover:text-brand-800">Forgot password?</Link>
+              </div>
+              <div className="relative">
+                <Lock className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+                <input id="login-password" autoComplete="current-password" autoFocus type={showPassword ? 'text' : 'password'} value={formData.password} onChange={(event) => setFormData((current) => ({ ...current, password: event.target.value }))} className="w-full rounded-xl border border-slate-300 py-3.5 pl-12 pr-12 text-base focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500" placeholder="Enter your password" required />
+                <button type="button" aria-label={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword((visible) => !visible)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                  {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                </button>
+              </div>
             </div>
-          </div>
+            <div className="flex items-start">
+              <input type="checkbox" id="remember" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)} className="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500" />
+              <label htmlFor="remember" className="ml-2 text-sm text-slate-700">Keep me signed in for 30 days</label>
+            </div>
+            <button type="submit" disabled={loading || cooldownSec > 0} className="group flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 py-3.5 font-semibold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-brand-400">
+              {loading ? 'Signing in…' : cooldownSec > 0 ? `Try again in ${formatRetryAfter(cooldownSec)}` : <>Sign in <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-0.5" aria-hidden="true" /></>}
+            </button>
+            <button type="button" onClick={() => setStep('email')} className="mx-auto flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-brand-700"><ArrowLeft className="h-4 w-4" aria-hidden="true" /> Use another email</button>
+          </form>
+        )}
 
-          {/* Remember Me — checked: stay signed in on this device for 30 days.
-              Unchecked: session-only, signs you out when the browser is closed. */}
-          <div className="flex items-start">
-            <input
-              type="checkbox"
-              id="remember"
-              checked={rememberMe}
-              onChange={(e) => setRememberMe(e.target.checked)}
-              className="w-4 h-4 mt-0.5 text-brand-600 border-slate-300 rounded focus:ring-brand-500"
-            />
-            <label htmlFor="remember" className="ml-2 text-slate-700 text-sm">
-              Keep me signed in for 30 days
-              <span className="block text-xs text-slate-400">
-                {rememberMe
-                  ? 'Stays signed in on this device.'
-                  : 'Signs out when you close the browser — best on shared computers.'}
-              </span>
-            </label>
-          </div>
-
-          {/* Submit Button */}
-          <button
-            type="submit"
-            disabled={loading || cooldownSec > 0}
-            className="w-full bg-brand-600 hover:bg-brand-700 disabled:bg-brand-400 disabled:cursor-not-allowed text-white py-3 rounded-xl transition-colors flex items-center justify-center gap-2 group"
-          >
-            {loading ? (
-              'Signing in...'
-            ) : cooldownSec > 0 ? (
-              `Try again in ${formatRetryAfter(cooldownSec)}`
-            ) : (
-              <>
-                Sign In
-                <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-              </>
-            )}
-          </button>
-        </form>
-
-        {/* Register Link */}
-        <div className="mt-6 text-center">
-          <p className="text-slate-600 text-sm">
-            Don&apos;t have an account?{' '}
-            <Link href={workspacePath('/register')} className="text-brand-600 hover:text-brand-700">
-              Sign up
-            </Link>
-          </p>
-        </div>
+        <p className="mt-8 text-center text-sm text-slate-600">
+          New to Pathment? <Link href="/register" className="font-semibold text-brand-700 hover:text-brand-800">Create an organization</Link>
+        </p>
       </div>
 
       {/* Security Notice */}
-      <div className="flex items-center justify-center gap-2 text-slate-500 text-sm">
-        <Lock className="w-4 h-4" />
-        <span>Your account, your learning journey</span>
-      </div>
+      <p className="text-center text-xs text-slate-500">After sign-in, Pathment opens your recent workspace or lets you choose one.</p>
     </div>
   );
 }

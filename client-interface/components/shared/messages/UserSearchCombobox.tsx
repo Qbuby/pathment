@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { Avatar } from '@/components/shared/Avatar';
 import { useQuery } from '@tanstack/react-query';
 import { Loader2, Search, UserPlus } from 'lucide-react';
-import Image from 'next/image';
 
 import { messagingApi } from '@/lib/services/messaging-api';
 import type { SearchableUser } from '@/lib/types/messaging';
@@ -125,20 +125,9 @@ export default function UserSearchCombobox({ onSelect }: UserSearchComboboxProps
                         className="flex items-center gap-3 px-2 py-2.5 cursor-pointer"
                       >
                         {/* Avatar */}
-                        {user.profilePictureUrl ? (
-                          <Image
-                            src={user.profilePictureUrl}
-                            alt={fullName}
-                            width={32}
-                            height={32}
-                            className="w-8 h-8 rounded-full object-cover shrink-0"
-                          />
-                        ) : (
-                          <div className="w-8 h-8 rounded-full bg-brand-500/15 text-brand-600 dark:text-brand-400 flex items-center justify-center text-xs font-semibold shrink-0">
-                            {(user.firstName?.[0] || '').toUpperCase()}
-                            {(user.lastName?.[0] || '').toUpperCase()}
-                          </div>
-                        )}
+                        {/* Shared Avatar — see ChatWindow: next/image throws
+                            in render for an unconfigured host. */}
+                        <Avatar name={fullName} src={user.profilePictureUrl} size="sm" className="shrink-0" />
 
                         {/* Name + email */}
                         <div className="flex-1 min-w-0">

@@ -20,6 +20,7 @@ const notificationOrchestrator = require('./notificationOrchestrator');
 const { NOTIFICATION_EVENTS } = require('../config/notificationMatrix');
 const { mapResponsesToProfile } = require('../config/intakeProfileFields');
 const logger = require('../utils/logger');
+const { orgLogoThumb } = require('../utils/imageUrl');
 
 /**
  * How long after rotation a spent refresh token is still treated as a retry
@@ -69,7 +70,11 @@ class AuthService {
 
     // Surface the placement so the registration page can show (read-only)
     // which program/clan the person is joining.
-    const [program, clan, application] = await Promise.all([
+    const [organization, program, clan, application] = await Promise.all([
+      models.Organization.findByPk(invite.organizationId, {
+        attributes: ['id', 'name', 'slug', 'logoUrl'],
+        skipOrganizationScope: true
+      }),
       invite.programId ? models.Program.findByPk(invite.programId, { attributes: ['id', 'name'] }) : null,
       invite.clanId ? models.Clan.findByPk(invite.clanId, { attributes: ['id', 'name'] }) : null,
       // If this invite came from an application, prefill the registrant's name
@@ -85,9 +90,18 @@ class AuthService {
       role: invite.role,
       expiresAt: invite.expiresAt,
       existingAccount: Boolean(existingUser),
+      organization: organization ? {
+        id: organization.id,
+        name: organization.name,
+        slug: organization.slug,
+        logoUrl: orgLogoThumb(organization.logoUrl || null) || null
+      } : null,
       program: program ? { id: program.id, name: program.name } : null,
       clan: clan ? { id: clan.id, name: clan.name } : null,
-      applicant: application ? { firstName: application.firstName || '', lastName: application.lastName || '' } : null
+      applicant: application ? { firstName: application.firstName || '', lastName: application.lastName || '' } : null,
+      // A System Pool invitation: the person lands in the candidate area, not
+      // the mentee portal, once they have an account.
+      pool: invite.metadata?.pool ? { id: invite.metadata.poolId || null } : null
     };
   }
 
@@ -125,8 +139,14 @@ class AuthService {
           }, { transaction });
         }
       }
-      const profile = invite.role === 'mentor' ? models.MentorProfile : models.MenteeProfile;
-      await profile.findOrCreate({ where: { userId: actor.id }, transaction });
+      const poolMemberService = require('./poolMemberService');
+      const poolOnly = poolMemberService.isPoolOnlyInvite(invite);
+      // A pool-only invitation makes a CANDIDATE, not a mentee: no mentee
+      // profile, so no mentee portal until they are placed in a clan.
+      if (!poolOnly) {
+        const profile = invite.role === 'mentor' ? models.MentorProfile : models.MenteeProfile;
+        await profile.findOrCreate({ where: { userId: actor.id }, transaction });
+      }
       let membership = null;
       if (invite.clanId) {
         membership = await require('./clanService').addMember(invite.clanId, {
@@ -140,9 +160,18 @@ class AuthService {
       } else if (invite.role === 'mentor') {
         throw new ValidationError('A mentor invite must specify a clan');
       }
+      // Any invitation proves the address: link every pool membership waiting on it.
+      const poolMemberIds = await poolMemberService.activateForUser(actor, { organizationId, transaction });
       // Consume the invitation in the same transaction as membership/placement.
       await invite.update({ usedAt: new Date(), usedBy: actor.id }, { transaction });
-      return { membership, clanId: invite.clanId, role: invite.role };
+      return { membership, clanId: invite.clanId, role: invite.role, poolMemberIds };
+    }).then(async (result) => {
+      // Hand out the pools' work only once the account is committed.
+      if (result.poolMemberIds?.length) {
+        await require('./poolMemberService').afterActivation(result.poolMemberIds)
+          .catch((e) => console.warn('pool activation follow-up failed:', e.message));
+      }
+      return result;
     });
   }
 
@@ -166,10 +195,15 @@ class AuthService {
       password,
       inviteToken,
       clanJoinSlug,
+      organization,
       phoneNumber,
       dateOfBirth,
       bio
     } = userData;
+
+    if (organization && !inviteToken && !clanJoinSlug) {
+      return this._registerOrganizationOwner({ firstName, lastName, email, password, organization });
+    }
 
     if (clanJoinSlug && !inviteToken) {
       return this._registerViaClanJoinSlug({
@@ -192,6 +226,7 @@ class AuthService {
 
     // Captured inside the txn so we can notify the clan's mentors after commit.
     let placedMenteeClan = null; // { id, name } when a mentee is placed into a clan
+    let activatedPoolMemberIds = []; // System Pool memberships this account activated
 
     const result = await sequelize.transaction(async (transaction) => {
       const invite = await this.getActiveInviteByToken(inviteToken, transaction);
@@ -247,6 +282,7 @@ class AuthService {
         transaction,
       });
 
+      const poolMemberService = require('./poolMemberService');
       if (role === 'mentor') {
         await models.MentorProfile.create({
           userId: user.id,
@@ -255,7 +291,9 @@ class AuthService {
           yearsOfExperience: 0,
           maxMentees: 5
         }, { transaction });
-      } else {
+      } else if (!poolMemberService.isPoolOnlyInvite(invite)) {
+        // A pool-only invitation makes a CANDIDATE: no mentee profile, so no
+        // mentee portal until placement creates one (clanService.addMember).
         await models.MenteeProfile.create({
           userId: user.id,
           interests: [],
@@ -272,6 +310,10 @@ class AuthService {
       }
 
       await models.UserSettings.create({ userId: user.id }, { transaction });
+
+      // Any invitation proves the address: link every System Pool membership
+      // waiting on it in this workspace. Their work is handed out after commit.
+      activatedPoolMemberIds = await poolMemberService.activateForUser(user, { organizationId, transaction });
 
       // The invite is the placement - enroll/place strictly from the token,
       // never from anything the registrant sent. Stale placement (program/clan
@@ -356,10 +398,71 @@ class AuthService {
       );
     }
 
+    // Now the account is committed, hand out the pools' qualifying work.
+    if (activatedPoolMemberIds.length) {
+      await require('./poolMemberService').afterActivation(activatedPoolMemberIds)
+        .catch((e) => console.warn('pool activation follow-up failed:', e.message));
+    }
+
     const userResponse = result.user.toJSON();
     delete userResponse.passwordHash;
 
     return { user: userResponse };
+  }
+
+  /**
+   * Public organization signup. The account and its first workspace are one
+   * atomic operation, so a slug conflict or plan/setup failure cannot leave a
+   * user stranded without an organization. Member registration remains invite
+   * based; this path always creates an admin owner.
+   */
+  async _registerOrganizationOwner({ firstName, lastName, email, password, organization }) {
+    const organizationService = require('./organizationService');
+    if (!organizationService.organizationSignupEnabled()) {
+      throw new AuthorizationError('New organization signup is temporarily unavailable');
+    }
+
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const hashedPassword = await bcrypt.hash(password, 12);
+    const verificationToken = generateRandomToken();
+    const tokenHash = hashToken(verificationToken);
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    const result = await sequelize.transaction(async (transaction) => {
+      const existingUser = await models.User.findOne({ where: { email: normalizedEmail }, transaction });
+      if (existingUser) throw new ConflictError(AUTH_MESSAGES.EMAIL_ALREADY_EXISTS);
+
+      const user = await models.User.create({
+        firstName,
+        lastName,
+        email: normalizedEmail,
+        passwordHash: hashedPassword,
+        role: 'admin',
+        emailVerified: false,
+        status: 'active',
+      }, { transaction });
+
+      await models.UserSettings.create({ userId: user.id }, { transaction });
+      const createdOrganization = await organizationService.create(user.id, organization, {
+        transaction,
+        allowInitialWorkspace: true,
+      });
+      await models.EmailVerificationToken.create({
+        userId: user.id,
+        token: tokenHash,
+        expiresAt,
+      }, { transaction });
+
+      return { user, organization: createdOrganization };
+    });
+
+    notificationOrchestrator.sendEmailVerificationEmail(result.user, verificationToken, result.organization.slug).catch((error) => {
+      console.warn('organization owner verification email failed:', error.message);
+    });
+
+    const userResponse = result.user.toJSON();
+    delete userResponse.passwordHash;
+    return { user: userResponse, organization: result.organization, requiresEmailVerification: true };
   }
 
   /**
@@ -562,7 +665,10 @@ class AuthService {
 
     if (userResponse.capabilities.includes('mentee')) {
       const gamificationService = require('./gamificationService');
-      gamificationService.awardDailyLoginPoint(user.id).catch(() => {});
+      // Finish this non-critical write before the request returns. Leaving it
+      // detached let the next request/test reset collide with its database
+      // locks and could also drop the award when a short-lived process exited.
+      await gamificationService.awardDailyLoginPoint(user.id).catch(() => {});
     }
 
     return {
@@ -810,6 +916,7 @@ class AuthService {
       userResponse.capabilities = await authzService.getCapabilities(user, { assignments });
       userResponse.permissions = await authzService.getPermissionUnion(user);
       userResponse.canAccessAdmin = await authzService.hasAdminAccess(user, { assignments });
+      userResponse.canAccessPools = await authzService.hasPoolAccess(user, { assignments });
 
       const accessToken = generateAccessToken({ id: user.id, email: user.email, role: user.role });
 
@@ -1161,7 +1268,7 @@ class AuthService {
     const membership = organizationId && await models.OrganizationMembership.findOne({
       where: { organizationId, userId, status: 'active' },
     });
-    if (organizationId && !membership) {
+    if (!organizationId || !membership) {
       // Global identity can accept an invitation without already being a member.
       // Do not join profiles, roles or other workspace records into this response.
       const account = await models.User.findByPk(userId, {
@@ -1199,6 +1306,7 @@ class AuthService {
     json.capabilities = await authzService.getCapabilities(user, { assignments });
     json.permissions = await authzService.getPermissionUnion(user);
     json.canAccessAdmin = await authzService.hasAdminAccess(user, { assignments });
+    json.canAccessPools = await authzService.hasPoolAccess(user, { assignments });
     return json;
   }
 

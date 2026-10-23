@@ -1,3 +1,4 @@
+import type { MenteeRecord, OpenWorkElsewhere } from '@/lib/types/mentee-record';
 import {apiClient} from './api-client';
 import { apiConfig } from '@/lib/config/api';
 
@@ -49,13 +50,30 @@ export interface TransferRequest {
 
 export const mentorApi = {
   // Get all active mentors
-  getAll: async (search?: string) => {
-    const params = search ? { search } : {};
+  /**
+   * The mentor directory.
+   *
+   * This took a SEARCH STRING, and both of its paged callers were handing it
+   * a filter object — so `params` came out as `{ search: { search, page,
+   * limit, … } }` and the server received one nonsense parameter instead of
+   * four real ones. The admin mentor list had therefore never paged, never
+   * filtered by "accepting", and searched by an object. It takes the object
+   * now, and a bare string still works for the callers that pass one.
+   */
+  getAll: async (filters?: string | {
+    search?: string; page?: number; limit?: number;
+    accepting?: 'true' | 'false'; programId?: string; clanId?: string;
+  }) => {
+    const params = typeof filters === 'string'
+      ? (filters ? { search: filters } : {})
+      : Object.fromEntries(Object.entries(filters || {}).filter(([, v]) => v !== undefined && v !== ''));
     return apiClient.get(apiConfig.endpoints.mentors, { params });
   },
 
   // The logged-in mentor's cohort for the Cockpit (computed fairness signals).
-  getCohort: () => apiClient.get('/mentor/cohort'),
+  // Active members of the clan only — a paused mentee is out of reports and
+  // reviews by definition, and is brought back from the paused list instead.
+  getCohort: () => apiClient.get(`/mentor/cohort`),
 
   // Period-scoped cohort throughput (week / month window).
   getCohortActivity: (period: 'week' | 'month') =>
@@ -67,6 +85,24 @@ export const mentorApi = {
 
   // Rich profile bundle for one mentee.
   getMenteeProfile: (menteeId: string) => apiClient.get(`/mentor/mentee/${menteeId}`),
+
+  /**
+   * The mentee's record across EVERY clan in the org, not just the active one.
+   *
+   * `X-Active-Clan` rides along on every request and is deliberately ignored by
+   * this endpoint — the whole point is to escape the clan filter. `compact`
+   * drops the task lists for the clan-review card.
+   */
+  getMenteeRecord: (menteeId: string, compact = false) =>
+    apiClient.get<{ data: { record: MenteeRecord } }>(
+      `/mentor/mentee/${menteeId}/record${compact ? '?view=compact' : ''}`,
+    ),
+
+  /** Open work in the mentee's other clans — so you do not assign over it. */
+  getOpenWorkElsewhere: (menteeId: string, excludeClanId?: string | null) =>
+    apiClient.get<{ data: { tasks: OpenWorkElsewhere[]; count: number } }>(
+      `/mentor/mentee/${menteeId}/open-work-elsewhere${excludeClanId ? `?excludeClanId=${excludeClanId}` : ''}`,
+    ),
 
   // Working-style (personality) + insight logging.
   updatePersonality: (menteeId: string, dims: { consistency?: number; communication?: number; resilience?: number; independence?: number }) =>
@@ -88,7 +124,9 @@ export const mentorApi = {
     apiClient.post(`/mentor/mentee/${menteeId}/attendance`, { status }),
   getReviewAttendance: () => apiClient.get<{ data: { attendance: Record<string, 'present' | 'absent' | 'excused'> } }>('/mentor/review/attendance'),
   getMenteeAttendanceHistory: (menteeId: string) =>
-    apiClient.get<{ data: { history: { sessionId: string; date: string | null; status: 'present' | 'absent' | 'excused'; title: string | null }[] } }>(`/mentor/mentee/${menteeId}/attendance/history`),
+    apiClient.get<{ data: { history: { sessionId: string; date: string | null; status: 'present' | 'absent' | 'excused'; title: string | null }[] } }>(
+      `/mentor/mentee/${menteeId}/attendance/history`,
+    ),
 
   // Dated, saved, editable cohort-review sessions (full history). Clan-scoped:
   // pass the active clan so lead + co-mentors of the same clan share one session.
@@ -157,7 +195,8 @@ export const mentorApi = {
 
   // Paused mentees + win-back. Paused mentees stay in the clan but drop out of
   // reports and receive re-engagement reminders.
-  listPausedMentees: () => apiClient.get('/mentor/paused'),
+  listPausedMentees: (clanId?: string) =>
+    apiClient.get(`/mentor/paused${clanId ? `?clanId=${clanId}` : ''}`),
   getMenteePauseState: (menteeId: string) => apiClient.get(`/mentor/mentees/${menteeId}/pause-state`),
   listPauseSuggestions: (clanId?: string) =>
     apiClient.get(`/mentor/pause-suggestions${clanId ? `?clanId=${clanId}` : ''}`),

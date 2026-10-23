@@ -11,6 +11,25 @@ const isAdmin = (user) => {
 const MENTOR_CLAN_ROLES = ['lead_mentor', 'co_mentor', 'core_team'];
 
 /**
+ * Is this space closed to new posts?
+ *
+ * It used to be: yes, as soon as the clan froze or the cohort completed. That
+ * tied the conversation to the work lifecycle, and the two are not the same
+ * thing. Freezing a clan protects the RECORD OF WORK — tasks, submissions,
+ * attendance — so a finished programme cannot be edited after the fact. A
+ * cohort finishing is not a reason for the people in it to stop talking to
+ * each other; it is usually when they have the most to say.
+ *
+ * So nothing closes a space today. This stays as one named place to change if
+ * an explicit, admin-controlled archive is ever wanted — which is a different
+ * feature from "the programme ended", and would be a deliberate act rather
+ * than a side effect of one.
+ */
+function isSpaceArchived() {
+  return false;
+}
+
+/**
  * Community spaces are not a table - they are *derived* from the relationships
  * a user already has (ClanMembership, Enrollment). A space is one of:
  *   - clan     → a single clan's working space (members = active ClanMembership)
@@ -31,11 +50,11 @@ class CommunitySpaceService {
    */
   async _myClanMemberships(userId) {
     const rows = await models.ClanMembership.findAll({
-      where: { userId, status: 'active' },
+      where: { userId, status: { [Op.in]: ['active', 'paused'] } },
       include: [{
         model: models.Clan,
         as: 'clan',
-        attributes: ['id', 'name', 'programId'],
+        attributes: ['id', 'name', 'programId', 'kind', 'frozenAt'],
         include: [{ model: models.Program, as: 'program', attributes: ['id', 'name'] }]
       }]
     });
@@ -50,14 +69,24 @@ class CommunitySpaceService {
       where: { menteeId: userId, status: { [Op.notIn]: ['rejected', 'dropped'] } },
       include: [
         { model: models.Program, as: 'program', attributes: ['id', 'name'] },
-        { model: models.Cohort, as: 'cohort', attributes: ['id', 'name', 'programId'] }
+        { model: models.Cohort, as: 'cohort', attributes: ['id', 'name', 'programId', 'status'] }
       ]
     });
   }
 
   /** The full set of spaces a user can browse, clan-first. */
-  async listSpaces(user) {
+  async listSpaces(user, { portalRole = null } = {}) {
     const userId = user.id;
+    /**
+     * Resolved, not read off the account.
+     *
+     * The local `isAdmin` helper reads `user.capabilities`, which the rest of
+     * the codebase is explicit about being legacy and not authoritative. A
+     * program_admin has no stored capability, so every admin branch in this
+     * file skipped them: they got their own memberships and nothing they
+     * administer. `actsAsAdmin` derives it from real grants.
+     */
+    const administers = await require('./authzService').actsAsAdmin(user);
     const [memberships, enrollments] = await Promise.all([
       this._myClanMemberships(userId),
       this._myEnrollments(userId)
@@ -81,9 +110,12 @@ class CommunitySpaceService {
         name: m.clan.name,
         subtitle: m.clan.program?.name || 'Clan',
         role: m.role,
-        isModerator: moderator
+        isModerator: moderator,
+        readOnly: isSpaceArchived(),
+        /** The work is closed even though the conversation is not — the UI says so. */
+        workClosed: m.clan.kind !== 'standing' && Boolean(m.clan.frozenAt),
       });
-      if (m.clan.programId) {
+      if (m.clan.programId && m.clan.kind !== 'standing') {
         programNames.set(m.clan.programId, m.clan.program?.name || 'Program');
         if (MENTOR_CLAN_ROLES.includes(m.role)) mentorProgramIds.add(m.clan.programId);
       }
@@ -99,7 +131,9 @@ class CommunitySpaceService {
           name: e.cohort.name,
           subtitle: e.program?.name ? `${e.program.name} · batch` : 'Cohort',
           role: 'member',
-          isModerator: isAdmin(user)
+          isModerator: isAdmin(user),
+          readOnly: isSpaceArchived(),
+          workClosed: e.cohort.status === 'completed',
         });
       }
       if (e.program) {
@@ -132,7 +166,7 @@ class CommunitySpaceService {
       }
       const cohorts = await models.Cohort.findAll({
         where: { programId: { [Op.in]: programIds } },
-        attributes: ['id', 'name', 'programId']
+        attributes: ['id', 'name', 'programId', 'status']
       });
       for (const c of cohorts) {
         add({
@@ -142,7 +176,58 @@ class CommunitySpaceService {
           name: c.name,
           subtitle: `${programNames.get(c.programId) || 'Program'} · batch`,
           role: 'mentor',
-          isModerator: true
+          isModerator: true,
+          readOnly: isSpaceArchived(),
+          workClosed: c.status === 'completed',
+        });
+      }
+    }
+
+    /**
+     * Every space an admin administers, not only the ones they joined.
+     *
+     * An admin's spaces came from their own memberships and enrolments, same
+     * as anybody's — so somebody who runs the workspace but is not in a clan
+     * saw the Lounge and nothing else, and the one person responsible for
+     * moderating these conversations had no way to read them. They could
+     * already OPEN any space by id (see getSpaceContext below); they just
+     * could not find one.
+     *
+     * Bounded by their programme scope, so a programme-scoped admin gets
+     * their programmes' clans and not the workspace's. `add` is idempotent on
+     * the key, so a space they are genuinely a member of keeps the richer
+     * entry built above rather than being replaced by this one.
+     */
+    if (administers) {
+      const scope = await require('./authzService').adminProgramScope(user);
+      const where = Array.isArray(scope) ? { programId: { [Op.in]: scope } } : {};
+      const [adminClans, adminPrograms] = await Promise.all([
+        models.Clan.findAll({
+          where, attributes: ['id', 'name', 'programId', 'kind', 'frozenAt'],
+          include: [{ model: models.Program, as: 'program', attributes: ['id', 'name'], required: false }],
+        }),
+        models.Program.findAll({
+          where: Array.isArray(scope) ? { id: { [Op.in]: scope } } : {},
+          attributes: ['id', 'name'],
+        }),
+      ]);
+      for (const c of adminClans) {
+        add({
+          key: `clan:${c.id}`,
+          type: 'clan',
+          id: c.id,
+          name: c.name,
+          subtitle: c.program?.name || 'Clan',
+          role: 'admin',
+          isModerator: true,
+          readOnly: isSpaceArchived(),
+          workClosed: c.kind !== 'standing' && Boolean(c.frozenAt),
+        });
+      }
+      for (const prog of adminPrograms) {
+        add({
+          key: `program:${prog.id}`, type: 'program', id: prog.id,
+          name: prog.name, subtitle: 'Program', role: 'admin', isModerator: true,
         });
       }
     }
@@ -158,6 +243,34 @@ class CommunitySpaceService {
       isModerator: isAdmin(user)
     });
 
+    /**
+     * In the ADMIN portal, show what they administer — not what they are in.
+     *
+     * The same person can administer one programme and mentor a clan in
+     * another; both are true, and which one applies is the hat they are
+     * wearing. Under Admin, a programme-scoped admin was shown their own
+     * clans from a programme they have no admin rights over, which reads as
+     * the admin surface leaking another programme.
+     *
+     * Only ever narrows, and only in that portal: switch to Mentor and their
+     * own clans are all there, which is the view those memberships are for.
+     * The Lounge stays — it is everybody's and belongs to no programme.
+     */
+    if (portalRole === 'admin' && administers) {
+      const scope = await require('./authzService').adminProgramScope(user);
+      if (Array.isArray(scope)) {
+        const allowedClans = scope.length
+          ? await models.Clan.findAll({ where: { programId: { [Op.in]: scope } }, attributes: ['id'], raw: true })
+          : [];
+        const clanIds = new Set(allowedClans.map((c) => c.id));
+        return spaces.filter((space) => (
+          space.type === 'global'
+          || (space.type === 'program' && scope.includes(space.id))
+          || (space.type === 'clan' && clanIds.has(space.id))
+        ));
+      }
+    }
+
     return spaces;
   }
 
@@ -171,7 +284,19 @@ class CommunitySpaceService {
     if (match) return match;
     // Admins can open any space for moderation even without membership.
     if (isAdmin(user)) {
-      return { type: scopeType, id: scopeId, name: 'Space', isModerator: true, role: 'admin' };
+      const space = scopeType === 'clan' ? await models.Clan.findByPk(scopeId) : scopeType === 'cohort' ? await models.Cohort.findByPk(scopeId) : await models.Program.findByPk(scopeId);
+      if (!space) return null;
+      return {
+        type: scopeType,
+        id: scopeId,
+        name: space.name,
+        isModerator: true,
+        role: 'admin',
+        readOnly: isSpaceArchived(),
+        workClosed:
+          (scopeType === 'clan' && space.kind !== 'standing' && Boolean(space.frozenAt)) ||
+          (scopeType === 'cohort' && space.status === 'completed'),
+      };
     }
     return null;
   }
@@ -191,7 +316,7 @@ class CommunitySpaceService {
 
     if (scopeType === 'program') {
       const ids = new Set();
-      const clans = await models.Clan.findAll({ where: { programId: scopeId }, attributes: ['id'] });
+      const clans = await models.Clan.findAll({ where: { programId: scopeId, kind: 'cohort' }, attributes: ['id'] });
       const clanIds = clans.map((c) => c.id);
       if (clanIds.length) {
         const cm = await models.ClanMembership.findAll({
@@ -215,7 +340,7 @@ class CommunitySpaceService {
       // Mentors of the cohort's program.
       const cohort = await models.Cohort.findByPk(scopeId, { attributes: ['programId'] });
       if (cohort) {
-        const clans = await models.Clan.findAll({ where: { programId: cohort.programId }, attributes: ['id'] });
+        const clans = await models.Clan.findAll({ where: { programId: cohort.programId, kind: 'cohort' }, attributes: ['id'] });
         const clanIds = clans.map((c) => c.id);
         if (clanIds.length) {
           const mentors = await models.ClanMembership.findAll({

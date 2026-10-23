@@ -7,6 +7,12 @@ interface Props {
   dates: string[];
   label?: string;
   unit?: string;
+  /**
+   * The line under the month. The default talks about availability, which is
+   * true on the mentor schedule and wrong anywhere else that reuses this —
+   * the admin meetings calendar is not about availability at all.
+   */
+  hint?: string;
   initialDate?: string;
   selected: string | null;
   onSelect: (date: string | null) => void;
@@ -21,6 +27,7 @@ export function ReviewHistoryCalendar({
   onSelect,
   label = 'Review history calendar',
   unit = 'review',
+  hint,
   initialDate,
   selectableDays = 'highlighted',
 }: Props) {
@@ -69,7 +76,7 @@ export function ReviewHistoryCalendar({
         </button>
       </div>
       <div className="mb-3 flex items-center justify-between text-xs text-muted-foreground">
-        <span>{selectableDays === 'all' ? 'Select any day to view or add availability' : 'Select a highlighted day to filter'}</span>
+        <span>{hint || (selectableDays === 'all' ? 'Select any day to view or add availability' : 'Select a highlighted day to filter')}</span>
         <button
           className="font-medium text-brand-700 dark:text-brand-300"
           onClick={() => {

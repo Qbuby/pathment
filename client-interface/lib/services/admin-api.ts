@@ -8,6 +8,8 @@ export interface AdminPromotionCandidate {
   avatar: string;
   avatarUrl?: string | null;
   program: string | null;
+  /** For the programme filter — a name is not a reliable key. */
+  programId: string | null;
   level: string | null;
   absoluteProgress: number;
   onTimeRate: number;
@@ -42,6 +44,12 @@ export const adminApi = {
     disable2FA: (id: string) =>
       apiClient.post(`/admin/users/${id}/disable-2fa`, {}),
   },
+  /**
+   * What the database size is made of, and the standing retention policies.
+   *
+   * Storage/retention moved to the platform console (platformApi.storage):
+   * the report covers the whole database, not one workspace.
+   */
   /** Co-mentor promotion pipeline — admin review of mentor nominations. */
   promotions: {
     list: () => apiClient.get('/admin/promotions'),
@@ -51,7 +59,7 @@ export const adminApi = {
   },
   /** Cohort-review records — read-only rollups, clan-wise / mentor-wise. */
   reviewRecords: {
-    list: (params: { clanId?: string; mentorId?: string; from?: string; to?: string } = {}) =>
+    list: (params: { programId?: string; clanId?: string; mentorId?: string; from?: string; to?: string } = {}) =>
       apiClient.get('/admin/review-records', { params }),
     detail: (id: string) => apiClient.get(`/admin/review-records/${id}`),
   },

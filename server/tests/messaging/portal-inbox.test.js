@@ -94,3 +94,92 @@ describe('a dual-role inbox', () => {
     expect(await titlesFor(dual, 'mentor')).toContain('my-mentor@test.com');
   });
 });
+
+/**
+ * The inbox also belongs to the programmes the viewer can currently see.
+ *
+ * Scope moves. Somebody can be an org admin at nine and an admin of one
+ * programme at ten, and nothing recomputed when it changed: `listConversations`
+ * filtered by hat and never asked about programmes at all, so every thread they
+ * had ever opened stayed in the list, with people from programmes they no
+ * longer had any access to.
+ *
+ * Hidden, never deleted. Nothing about the thread is touched, so restoring the
+ * access brings it straight back.
+ */
+describe('an inbox bounded by programme', () => {
+  let viewer, samePrograme, otherProgramme, unplaceable;
+
+  const threadBetween = async (a, b) => {
+    const conversation = await models.Conversation.create({
+      type: 'direct',
+      createdBy: a.id,
+      metadata: { directKey: [a.id, b.id].sort().join(':') },
+    });
+    await models.ConversationParticipant.bulkCreate([
+      { conversationId: conversation.id, userId: a.id, role: 'owner' },
+      { conversationId: conversation.id, userId: b.id, role: 'participant' },
+    ]);
+    return conversation;
+  };
+
+  const inboxEmails = async (user, portalRole) => {
+    const conversations = await messagingService.listConversations(user.id, {
+      portal: { role: portalRole, clanId: null },
+    });
+    return conversations.flatMap((c) => c.participants.map((p) => p.email)).sort();
+  };
+
+  beforeEach(async () => {
+    await cleanDb();
+
+    viewer = await createMentor({ email: 'viewer@test.com' });
+    samePrograme = await createMentee({ email: 'same-programme@test.com' });
+    otherProgramme = await createMentee({ email: 'other-programme@test.com' });
+    unplaceable = await createMentor({ email: 'unplaceable@test.com' });
+
+    const mine = await createProgram({ createdBy: viewer.id, name: 'Fellowship' });
+    const theirs = await createProgram({ createdBy: viewer.id, name: 'Accelerator' });
+    const myClan = await models.Clan.create({
+      programId: mine.id, name: 'Mine', leadMentorId: viewer.id, createdBy: viewer.id,
+    });
+    const theirClan = await models.Clan.create({
+      programId: theirs.id, name: 'Theirs', leadMentorId: viewer.id, createdBy: viewer.id,
+    });
+
+    await clanService.addMember(myClan.id, { userId: viewer.id, role: 'lead_mentor' });
+    await clanService.addMember(myClan.id, { userId: samePrograme.id, role: 'mentee' });
+    await clanService.addMember(theirClan.id, { userId: otherProgramme.id, role: 'mentee' });
+
+    // Threads with all three, built directly: the point is what the INBOX
+    // shows, not what the directory would now let them start.
+    for (const other of [samePrograme, otherProgramme, unplaceable]) {
+      await threadBetween(viewer, other);
+    }
+  });
+
+  it('keeps the thread with somebody in the same programme', async () => {
+    expect(await inboxEmails(viewer, 'mentor')).toContain('same-programme@test.com');
+  });
+
+  it('hides the thread with somebody who belongs only to another programme', async () => {
+    expect(await inboxEmails(viewer, 'mentor')).not.toContain('other-programme@test.com');
+  });
+
+  /**
+   * Stated as "hide the ones we can PROVE belong elsewhere", never "keep the
+   * ones we can prove belong here". An inclusion list silently drops every
+   * contact the relationship model cannot classify, and an inbox that quietly
+   * loses threads is worse than one showing a few extra.
+   */
+  it('never hides somebody it cannot place in any programme', async () => {
+    expect(await inboxEmails(viewer, 'mentor')).toContain('unplaceable@test.com');
+  });
+
+  it('hides nothing at all from somebody with no programme of their own', async () => {
+    const outsider = await createMentor({ email: 'outsider@test.com' });
+    await threadBetween(outsider, otherProgramme);
+    // No programmes of our own is no basis on which to judge anybody else's.
+    expect(await inboxEmails(outsider, 'mentor')).toContain('other-programme@test.com');
+  });
+});

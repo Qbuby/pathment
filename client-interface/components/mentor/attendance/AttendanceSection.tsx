@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, type ReactNode } from 'react';
 import { AttendanceFilters, type AttendanceFilter } from './AttendanceFilters';
 import { MenteeCarousel } from './MenteeCarousel';
 import { MenteeAttendanceCard, type AttendanceMentee } from './MenteeAttendanceCard';
@@ -14,6 +14,15 @@ interface AttendanceSectionProps {
   onSelectMentee: (index: number) => void;
   onSaveAttendance: (updates: Record<string, Attendance>) => Promise<void>;
   isSaving: boolean;
+  readOnly?: boolean;
+  /**
+   * The "jump to a mentee" field, rendered in this row.
+   *
+   * It had a full-width row of its own directly above, which is a lot of screen
+   * for one input — and it belongs with the roster it searches, not floating
+   * above the whole page.
+   */
+  search?: ReactNode;
 }
 
 // Sort weight for the "all" view: present → absent → excused → not-yet-marked.
@@ -26,9 +35,12 @@ export function AttendanceSection({
   onSelectMentee,
   onSaveAttendance,
   isSaving,
+  readOnly = false,
+  search,
 }: AttendanceSectionProps) {
   const [currentFilter, setCurrentFilter] = useState<AttendanceFilter>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
+
 
   // Headline tallies so the mentor sees the split without counting chips.
   const counts = useMemo(() => {
@@ -58,6 +70,7 @@ export function AttendanceSection({
     <div className="space-y-3 mb-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 min-w-0">
+          {search}
           <div className="overflow-x-auto no-scrollbar pb-1 sm:pb-0">
             <AttendanceFilters currentFilter={currentFilter} onFilterChange={setCurrentFilter} />
           </div>
@@ -70,7 +83,9 @@ export function AttendanceSection({
         </div>
         <button
           onClick={() => setIsModalOpen(true)}
-          className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs sm:text-sm font-medium transition-colors shrink-0 w-full sm:w-auto"
+          disabled={readOnly}
+          title={readOnly ? 'Completed programs are read-only' : undefined}
+          className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs sm:text-sm font-medium transition-colors shrink-0 w-full sm:w-auto disabled:opacity-50"
         >
           <CheckCircle2 className="w-4 h-4" />
           Attendance Sheet
@@ -100,7 +115,7 @@ export function AttendanceSection({
         )}
       </div>
 
-      {/* The sheet always manages the WHOLE cohort, not the filtered rail, so
+      {/* The sheet always manages the whole cohort, not the filtered rail, so
           "Mark all present" can't silently skip mentees hidden by a filter. */}
       <AttendanceModal
         isOpen={isModalOpen}

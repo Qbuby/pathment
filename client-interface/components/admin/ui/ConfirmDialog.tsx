@@ -41,8 +41,18 @@ export function ConfirmDialog({
         onClick={onCancel}
       />
 
-      {/* Dialog */}
-      <div className="relative z-10 bg-card rounded-2xl shadow-xl w-full max-w-md p-6">
+      {/* Dialog
+          This is the one confirm in the product — every destructive action in
+          the app goes through it — and it was announcing itself to a screen
+          reader as an unlabelled div. The three attributes below are what make
+          it a dialog rather than a shape on top of the page. */}
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="confirm-dialog-title"
+        aria-describedby={description ? 'confirm-dialog-description' : undefined}
+        className="relative z-10 bg-card rounded-2xl shadow-xl w-full max-w-md p-6"
+      >
         <div className="flex items-start gap-4">
           {variant === 'danger' && (
             <div className="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center shrink-0">
@@ -50,9 +60,9 @@ export function ConfirmDialog({
             </div>
           )}
           <div className="flex-1">
-            <h3 className="text-lg font-semibold text-slate-900 mb-1">{title}</h3>
+            <h3 id="confirm-dialog-title" className="text-lg font-semibold text-slate-900 mb-1">{title}</h3>
             {description && (
-              <p className="text-sm text-slate-500">{description}</p>
+              <p id="confirm-dialog-description" className="text-sm text-slate-500">{description}</p>
             )}
           </div>
         </div>

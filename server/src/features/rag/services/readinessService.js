@@ -29,18 +29,35 @@ const MIN_CHUNKS = 5;
 const MIN_STYLE_EXAMPLES = 3;
 
 /**
- * Their own key, or the organisation's.
+ * Their OWN key. Not the organisation's, however much that looks unhelpful.
  *
- * Connections are owned by a user, or by nobody when an admin adds one for the
- * whole organisation. A mentor can use either, so both are looked for: telling
- * somebody to add a key they already have through their org would be wrong.
+ * This used to accept either, on the reasoning that telling somebody to add a
+ * key they already have through their org would be wrong. The pipeline
+ * disagrees, in as many words: `aiConnectionService.resolveActiveConfig` carries
+ * a "Strict BYOK rule - mentors MUST have their own personal AI key... do NOT
+ * fall back to admin/org keys" and returns null for a mentor who has none, and
+ * `resolveGeminiKey` only ever looks at `ownerId: mentorId`.
+ *
+ * So an admin adding one workspace key turned step one green for every mentor
+ * in the organisation, and not one of them could generate anything: embeddings
+ * resolved to null, generation resolved to null, and the checklist said they
+ * were ready. A checklist that promises what the pipeline refuses is worse than
+ * no checklist, because it sends people looking for the fault somewhere else.
+ *
+ * Whether mentors SHOULD be able to use an org key is a billing question and a
+ * real one - it is whose usage is being spent. Until it is answered, this says
+ * what is true today.
+ *
+ * `status` holds 'connected' | 'error' | 'untested'. The old filter excluded
+ * 'invalid', which is not a value this column can hold, so it excluded nothing
+ * and a key that had failed its own test counted as a working one.
  */
 async function hasGeminiKey(mentorId) {
   const count = await models.AIConnection.count({
     where: {
       provider: EMBEDDING_PROVIDER,
-      status: { [Op.ne]: 'invalid' },
-      [Op.or]: [{ ownerId: mentorId }, { ownerId: null }]
+      status: { [Op.ne]: 'error' },
+      ownerId: mentorId
     }
   });
   return count > 0;
@@ -74,8 +91,8 @@ async function getReadiness(mentorId) {
     {
       key: 'key',
       title: 'Connect a Gemini key',
-      why: 'Answers are written and searched by Gemini. Pathment never charges you for this: the key is yours and the usage is billed to you.',
-      action: 'Settings, then AI connections',
+      why: 'Answers are written and searched by Gemini. The key has to be your own - a workspace key your admin added does not cover this - and the usage is billed to you, never to Pathment.',
+      action: 'Add it here',
       done: keyPresent,
       /** Nothing else can be attempted until this is true. */
       blocking: true
@@ -88,7 +105,7 @@ async function getReadiness(mentorId) {
           ? `You have ${chunks} passages so far.`
           : 'Upload notes, a guide, or anything you find yourself explaining twice.'
       }`,
-      action: 'Auto reply, then Your material',
+      action: 'Upload it here',
       done: chunks >= MIN_CHUNKS,
       blocking: true,
       progress: { current: chunks, needed: MIN_CHUNKS }

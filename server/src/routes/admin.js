@@ -85,6 +85,9 @@ router.put(
   adminController.updatePermissions
 );
 
+// Storage/retention moved to the platform console (/api/platform/storage):
+// the report covers the whole database, not one workspace.
+
 // Recalculate mentor mentee counts (utility endpoint)
 router.post(
   '/recalculate-mentor-counts',

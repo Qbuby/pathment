@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Plus, Search, ShieldCheck, SlidersHorizontal, Trash2, UserPlus, X, Pencil, Ban, CheckCircle2 } from 'lucide-react';
+import { Loader2, Plus, Search, ShieldCheck, SlidersHorizontal, Trash2, UserPlus, Pencil, Ban, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { apiClient } from '@/lib/services/api-client';
@@ -20,6 +20,12 @@ import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { Avatar } from '@/components/shared/Avatar';
 import { Drawer } from '@/components/shared/Drawer';
 import { useConfirm } from '@/lib/context/ConfirmContext';
+
+type NamedOption = { id: string; name: string };
+
+/** Reduce a list from the API to the id + name a picker needs. */
+const toOptions = (list: unknown): NamedOption[] =>
+  (Array.isArray(list) ? list.map((o: NamedOption) => ({ id: o.id, name: o.name })) : []);
 
 const PERMISSION_GROUPS = [
   { label: 'Programs & curriculum', perms: ['program.create', 'program.manage', 'program.publish', 'cohort.manage', 'roadmap.author', 'roadmap.publish_local'] },
@@ -186,7 +192,7 @@ function PeopleTab() {
                   onClick={() => setSelected(u)}
                   className={`w-full text-left px-2 py-2.5 rounded-lg flex items-center justify-between gap-2 ${selected?.id === u.id ? 'bg-brand-50 dark:bg-brand-500/15' : 'hover:bg-slate-50'}`}
                 >
-                  <Avatar name={`${u.firstName} ${u.lastName}`} size="sm"/>
+                  <Avatar name={`${u.firstName} ${u.lastName}`} src={u.profilePictureUrl} size="sm"/>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-slate-900 truncate">{`${u.firstName} ${u.lastName}`.trim() || u.email}</p>
                     <p className="text-xs text-slate-500 truncate">{u.email} · {u.role}</p>
@@ -228,8 +234,8 @@ function InviteWithAccessDrawer({ onClose, onInvited }: { onClose: () => void; o
 
   useEffect(() => {
     accessApi.roleCatalog().then(setCatalog).catch(() => {});
-    apiClient.get<any>('/programs', { params: { limit: 100 } }).then((r) => setPrograms((r.data || []).map((p: any) => ({ id: p.id, name: p.name })))).catch(() => {});
-    apiClient.get<any>('/clans').then((r) => setClans(((r.data?.clans) || r.data || []).map((c: any) => ({ id: c.id, name: c.name })))).catch(() => {});
+    apiClient.get<{ data?: unknown }>('/programs', { params: { limit: 100 } }).then((r) => setPrograms(toOptions(r.data))).catch(() => {});
+    apiClient.get<{ data?: { clans?: unknown } }>('/clans').then((r) => setClans(toOptions(r.data?.clans || r.data))).catch(() => {});
   }, []);
 
   const role = catalog.find((r) => r.key === roleKey);
@@ -475,8 +481,8 @@ function GrantDrawer({ user, onClose, onGranted }: { user: DirectoryUser; onClos
 
   useEffect(() => {
     accessApi.roleCatalog().then(setCatalog).catch(() => {});
-    apiClient.get<any>('/programs', { params: { limit: 100 } }).then((r) => setPrograms((r.data || []).map((p: any) => ({ id: p.id, name: p.name })))).catch(() => {});
-    apiClient.get<any>('/clans').then((r) => setClans(((r.data?.clans) || r.data || []).map((c: any) => ({ id: c.id, name: c.name })))).catch(() => {});
+    apiClient.get<{ data?: unknown }>('/programs', { params: { limit: 100 } }).then((r) => setPrograms(toOptions(r.data))).catch(() => {});
+    apiClient.get<{ data?: { clans?: unknown } }>('/clans').then((r) => setClans(toOptions(r.data?.clans || r.data))).catch(() => {});
   }, []);
 
   const role = catalog.find((r) => r.key === roleKey);
@@ -552,7 +558,10 @@ function CustomRolesTab() {
   const [editing, setEditing] = useState<CustomRole | 'new' | null>(null);
 
   const load = () => { setLoading(true); accessApi.listCustomRoles().then(setRoles).catch(() => {}).finally(() => setLoading(false)); };
-  useEffect(load, []);
+  // First load: `loading` already starts true, so only the fetch runs here.
+  useEffect(() => {
+    accessApi.listCustomRoles().then(setRoles).catch(() => {}).finally(() => setLoading(false));
+  }, []);
 
   const remove = async (id: string) => {
     if (!(await confirm({ title: 'Delete this custom role?', variant: 'danger', confirmLabel: 'Delete' }))) return;
@@ -640,7 +649,7 @@ function CustomRoleDrawer({ role, onClose, onSaved }: { role: CustomRole | null;
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Scope level</label>
-          <select value={scopeLevel} onChange={(e) => setScopeLevel(e.target.value as any)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-brand-500">
+          <select value={scopeLevel} onChange={(e) => setScopeLevel(e.target.value as CustomRole['scopeLevel'])} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-brand-500">
             <option value="org">Organization-wide</option>
             <option value="program">Per program</option>
             <option value="clan">Per clan</option>

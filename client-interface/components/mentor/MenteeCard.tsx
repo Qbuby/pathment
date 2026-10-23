@@ -5,6 +5,7 @@ import {
 import { DualProgress } from '@/components/mentor/DualProgress';
 import { NudgeButton } from '@/components/mentor/NudgeButton';
 import type { CohortMentee, CohortRisk, CohortMomentum } from '@/lib/hooks/mentor';
+import { Avatar } from '@/components/shared/Avatar';
 
 /**
  * The single, consistent mentee summary card. Used by the Cockpit, My Mentees
@@ -29,14 +30,7 @@ function MomentumIcon({ momentum }: { momentum: CohortMomentum }) {
   return <Minus className="w-4 h-4 text-slate-400" />;
 }
 
-function Avatar({ m }: { m: CohortMentee }) {
-  return m.profilePictureUrl
-    // eslint-disable-next-line @next/next/no-img-element
-    ? <img src={m.profilePictureUrl} alt={m.name} className="w-11 h-11 rounded-full object-cover shrink-0" />
-    : <div className="w-11 h-11 bg-brand-100 rounded-full flex items-center justify-center shrink-0"><span className="text-brand-700 font-medium text-sm">{m.avatar}</span></div>;
-}
-
-export function MenteeCard({ m, onOpen, showClan = false, onAssign }: { m: CohortMentee; onOpen: () => void; showClan?: boolean; onAssign?: () => void }) {
+export function MenteeCard({ m, onOpen, showClan = false, onAssign, writeDisabled = false }: { m: CohortMentee; onOpen: () => void; showClan?: boolean; onAssign?: () => void; writeDisabled?: boolean }) {
   const risk = RISK_BADGE[m.risk];
   const noTasks = m.taskCount === 0;
   return (
@@ -48,7 +42,7 @@ export function MenteeCard({ m, onOpen, showClan = false, onAssign }: { m: Cohor
       className="group text-left bg-card rounded-2xl border border-slate-200 p-5 hover:border-brand-300 hover:shadow-sm transition-all cursor-pointer"
     >
       <div className="flex items-start gap-3">
-        <Avatar m={m} />
+        <Avatar name={m.name} src={m.profilePictureUrl} initials={m.avatar} size="md" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <p className="truncate font-medium text-slate-900">{m.name}</p>
@@ -74,7 +68,7 @@ export function MenteeCard({ m, onOpen, showClan = false, onAssign }: { m: Cohor
           <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-xs font-medium ${risk.className}`}>
             <span className={`w-1.5 h-1.5 rounded-full ${risk.dot}`} />{risk.label}
           </span>
-          <NudgeButton menteeId={m.id} menteeName={m.name} variant="icon" stopPropagation />
+          <NudgeButton menteeId={m.id} menteeName={m.name} variant="icon" stopPropagation disabled={writeDisabled} />
         </div>
       </div>
 
@@ -122,7 +116,9 @@ export function MenteeCard({ m, onOpen, showClan = false, onAssign }: { m: Cohor
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onAssign(); }}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+            disabled={writeDisabled}
+            title={writeDisabled ? 'Completed programs are read-only' : undefined}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors disabled:opacity-50 ${
               noTasks
                 ? 'bg-brand-600 text-white hover:bg-brand-700'
                 : 'border border-slate-200 text-slate-600 hover:border-brand-300 hover:text-brand-700'

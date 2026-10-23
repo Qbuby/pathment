@@ -20,7 +20,8 @@ export const qk = {
 
   clan: {
     all: ['clan'] as const,
-    memberships: ['clan', 'memberships'] as const,
+    /** Keyed by user so switching accounts cannot reuse another mentee's clans. */
+    memberships: (userId: string) => ['clan', 'memberships', userId] as const,
     detail: (clanId: string) => ['clan', 'detail', clanId] as const,
     publicJoin: (clanId: string) => ['clan', 'public-join', clanId] as const,
     joinRequests: (clanId: string, status = 'pending') =>
@@ -46,6 +47,13 @@ export const qk = {
     mentorDocuments: ['messaging', 'mentor-documents'] as const,
   },
 
+  // External courses (Buildment): connection status, assignable list, per-task enrollment.
+  courses: {
+    all: ['courses'] as const,
+    status: ['courses', 'status'] as const,
+    list: ['courses', 'list'] as const,
+    enrollment: (taskId: string) => ['courses', 'enrollment', taskId] as const,
+  },
   mentor: {
     all: ['mentor'] as const,
     cohort: ['mentor', 'cohort'] as const,
@@ -56,6 +64,7 @@ export const qk = {
     programDetail: (programId: string) => ['mentor', 'program', programId] as const,
     roadmaps: ['mentor', 'roadmaps'] as const,
     tracks: (menteeId: string) => ['mentor', 'tracks', menteeId] as const,
+    taskProgress: (taskId: string) => ['mentor', 'task-progress', taskId] as const,
     library: ['mentor', 'library'] as const,
     talks: (search?: string, categoryId?: string) => ['mentor', 'talks', search || '', categoryId || ''] as const,
     talkCategories: ['mentor', 'talk-categories'] as const,
@@ -82,6 +91,8 @@ export const qk = {
     enrollments: (menteeId: string) => ['mentee', 'enrollments', menteeId] as const,
     matches: (mentorId: string, menteeId: string) => ['mentee', 'matches', mentorId, menteeId] as const,
     schedule: (menteeId: string, clanId?: string | null) => ['mentee', 'schedule', menteeId, clanId ?? ''] as const,
+    /** Today's blocks and their counts — the compact read for clan review. */
+    planStrip: (menteeId: string, clanId?: string | null) => ['mentee', 'plan-strip', menteeId, clanId ?? ''] as const,
   },
 
   me: {
@@ -94,7 +105,7 @@ export const qk = {
     taskStats: (enrollmentId: string | null, clanId?: string | null) =>
       ['me', 'task-stats', enrollmentId ?? 'all', clanId ?? ''] as const,
     meetings: ['me', 'meetings'] as const,
-    task: (taskId: string) => ['me', 'task', taskId] as const,
+    task: (taskId: string, clanId?: string | null) => ['me', 'task', taskId, clanId ?? null] as const,
     bookable: ['me', 'bookable'] as const,
     enrollments: (menteeId: string) => ['me', 'enrollments', menteeId] as const,
     publicPrograms: ['me', 'public-programs'] as const,
@@ -110,7 +121,9 @@ export const qk = {
     programs: ['admin', 'programs'] as const,
     mentors: ['admin', 'mentors'] as const,
     mentees: ['admin', 'mentees'] as const,
-    activity: (days: number) => ['admin', 'activity', days] as const,
+    activity: (days: number, programId?: string | null) =>
+      ['admin', 'activity', days, programId ?? ''] as const,
+    storage: ['admin', 'storage'] as const,
     moderation: (status: string) => ['admin', 'moderation', status] as const,
     clanRequests: ['admin', 'clan-requests'] as const,
     cohorts: (programId?: string) => ['admin', 'cohorts', programId ?? 'all'] as const,
@@ -118,6 +131,7 @@ export const qk = {
     orgRoadmaps: ['admin', 'org-roadmaps'] as const,
     clanHealth: ['admin', 'clan-health'] as const,
     aiConnections: ['admin', 'ai-connections'] as const,
+    apps: ['admin', 'apps'] as const,
     clanList: (page: number, limit: number, search: string, programId: string) =>
       ['admin', 'clans', page, limit, search, programId] as const,
     menteeList: (page: number, limit: number, search: string) =>
@@ -131,6 +145,7 @@ export const qk = {
     enrollmentStats: ['admin', 'enrollment-stats'] as const,
     cohort: (cohortId: string) => ['admin', 'cohort', cohortId] as const,
     program: (programId: string) => ['admin', 'program', programId] as const,
+    programCompletion: (programId: string) => ['admin', 'program-completion', programId] as const,
     programEnrollments: (programId: string) => ['admin', 'program-enrollments', programId] as const,
     pendingMatches: (programId: string) => ['admin', 'pending-matches', programId] as const,
     matchSuggestions: (enrollmentIds: string[]) => ['admin', 'match-suggestions', enrollmentIds] as const,
@@ -145,7 +160,7 @@ export const qk = {
     spaces: ['community', 'spaces'] as const,
     feed: (params: Record<string, unknown>) => ['community', 'feed', params] as const,
     people: (type: string, id: string) => ['community', 'people', type, id] as const,
-    members: (type: string, id: string) => ['community', 'members', type, id] as const,
+    members: (type: string, id: string, page = '') => ['community', 'members', type, id, page] as const,
     leaderboard: (type: string, id: string, period: string) =>
       ['community', 'leaderboard', type, id, period] as const,
   },
@@ -156,4 +171,37 @@ export const qk = {
   },
 
   announcements: ['announcements'] as const,
+
+  /** Reference geography — the same for every viewer, so it caches hard. */
+  geo: {
+    countries: ['geo', 'countries'] as const,
+    states: (country: string) => ['geo', 'states', country] as const,
+    cities: (country: string, state: string, q: string) => ['geo', 'cities', country, state, q] as const,
+  },
+
+  // Platform console (operator surface) - all cross-workspace.
+  platform: {
+    all: ['platform'] as const,
+    me: ['platform', 'me'] as const,
+    metrics: ['platform', 'metrics'] as const,
+    admins: (includeRevoked: boolean) => ['platform', 'admins', includeRevoked] as const,
+    audit: (params: Record<string, unknown>) => ['platform', 'audit', params] as const,
+    auditActions: ['platform', 'audit-actions'] as const,
+    organizations: (params: Record<string, unknown>) => ['platform', 'organizations', params] as const,
+    organization: (id: string) => ['platform', 'organization', id] as const,
+    organizationMembers: (id: string, params: Record<string, unknown>) => ['platform', 'organization', id, 'members', params] as const,
+    organizationAudit: (id: string, page: number) => ['platform', 'organization', id, 'audit', page] as const,
+    plans: ['platform', 'plans'] as const,
+    billingRequests: ['platform', 'billing-requests'] as const,
+    overridesReport: ['platform', 'overrides-report'] as const,
+    leads: (params: Record<string, unknown>) => ['platform', 'leads', params] as const,
+    feedback: (params: Record<string, unknown>) => ['platform', 'feedback', params] as const,
+    users: (q: string) => ['platform', 'users', q] as const,
+    user: (id: string) => ['platform', 'user', id] as const,
+    ops: ['platform', 'ops'] as const,
+    apps: ['platform', 'apps'] as const,
+    storage: ['platform', 'storage'] as const,
+    featureUsage: (id: string, days: number) => ['platform', 'organization', id, 'feature-usage', days] as const,
+    slugCheck: (slug: string) => ['platform', 'slug-check', slug] as const,
+  },
 } as const;

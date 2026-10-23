@@ -105,7 +105,9 @@ export { useAdminActivity } from './useAdminActivity';
 export type { UseAdminActivityReturn } from './useAdminActivity';
 
 export { useModeration } from './useModeration';
-export type { CommunityReportRow, ReportStatus } from './useModeration';
+export type { CommunityReportRow, ReportedItem, ReportStatus } from './useModeration';
 
 export { useAIConnections, useAIQuota } from '../shared/useAIConnections';
 export { useAIConnectionsTab } from '../shared/useAIConnectionsTab';
+export { useApps } from '../shared/useApps';
+export { useAppsTab } from '../shared/useAppsTab';

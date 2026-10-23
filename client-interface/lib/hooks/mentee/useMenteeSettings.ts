@@ -19,6 +19,8 @@ export interface ProfileData {
   bio: string;
   city: string;
   country: string;
+  countryCode: string;
+  region: string;
   languages: string[];
   timezone: string;
 }
@@ -58,7 +60,7 @@ export interface UseMenteeSettingsReturn {
 
 const DEFAULT_PROFILE: ProfileData = {
   firstName: '', lastName: '', email: '', phone: '', bio: '',
-  city: '', country: '', languages: [], timezone: '',
+  city: '', country: '', countryCode: '', region: '', languages: [], timezone: '',
 };
 
 const DEFAULT_MENTEE_PROFILE: MenteeProfileData = {
@@ -103,6 +105,8 @@ export function useMenteeSettings(): UseMenteeSettingsReturn {
           bio: d.bio || '',
           city: d.city || '',
           country: d.country || '',
+          countryCode: d.countryCode || '',
+          region: d.region || '',
           languages: Array.isArray(d.languages) ? d.languages : [],
           timezone: d.settings?.timezone || '',
         },

@@ -1,72 +1,106 @@
 "use client";
 
 import Link from "next/link";
-import { Megaphone, Pin, ArrowRight } from "lucide-react";
+import { ChevronRight, Megaphone, Pin } from "lucide-react";
 import { useAnnouncements } from "@/lib/hooks/shared/useAnnouncements";
+import { Avatar } from "@/components/shared/Avatar";
+import { stripHtml } from "@/lib/utils/html";
 
-/** Compact "Latest announcements" card for dashboards. Links to the full feed. */
+/**
+ * "From your community" — the dashboard's view of the announcement feed.
+ *
+ * It used to be a grid of large tiles, each carrying three lines of body text,
+ * which took most of a screen to say that three things had been posted. A
+ * dashboard summary should cost a glance: one line per announcement, the
+ * newest first, and the feed itself is one click away for anyone who wants to
+ * read them.
+ */
 export function AnnouncementsCard({
   href,
   limit = 3,
+  compact = false,
 }: {
   href: string;
   limit?: number;
   mentor?: boolean;
+  /**
+   * One line instead of a card.
+   *
+   * A dashboard's job is to point at what to do next, and announcements are
+   * context — worth seeing, not worth a block of the page. The compact form
+   * shows the newest one and how many there are, in a single strip that can
+   * sit at the top without pushing the work below the fold.
+   */
+  compact?: boolean;
 }) {
   const { announcements, loading } = useAnnouncements();
   if (loading || announcements.length === 0) return null;
   const items = announcements.slice(0, limit);
 
-  return (
-    <section className="rounded-3xl border border-border bg-card p-6">
-      <div className="mb-5 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <span className="rounded-xl bg-muted p-3 text-brand-600 dark:text-brand-300">
-            <Megaphone className="h-5 w-5" />
+  if (compact) {
+    const [newest] = announcements;
+    const more = announcements.length - 1;
+    return (
+      <Link
+        href={href}
+        className="group flex items-center gap-3 rounded-2xl border border-border bg-card px-4 py-2.5 transition-colors hover:border-brand-300"
+      >
+        <Megaphone className="h-4 w-4 shrink-0 text-brand-600 dark:text-brand-300" aria-hidden />
+        {newest.pinned && <Pin className="h-3 w-3 shrink-0 text-brand-600 dark:text-brand-300" aria-hidden />}
+        <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+          <span className="font-medium">{newest.title}</span>
+          <span className="text-muted-foreground"> — {stripHtml(newest.body)}</span>
+        </span>
+        {more > 0 && (
+          <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground">
+            +{more}
           </span>
-          <div>
-            <h2 className="text-lg font-semibold">From your community</h2>
-            <p className="text-xs text-muted-foreground mt-1">
-              The latest announcements, in one place.
-            </p>
-          </div>
+        )}
+        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden />
+      </Link>
+    );
+  }
+
+  return (
+    <section className="rounded-3xl border border-border bg-card">
+      <div className="flex items-center justify-between gap-4 border-b border-border px-5 py-4">
+        <div className="flex items-center gap-2.5">
+          <Megaphone className="h-4 w-4 text-brand-600 dark:text-brand-300" />
+          <h2 className="text-sm font-semibold text-foreground">From your community</h2>
+          <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground tabular-nums">
+            {announcements.length}
+          </span>
         </div>
         <Link
           href={href}
-          className="text-sm font-medium text-brand-700 dark:text-brand-300 whitespace-nowrap"
+          className="whitespace-nowrap text-xs font-medium text-brand-700 hover:underline dark:text-brand-300"
         >
-          View all →
+          View all
         </Link>
       </div>
-      <div className="grid gap-3 md:grid-cols-2">
+
+      <ul className="divide-y divide-border">
         {items.map((a) => (
-          <Link
-            key={a.id}
-            href={href}
-            className="group rounded-2xl border border-border p-5 transition-colors hover:border-brand-300 hover:bg-muted/40"
-          >
-            <div className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-              {a.pinned && (
-                <span className="inline-flex items-center gap-1 text-brand-700 dark:text-brand-300">
-                  <Pin className="h-3 w-3" />
-                  Pinned ·
+          <li key={a.id}>
+            <Link
+              href={href}
+              className="group flex items-center gap-3 px-5 py-3 transition-colors hover:bg-muted/40"
+            >
+              <Avatar name={a.author?.name} src={a.author?.avatarUrl} size="xs" />
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-1.5">
+                  {a.pinned && <Pin className="h-3 w-3 shrink-0 text-brand-600 dark:text-brand-300" />}
+                  <span className="truncate text-sm font-medium text-foreground">{a.title}</span>
                 </span>
-              )}
-              <span>{a.audienceLabel}</span>
-            </div>
-            <h3 className="font-semibold text-foreground leading-snug">
-              {a.title}
-            </h3>
-            <p className="mt-2 text-sm text-muted-foreground leading-relaxed line-clamp-3">
-              {a.body}
-            </p>
-            <div className="mt-5 flex items-center justify-between text-xs text-muted-foreground">
-              <span>{a.author?.name || "Community update"}</span>
-              <ArrowRight className="h-4 w-4 text-brand-600 dark:text-brand-300" />
-            </div>
-          </Link>
+                <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                  {a.audienceLabel} · {stripHtml(a.body)}
+                </span>
+              </span>
+              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+            </Link>
+          </li>
         ))}
-      </div>
+      </ul>
     </section>
   );
 }

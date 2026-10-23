@@ -130,6 +130,82 @@ Consumers today: `frictionService` (blockers + delays), `messagingService.listCo
 `frictionController.targetMenteeId`. Reach for it on any new endpoint that answers a
 question about "me" rather than about a named resource.
 
+### Programme scope (an admin of *what*?)
+
+The portal answers *which of my roles is this about*. It does not answer *how much of the
+workspace does that role cover*, and admin rights are grantable at **programme** scope -
+`program_admin` bound to Fellowship 2026 and nothing else.
+
+Every scope leak this codebase has had was the same mistake made in a different file: a
+service asking `actsAsAdmin(user)` - "is this person an admin?" - and stopping there, when
+the answer can be "of one programme". The permission checks were right from the start; the
+**reads** were not. Certificates listed every programme's templates, community listed every
+programme's spaces, the chat directory listed all 1,089 members of the organisation, review
+records returned 300 sessions from programmes the caller had no access to. Each surface had
+derived "my programmes" itself, slightly differently, so fixing one left the others leaking.
+
+**One resolver:** `authzService.programScopeFor(user, portalRole)` →
+
+```js
+{ unrestricted: true }               // an ORG-tier admin wearing the admin hat
+{ programIds: [...], clanIds: [...] } // everybody else, already deduped
+```
+
+- Resolved **on every read**, never stored. Somebody can be an org admin at nine and an
+  admin of one programme at ten; shrinking a grant has to take effect at ten, which it
+  cannot do if the answer was written into a row.
+- The **hat narrows it**, as with `actsAsAdmin`: an admin of one programme who also mentors
+  a clan and learns in a third gets a different bound on each screen, and all three are true.
+  No hat stated anywhere → the union of everything they hold.
+- `clanIds` is **not** "the clans of `programIds`", except for an admin. An admin *of* a
+  programme oversees every clan in it; a mentee enrolled in the same programme does not,
+  and expanding their programme back into clans would hand them every sibling clan's content.
+- Companions: `clanIdsInPrograms(programIds)`, and `adminUserIdsFor(programIds)` for "the
+  admins this person may always reach" - every org admin plus the admins *of* those
+  programmes. Org admins stay reachable from every scope deliberately: being limited to one
+  programme is a reason to **need** an org admin, not a reason to be cut off from one.
+
+Two rules that keep the bound honest when applied to things people already have:
+
+- **Hide, never delete.** An out-of-scope chat thread drops out of the inbox and nothing
+  about it is touched, so restoring the access brings it straight back.
+- **Never hide what you cannot classify.** The filters are stated as "exclude the ones that
+  provably belong elsewhere", not "keep the ones that provably belong here". An inclusion
+  list silently drops every record the model cannot place - an admin on a legacy base role,
+  somebody with no clan and no enrolment - and an inbox that quietly loses threads is worse
+  than one showing a thread too many.
+
+Reach for `programScopeFor` on any new read that lists more than one programme's worth of
+anything. Do not re-derive it.
+
+### Announcement visibility is bounded in time, too
+
+Announcements are targeted at an audience (`all` / `mentors` / `mentees` / `program:<id>` /
+`clan:<id>`), and visibility used to be pure set membership: *are you in programme X right
+now?* With no sense of time in the query, somebody who enrolled this morning read eight
+months of a previous cohort's logistics - "Demo Day is complete, well done everyone" - and
+the enrolment lookup had no status filter at all, so a mentee who dropped out kept receiving
+new posts for ever.
+
+Each audience arm now carries the viewer's own **window** on it:
+
+- **Floor** = the earliest moment they were connected to that audience: the enrolment for a
+  programme, the workspace membership for the org-wide audiences. Anchored on the
+  **programme**, never on the clan join - re-homing a mentee into a standing clan writes a
+  fresh `clan_memberships` row, and anchoring on that would erase months of their own clan's
+  history on the day an admin approves the move.
+- **Ceiling** = only when *every* enrolment in the programme has ended. One live enrolment
+  means they are current: somebody who dropped a cohort and joined the next one is not an
+  alumnus. An alumnus keeps the history they could already read and stops receiving new
+  posts - but their **clan** posts are unaffected, because a standing clan is where alumni
+  live and membership of it is a live relationship.
+- **`pinned` escapes the floor**, and that is the whole design. The pin already existed,
+  already sorted first and already meant "this outlives the moment", so it is what carries
+  the handbook posts - code of conduct, how to submit work, office hours - to everybody who
+  joins later. No new column, no new choice in the compose form.
+- **Admins get no window.** A mentee reads announcements to know what is happening; an admin
+  reads them as a record of what their programme's people were told, which means all of it.
+
 ### Auth
 
 - **Login** issues a short-lived **JWT access token** + a DB-backed **refresh token**

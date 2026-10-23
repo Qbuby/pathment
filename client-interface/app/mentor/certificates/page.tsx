@@ -758,7 +758,7 @@ export default function MentorCertificatesPage() {
     }
     const excludedCount = recipients.filter(r => reviewRows?.[r.menteeId]?.decision === 'no_certificate').length;
     if (excludedCount && !(await confirm({
-      title: 'Exclude recipients with no certificate?',
+      title: 'Exclude recipients without a certificate?',
       description: `${excludedCount} selected mentee(s) will receive no certificate. Only awarded certificates will be sent.`
     }))) return;
 
@@ -810,7 +810,7 @@ export default function MentorCertificatesPage() {
         {activeTab === 'my' ? (
           loadingMyCertificates ? (
             <div className="flex flex-col items-center justify-center min-h-[300px] gap-3">
-              <Loader2 className="animate-spin h-8 w-8 text-brand-500" />
+              <Loader2 className="animate-spin h-8 w-8 text-brand-600" />
               <span className="text-sm text-muted-foreground font-medium">Loading your certificates...</span>
             </div>
           ) : myCertificates.length === 0 ? (
@@ -913,7 +913,7 @@ export default function MentorCertificatesPage() {
         ) : (
           loadingTemplates ? (
             <div className="flex items-center justify-center min-h-[300px] gap-2">
-              <Loader2 className="animate-spin h-5 w-5 text-brand-500" />
+              <Loader2 className="animate-spin h-5 w-5 text-brand-600" />
               <span className="text-sm text-muted-foreground">Loading templates...</span>
             </div>
           ) : templates.length === 0 ? (

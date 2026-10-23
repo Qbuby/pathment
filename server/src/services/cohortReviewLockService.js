@@ -8,13 +8,28 @@ const { NOTIFICATION_EVENTS } = require('../config/notificationMatrix');
 const LOCK_KEY = 'cohort_review_delete_locked';
 
 /**
- * cohortReviewLockService - org-wide "deletion lock" for cohort review sessions.
+ * cohortReviewLockService - the "deletion lock" for cohort review sessions.
  *
- * When the lock is ON (a system_settings flag), mentors can't delete or reopen
- * review sessions unless they hold an active, admin-issued grant. A mentor asks
- * via an unlock REQUEST; an admin approves (minting a time-boxed GRANT) or
- * declines. cohortReviewService delegates assertCanDelete() to this module and
- * enforces it at the top of deleteSession/reopenSession.
+ * When the lock is ON, mentors can't delete or reopen review sessions unless
+ * they hold an active, admin-issued grant. A mentor asks via an unlock
+ * REQUEST; an admin approves (minting a time-boxed GRANT) or declines.
+ * cohortReviewService delegates assertCanDelete() to this module and enforces
+ * it in deleteSession/reopenSession.
+ *
+ * THE LOCK HAS A SCOPE. It used to be one boolean for the whole organisation,
+ * which made it all-or-nothing: an admin protecting the records of a
+ * programme that had just closed had to freeze deletion for every mentor in
+ * every clan, including the ones mid-cohort. Deletion is locked for a session
+ * when ANY of these holds:
+ *
+ *   • the organisation-wide flag is on   (`system_settings`, where it always was)
+ *   • its CLAN is locked                 (`cohort_review_locks`)
+ *   • its clan's PROGRAMME is locked     (`cohort_review_locks`)
+ *
+ * Locks only ever add. A grant only ever subtracts, and has the same three
+ * scopes: an org-wide grant lifts any lock, a programme or clan grant lifts
+ * only the locks that apply there. Every grant written before scopes existed
+ * has no scope, which is exactly what org-wide means, so none of them changed.
  */
 class CohortReviewLockService {
   // ── flag (system_settings) ───────────────────────────────────────────────
@@ -47,22 +62,138 @@ class CohortReviewLockService {
     return Boolean(locked);
   }
 
+  // ── scoped locks ───────────────────────────────────────────────────────────
+  /** The clan and the programme a session sits in. Either may be absent. */
+  async _scopeOfClan(clanId) {
+    if (!clanId) return { clanId: null, programId: null };
+    const clan = await models.Clan.findByPk(clanId, { attributes: ['id', 'programId'] });
+    return { clanId: clan ? clan.id : null, programId: clan?.programId || null };
+  }
+
+  /** Every scope that is locked right now, as `${type}:${id}` keys. */
+  async _lockedScopeKeys() {
+    const rows = await models.CohortReviewLock.findAll({
+      attributes: ['scopeType', 'scopeId'], raw: true,
+    });
+    return new Set(rows.map((r) => `${r.scopeType}:${r.scopeId}`));
+  }
+
+  /**
+   * Is deletion locked for this clan?
+   *
+   * No clan means "the question is not about one place" — the org flag alone
+   * answers it, which is what every caller predating scopes was asking.
+   */
+  async isDeleteLockedFor(clanId) {
+    if (await this.isDeleteLocked()) return { locked: true, by: 'organization' };
+    if (!clanId) return { locked: false, by: null };
+    const { programId } = await this._scopeOfClan(clanId);
+    const locked = await this._lockedScopeKeys();
+    if (locked.has(`clan:${clanId}`)) return { locked: true, by: 'clan' };
+    if (programId && locked.has(`program:${programId}`)) return { locked: true, by: 'program' };
+    return { locked: false, by: null };
+  }
+
+  /** List the locked programmes and clans, with their names, for the admin. */
+  async listLockedScopes() {
+    const rows = await models.CohortReviewLock.findAll({ order: [['created_at', 'DESC']] });
+    if (!rows.length) return [];
+    const programIds = rows.filter((r) => r.scopeType === 'program').map((r) => r.scopeId);
+    const clanIds = rows.filter((r) => r.scopeType === 'clan').map((r) => r.scopeId);
+    const [programs, clans] = await Promise.all([
+      programIds.length
+        ? models.Program.findAll({ where: { id: { [Op.in]: programIds } }, attributes: ['id', 'name'], raw: true })
+        : [],
+      clanIds.length
+        ? models.Clan.findAll({ where: { id: { [Op.in]: clanIds } }, attributes: ['id', 'name'], raw: true })
+        : [],
+    ]);
+    const nameOf = new Map([
+      ...programs.map((p) => [`program:${p.id}`, p.name]),
+      ...clans.map((c) => [`clan:${c.id}`, c.name]),
+    ]);
+    return rows.map((r) => ({
+      id: r.id,
+      scopeType: r.scopeType,
+      scopeId: r.scopeId,
+      // A scope whose programme or clan has since been deleted still shows,
+      // so an admin can see the row and clear it rather than wonder.
+      name: nameOf.get(`${r.scopeType}:${r.scopeId}`) || 'No longer exists',
+      lockedBy: r.lockedBy,
+      createdAt: r.createdAt,
+    }));
+  }
+
+  /** Lock or unlock one programme or clan. Locking twice is the same state. */
+  async setScopeLock({ scopeType, scopeId, locked }, adminId) {
+    if (!['program', 'clan'].includes(scopeType)) {
+      throw new ValidationError('A scope is a programme or a clan');
+    }
+    if (!scopeId) throw new ValidationError('Choose which programme or clan to lock');
+
+    const target = scopeType === 'program'
+      ? await models.Program.findByPk(scopeId, { attributes: ['id', 'name', 'organizationId'] })
+      : await models.Clan.findByPk(scopeId, {
+        attributes: ['id', 'name'],
+        include: [{ model: models.Program, as: 'program', attributes: ['organizationId'] }],
+      });
+    if (!target) throw new NotFoundError('That programme or clan does not exist');
+    const organizationId = scopeType === 'program' ? target.organizationId : target.program?.organizationId;
+    if (!organizationId) throw new ValidationError('That clan is not attached to a programme');
+
+    if (locked) {
+      await models.CohortReviewLock.findOrCreate({
+        where: { organizationId, scopeType, scopeId },
+        defaults: { organizationId, scopeType, scopeId, lockedBy: adminId || null },
+      });
+    } else {
+      await models.CohortReviewLock.destroy({ where: { organizationId, scopeType, scopeId } });
+    }
+
+    createAuditLog({
+      userId: adminId,
+      action: locked ? 'REVIEW_LOCK_ENABLED' : 'REVIEW_LOCK_DISABLED',
+      entityType: scopeType === 'program' ? 'program' : 'clan',
+      entityId: scopeId,
+      newValues: { locked, scopeType, scopeId, name: target.name },
+    }).catch(() => {});
+
+    return { scopeType, scopeId, locked: Boolean(locked), name: target.name };
+  }
+
   // ── grants ─────────────────────────────────────────────────────────────────
-  async hasActiveGrant(mentorId) {
-    const grant = await models.CohortReviewUnlockGrant.findOne({
+  /**
+   * An active grant that covers this clan.
+   *
+   * A grant with no scope is org-wide and covers everything, which is what
+   * every grant issued before scopes meant. A scoped one has to name the clan
+   * or its programme.
+   */
+  async hasActiveGrant(mentorId, clanId = null) {
+    const grants = await models.CohortReviewUnlockGrant.findAll({
       where: { mentorId, revokedAt: null, expiresAt: { [Op.gt]: new Date() } },
       order: [['expires_at', 'DESC']],
     });
-    return grant || null;
+    if (!grants.length) return null;
+    const orgWide = grants.find((g) => !g.scopeType);
+    if (orgWide) return orgWide;
+    if (!clanId) return null;
+    const { programId } = await this._scopeOfClan(clanId);
+    return grants.find((g) =>
+      (g.scopeType === 'clan' && g.scopeId === clanId)
+      || (g.scopeType === 'program' && programId && g.scopeId === programId)) || null;
   }
 
-  /** Throw if the org lock is ON and this mentor has no active grant. */
-  async assertCanDelete(mentorId) {
-    const locked = await this.isDeleteLocked();
+  /** Throw if deletion is locked where this session lives and nothing lifts it. */
+  async assertCanDelete(mentorId, clanId = null) {
+    const { locked, by } = await this.isDeleteLockedFor(clanId);
     if (!locked) return;
-    const grant = await this.hasActiveGrant(mentorId);
+    const grant = await this.hasActiveGrant(mentorId, clanId);
     if (!grant) {
-      throw new ForbiddenError('Deletion is locked by your organization. Request access from an admin.');
+      const where = by === 'organization' ? 'by your organization'
+        : by === 'program' ? 'for this programme'
+          : 'for this clan';
+      throw new ForbiddenError(`Deletion is locked ${where}. Request access from an admin.`);
     }
   }
 
@@ -157,7 +288,21 @@ class CohortReviewLockService {
     return out;
   }
 
-  async respondToRequest(requestId, adminId, { approve, durationHours = 48, expiresAt: expiresAtInput, note } = {}) {
+  /**
+   * What a grant should cover: what the admin said, else the clan of the
+   * session the mentor asked about, else the whole organisation.
+   */
+  async _resolveGrantScope(request, scopeType, scopeId) {
+    if (scopeType === 'organization') return { scopeType: null, scopeId: null };
+    if (['program', 'clan'].includes(scopeType) && scopeId) return { scopeType, scopeId };
+    if (request.sessionId) {
+      const session = await models.CohortReviewSession.findByPk(request.sessionId, { attributes: ['clanId'] });
+      if (session?.clanId) return { scopeType: 'clan', scopeId: session.clanId };
+    }
+    return { scopeType: null, scopeId: null };
+  }
+
+  async respondToRequest(requestId, adminId, { approve, durationHours = 48, expiresAt: expiresAtInput, note, scopeType, scopeId } = {}) {
     const request = await models.CohortReviewUnlockRequest.findByPk(requestId);
     if (!request) throw new NotFoundError('Unlock request not found');
     if (request.status !== 'pending') throw new ValidationError('This request has already been handled.');
@@ -183,11 +328,24 @@ class CohortReviewLockService {
         const hours = Number(durationHours) > 0 ? Number(durationHours) : 48;
         expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
       }
+      /**
+       * Grant no more than was asked for.
+       *
+       * When the request names a session, the grant is scoped to that
+       * session's clan by default: answering "yes, fix that one record"
+       * should not also hand the mentor every other clan they run for two
+       * days. An admin can still widen it by passing an explicit scope, and
+       * `scopeType: 'organization'` is the old behaviour, named.
+       */
+      const scope = await this._resolveGrantScope(request, scopeType, scopeId);
+
       const grant = await models.CohortReviewUnlockGrant.create({
         mentorId: request.mentorId,
         grantedBy: adminId || null,
         requestId: request.id,
         reason: request.reason,
+        scopeType: scope.scopeType,
+        scopeId: scope.scopeId,
         expiresAt,
       });
 
@@ -263,6 +421,9 @@ class CohortReviewLockService {
           ? { id: g.mentor.id, name: `${g.mentor.firstName || ''} ${g.mentor.lastName || ''}`.trim(), clanName }
           : null,
         reason: g.reason,
+        scopeType: g.scopeType || 'organization',
+        scopeId: g.scopeId || null,
+        scopeName: await this._scopeName(g.scopeType, g.scopeId),
         expiresAt: g.expiresAt,
         revokedAt: g.revokedAt,
         createdAt: g.createdAt,
@@ -271,6 +432,15 @@ class CohortReviewLockService {
     }
     if (active === true || String(active) === 'true') return mapped.filter((g) => g.active);
     return mapped;
+  }
+
+  /** "Whole organisation", or the name of the programme / clan a scope names. */
+  async _scopeName(scopeType, scopeId) {
+    if (!scopeType || !scopeId) return 'Whole organisation';
+    const row = scopeType === 'program'
+      ? await models.Program.findByPk(scopeId, { attributes: ['name'] })
+      : await models.Clan.findByPk(scopeId, { attributes: ['name'] });
+    return row?.name || 'No longer exists';
   }
 
   async revokeGrant(grantId, adminId) {
@@ -291,10 +461,17 @@ class CohortReviewLockService {
   }
 
   // ── views ────────────────────────────────────────────────────────────────────
-  async getLockStateForMentor(mentorId) {
-    const [locked, grant, pending] = await Promise.all([
-      this.isDeleteLocked(),
-      this.hasActiveGrant(mentorId),
+  /**
+   * What a mentor sees, for the clan they are looking at.
+   *
+   * Without a clan this answers for the organisation alone, which is what the
+   * call meant before scopes — so a client that has not been updated gets the
+   * same answer it always did.
+   */
+  async getLockStateForMentor(mentorId, clanId = null) {
+    const [state, grant, pending] = await Promise.all([
+      this.isDeleteLockedFor(clanId),
+      this.hasActiveGrant(mentorId, clanId),
       models.CohortReviewUnlockRequest.findOne({
         where: { mentorId, status: 'pending' },
         attributes: ['id', 'createdAt'],
@@ -302,7 +479,9 @@ class CohortReviewLockService {
       }),
     ]);
     return {
-      locked,
+      locked: state.locked,
+      /** 'organization' | 'program' | 'clan' — why it is locked, when it is. */
+      lockedBy: state.by,
       hasActiveGrant: Boolean(grant),
       grantExpiresAt: grant ? grant.expiresAt : null,
       pendingRequest: pending ? { id: pending.id, createdAt: pending.createdAt } : null,
@@ -311,12 +490,34 @@ class CohortReviewLockService {
 
   async lockOverview() {
     const now = new Date();
-    const [locked, pendingRequests, activeGrants] = await Promise.all([
+    const [locked, pendingRequests, activeGrants, scopes, choices] = await Promise.all([
       this.isDeleteLocked(),
       models.CohortReviewUnlockRequest.count({ where: { status: 'pending' } }),
       models.CohortReviewUnlockGrant.count({ where: { revokedAt: null, expiresAt: { [Op.gt]: now } } }),
+      this.listLockedScopes(),
+      this.lockableScopes(),
     ]);
-    return { locked, pendingRequests, activeGrants };
+    return { locked, pendingRequests, activeGrants, scopes, choices };
+  }
+
+  /**
+   * Everything an admin could lock: the programmes, and the clans inside them.
+   *
+   * Sent with the overview so the picker has names without a second call, and
+   * so the page cannot offer a scope this organisation does not own.
+   */
+  async lockableScopes() {
+    const programs = await models.Program.findAll({
+      attributes: ['id', 'name'],
+      order: [['name', 'ASC']],
+      include: [{ model: models.Clan, as: 'clans', attributes: ['id', 'name', 'kind'], required: false }],
+    });
+    return {
+      programs: programs.map((p) => ({ id: p.id, name: p.name })),
+      clans: programs.flatMap((p) => (p.clans || []).map((c) => ({
+        id: c.id, name: c.name, kind: c.kind, programId: p.id, programName: p.name,
+      }))).sort((a, b) => a.name.localeCompare(b.name)),
+    };
   }
 
   async recentLogs({ page = 1, limit = 10 } = {}) {

@@ -26,12 +26,14 @@ describe('organization tenancy', () => {
       name: `Second workspace ${Date.now()}`, slug: `second-${Date.now()}`, status: 'active', timezone: 'UTC',
     });
     const growth = await models.Plan.findOne({ where: { key: 'growth' } });
-    await models.OrganizationSubscription.create({ organizationId: secondary.id, planId: growth.id, status: 'active' });
+    await runWithRequestContext({ organizationId: secondary.id }, () =>
+      models.OrganizationSubscription.create({ organizationId: secondary.id, planId: growth.id, status: 'active' }));
     admin = await createAdmin({ email: `tenant-admin-${Date.now()}@test.com` });
     outsider = await createMentee({ email: `tenant-outsider-${Date.now()}@test.com` });
-    await models.OrganizationMembership.create({
-      organizationId: secondary.id, userId: admin.id, role: 'admin', status: 'active', joinedAt: new Date(),
-    });
+    await runWithRequestContext({ organizationId: secondary.id }, () =>
+      models.OrganizationMembership.create({
+        organizationId: secondary.id, userId: admin.id, role: 'admin', status: 'active', joinedAt: new Date(),
+      }));
     token = generateAccessToken({ id: admin.id, email: admin.email, role: admin.role });
     outsiderToken = generateAccessToken({ id: outsider.id, email: outsider.email, role: outsider.role });
 
@@ -66,7 +68,8 @@ describe('organization tenancy', () => {
       .set('Authorization', `Bearer ${outsiderToken}`)
       .set('X-Pathment-Workspace', secondary.slug);
     expect(response.status).toBe(403);
-    expect(response.body.message).toMatch(/do not have access/i);
+    expect(response.body.code).toBe('WORKSPACE_ACCESS_DENIED');
+    expect(response.body.message).toMatch(/no longer have access/i);
   });
 
   it('automatically scopes tenant-owned model reads to the request workspace', async () => {
@@ -120,13 +123,93 @@ describe('organization tenancy', () => {
 
   it('does not inherit account mentor/admin roles as a member of another workspace', async () => {
     const authz = require('../../src/services/authzService');
-    await models.OrganizationMembership.update({ role: 'member' }, {
-      where: { organizationId: secondary.id, userId: admin.id },
-    });
+    await runWithRequestContext({ organizationId: secondary.id }, () =>
+      models.OrganizationMembership.update({ role: 'member' }, {
+        where: { organizationId: secondary.id, userId: admin.id },
+      }));
     const capabilities = await runWithRequestContext({ organizationId: secondary.id, userId: admin.id },
       () => authz.getCapabilities(admin));
     expect(capabilities).not.toContain('admin');
     expect(capabilities).not.toContain('mentor');
+  });
+
+  it('lets an explicitly assigned organization super admin manage workspace settings', async () => {
+    await runWithRequestContext({ organizationId: secondary.id }, async () => {
+      await models.OrganizationMembership.update({ role: 'member' }, {
+        where: { organizationId: secondary.id, userId: admin.id },
+      });
+      await models.RoleAssignment.create({
+        organizationId: secondary.id,
+        userId: admin.id,
+        role: 'super_admin',
+        scopeType: 'org',
+        scopeId: null,
+      });
+    });
+
+    const overview = await request(app)
+      .get('/api/organizations/current')
+      .set('Authorization', `Bearer ${token}`)
+      .set('X-Pathment-Workspace', secondary.slug);
+    expect(overview.status).toBe(200);
+    expect(overview.body.data.membership.role).toBe('member');
+    expect(overview.body.data.canManageOrganization).toBe(true);
+
+    const updated = await request(app)
+      .patch('/api/organizations/current')
+      .set('Authorization', `Bearer ${token}`)
+      .set('X-Pathment-Workspace', secondary.slug)
+      .send({ name: 'Managed by assigned super admin', timezone: 'Asia/Karachi' });
+    expect(updated.status).toBe(200);
+    expect(updated.body.data.organization).toMatchObject({
+      name: 'Managed by assigned super admin',
+      timezone: 'Asia/Karachi',
+    });
+
+    const removedLogo = await request(app)
+      .delete('/api/organizations/current/logo')
+      .set('Authorization', `Bearer ${token}`)
+      .set('X-Pathment-Workspace', secondary.slug);
+    expect(removedLogo.status).toBe(200);
+
+    const planRequest = await request(app)
+      .post('/api/organizations/current/plan-request')
+      .set('Authorization', `Bearer ${token}`)
+      .set('X-Pathment-Workspace', secondary.slug)
+      .send({ planKey: 'scale' });
+    expect(planRequest.status).toBe(200);
+    expect(planRequest.body.data.subscription.requestedPlan.key).toBe('scale');
+  });
+
+  it('keeps organization settings read-only for a member without full workspace access', async () => {
+    await runWithRequestContext({ organizationId: secondary.id }, () =>
+      models.OrganizationMembership.create({
+        organizationId: secondary.id,
+        userId: outsider.id,
+        role: 'member',
+        status: 'active',
+        joinedAt: new Date(),
+      }));
+
+    const overview = await request(app)
+      .get('/api/organizations/current')
+      .set('Authorization', `Bearer ${outsiderToken}`)
+      .set('X-Pathment-Workspace', secondary.slug);
+    expect(overview.status).toBe(200);
+    expect(overview.body.data.canManageOrganization).toBe(false);
+
+    const update = await request(app)
+      .patch('/api/organizations/current')
+      .set('Authorization', `Bearer ${outsiderToken}`)
+      .set('X-Pathment-Workspace', secondary.slug)
+      .send({ timezone: 'Asia/Karachi' });
+    expect(update.status).toBe(403);
+
+    const removeLogo = await request(app)
+      .delete('/api/organizations/current/logo')
+      .set('Authorization', `Bearer ${outsiderToken}`)
+      .set('X-Pathment-Workspace', secondary.slug);
+    expect(removeLogo.status).toBe(403);
   });
 
   it('rejects invalid workspace headers instead of silently using DevWeekends', async () => {
@@ -167,16 +250,121 @@ describe('organization tenancy', () => {
   it('activates only the requested invoice plan and records operator evidence atomically', async () => {
     const billing = require('../../src/services/manualBillingService');
     const orgService = require('../../src/services/organizationService');
-    await orgService.requestPlan(admin.id, secondary.id, 'scale');
-    const input = { workspace: secondary.slug, planKey: 'scale', invoiceReference: 'INV-TEST-1',
-      operator: 'test-operator', periodEnd: new Date(Date.now() + 86400000).toISOString() };
-    expect((await billing.activateRequestedPlan(input)).alreadyActivated).toBe(false);
-    expect((await billing.activateRequestedPlan(input)).alreadyActivated).toBe(true);
-    const subscription = await orgService.subscription(secondary.id);
-    expect(subscription.plan.key).toBe('scale');
-    expect(subscription.provider).toBe('manual_invoice');
-    expect(subscription.requestedPlanId).toBeNull();
-    await expect(billing.activateRequestedPlan({ ...input, planKey: 'growth' })).rejects.toThrow(/invoice/i);
+    await runWithRequestContext({ organizationId: secondary.id, userId: admin.id }, async () => {
+      await orgService.requestPlan(admin, secondary.id, 'scale');
+      const input = { workspace: secondary.slug, planKey: 'scale', invoiceReference: 'INV-TEST-1',
+        operator: 'test-operator', periodEnd: new Date(Date.now() + 86400000).toISOString() };
+      expect((await billing.activateRequestedPlan(input)).alreadyActivated).toBe(false);
+      expect((await billing.activateRequestedPlan(input)).alreadyActivated).toBe(true);
+      const subscription = await orgService.subscription(secondary.id);
+      expect(subscription.plan.key).toBe('scale');
+      expect(subscription.provider).toBe('manual_invoice');
+      expect(subscription.requestedPlanId).toBeNull();
+      await expect(billing.activateRequestedPlan({ ...input, planKey: 'growth' })).rejects.toThrow(/invoice/i);
+    });
+  });
+
+  /**
+   * The state Dev Weekends was found in: left on Growth with every limit
+   * overridden to unlimited, because that was the quick way to keep a large
+   * workspace running. Buying Scale publishes unlimited anyway, so carrying
+   * the override forward would leave the settings page calling the plan's own
+   * figures "custom limits for this workspace" for good.
+   */
+  it('drops the overrides the new plan already makes true, and keeps the ones it does not', async () => {
+    const billing = require('../../src/services/manualBillingService');
+    const orgService = require('../../src/services/organizationService');
+    const growth = await models.Plan.findOne({ where: { key: 'growth' } });
+    const scale = await models.Plan.findOne({ where: { key: 'scale' } });
+
+    await runWithRequestContext({ organizationId: secondary.id, userId: admin.id }, async () => {
+      await models.OrganizationSubscription.update({
+        planId: growth.id,
+        overrides: {
+          // Exactly what Scale publishes: a workaround, not an arrangement.
+          limits: { members: scale.limits.members, clans: scale.limits.clans, storageGb: -1 },
+          features: { sso: true, aiEvaluation: true },
+        },
+      }, { where: { organizationId: secondary.id } });
+
+      await orgService.requestPlan(admin, secondary.id, 'scale');
+      await billing.activateRequestedPlan({
+        workspace: secondary.slug, planKey: 'scale', invoiceReference: 'INV-TEST-PRUNE',
+        operator: 'test-operator', periodEnd: new Date(Date.now() + 86400000).toISOString(),
+      });
+
+      const row = await models.OrganizationSubscription.findOne({
+        where: { organizationId: secondary.id }, skipOrganizationScope: true,
+      });
+      // Redundant now, so gone.
+      expect(row.overrides.limits.members).toBeUndefined();
+      expect(row.overrides.limits.clans).toBeUndefined();
+      expect(row.overrides.features.sso).toBeUndefined();
+      // Scale publishes a storage figure; unlimited is still a real deviation.
+      expect(row.overrides.limits.storageGb).toBe(-1);
+
+      // And the page therefore stops calling the plan's own numbers custom.
+      const subscription = await orgService.subscription(secondary.id);
+      expect(subscription.plan.key).toBe('scale');
+      expect(subscription.overriddenLimits).toEqual(['storageGb']);
+    });
+  });
+
+  it('says plainly when nobody asked for the plan being activated', async () => {
+    const billing = require('../../src/services/manualBillingService');
+    await models.OrganizationSubscription.update(
+      { requestedPlanId: null }, { where: { organizationId: secondary.id } },
+    );
+    await expect(billing.activateRequestedPlan({
+      workspace: secondary.slug, planKey: 'growth', invoiceReference: 'INV-TEST-NOREQ',
+      operator: 'test-operator', periodEnd: new Date(Date.now() + 86400000).toISOString(),
+    })).rejects.toThrow(/has not requested growth/i);
+  });
+
+  describe('a workspace whose limits were set for it directly', () => {
+    /**
+     * The settings page reads the EFFECTIVE limits for its usage bars and the
+     * plan's own published limits for the plan cards. Both are correct, and
+     * together they read as a contradiction: an overridden workspace saw
+     * "1089 / Unlimited" above a card promising 1500 members, with nothing on
+     * the page reconciling them. The service now says which keys differ, so
+     * the page can name the override instead of looking broken.
+     *
+     * `organizationScope` injects the tenant, so these reads run inside the
+     * workspace's own request context like every other caller does.
+     */
+    const orgService = require('../../src/services/organizationService');
+    const inWorkspace = (fn) => runWithRequestContext({ organizationId: secondary.id, userId: admin.id }, fn);
+    const setOverrides = (overrides) => models.OrganizationSubscription.update(
+      { overrides }, { where: { organizationId: secondary.id } },
+    );
+
+    afterEach(() => setOverrides({}));
+
+    it('says nothing is overridden when nothing is', () => inWorkspace(async () => {
+      const subscription = await orgService.subscription(secondary.id);
+      expect(subscription.overriddenLimits).toEqual([]);
+      expect(subscription.plan.publishedLimits).toEqual(subscription.plan.limits);
+    }));
+
+    it('names exactly the keys that differ from the plan', () => inWorkspace(async () => {
+      await setOverrides({ limits: { members: -1 } });
+      const subscription = await orgService.subscription(secondary.id);
+
+      expect(subscription.overriddenLimits).toEqual(['members']);
+      // What is enforced, and what the plan promises, both travel.
+      expect(subscription.plan.limits.members).toBe(-1);
+      expect(subscription.plan.publishedLimits.members).not.toBe(-1);
+      // Untouched keys are not reported as custom.
+      expect(subscription.plan.limits.clans).toBe(subscription.plan.publishedLimits.clans);
+    }));
+
+    it('does not report a key whose override equals the published value', () => inWorkspace(async () => {
+      const before = await orgService.subscription(secondary.id);
+      await setOverrides({ limits: { clans: before.plan.publishedLimits.clans } });
+
+      expect((await orgService.subscription(secondary.id)).overriddenLimits).toEqual([]);
+    }));
   });
 
   it('lets organization admins request a plan without activating it prematurely', async () => {
@@ -220,10 +408,11 @@ describe('organization tenancy', () => {
 
   it('enforces plan features on the server while allowing ordinary settings', async () => {
     const starter = await models.Plan.findOne({ where: { key: 'starter' } });
-    await models.OrganizationSubscription.update(
-      { planId: starter.id },
-      { where: { organizationId: secondary.id } },
-    );
+    await runWithRequestContext({ organizationId: secondary.id }, () =>
+      models.OrganizationSubscription.update(
+        { planId: starter.id },
+        { where: { organizationId: secondary.id } },
+      ));
 
     const branding = await request(app)
       .patch('/api/organizations/current')

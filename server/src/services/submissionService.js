@@ -6,22 +6,49 @@ const notificationOrchestrator = require('./notificationOrchestrator');
 const { NOTIFICATION_EVENTS } = require('../config/notificationMatrix');
 const { endOfDayInZone } = require('../utils/timezone');
 const authzService = require('./authzService');
+const mentorshipPauseService = require('./mentorshipPauseService');
 const { PERMISSIONS } = require('../config/permissions');
 const { pointsForDifficulty } = require('../config/points');
 const { toStringList, toBoolean } = require('../utils/multipartFields');
+const clanLifecycleService = require('./clanLifecycleService');
+const gamificationService = require('./gamificationService');
 
-/** Standard points for a submission's task, derived solely from difficulty. */
+/**
+ * Max points for a review. Prefer the assignment's pointsBase when a mentor set
+ * a task value; otherwise the difficulty curve. Approval may award up to this.
+ */
 function taskStandardPoints(task) {
+  const assigned = Number(task?.pointsBase);
+  if (Number.isFinite(assigned) && assigned > 0) return Math.round(assigned);
+  const step = Number(task?.roadmapTask?.pointsBase);
+  if (Number.isFinite(step) && step > 0) return Math.round(step);
   return pointsForDifficulty(task?.roadmapTask?.difficulty);
 }
 
+/** Block mentor writes on frozen cohort clans; standing + unscoped legacy stay allowed. */
+async function assertWritableClanForMentorReview(clanId) {
+  if (!clanId) return;
+  const clan = await models.Clan.findByPk(clanId, { attributes: ['kind', 'frozenAt'] });
+  if (clan && clan.kind !== 'standing' && clan.frozenAt) {
+    throw new ForbiddenError('This cohort clan is historical. Reviews are view-only.');
+  }
+}
+
 class SubmissionService {
+  /** Shared by quiz/interview review writes — frozen cohort clans stay view-only. */
+  assertClanWritableForReview(clanId) {
+    return assertWritableClanForMentorReview(clanId);
+  }
+
   /**
    * Submit task with files and rich text content
    */
   async submitTaskWithFiles(taskId, menteeId, submissionData, files = []) {
-    const task = await models.AssignedTask.findByPk(taskId, {
-      include: [{ model: models.RoadmapTask, as: 'roadmapTask', attributes: ['type'] }],
+    await clanLifecycleService.assertTaskWritable(taskId);
+    // withPoolWork: a System Pool candidate hands in qualifying work through
+    // this same path. Safe to open — ownership is checked just below.
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId, {
+      include: [{ model: models.RoadmapTask, as: 'roadmapTask', attributes: ['type', 'title'] }],
     });
 
     if (!task) {
@@ -36,6 +63,18 @@ class SubmissionService {
       throw new ValidationError('Task is already completed');
     }
 
+    /**
+     * An item the mentee put on their own plan has nothing to submit.
+     *
+     * It is a real task so that it keeps the progress log and the clan scoping,
+     * but it was never the mentor's to approve. Without this guard a mentee
+     * could push their own "read chapter 3" into the approvals queue, and a
+     * queue that fills with other people's private to-dos stops being read.
+     */
+    if (task.selfAssigned) {
+      throw new ValidationError('This is your own item — tick it off on your plan instead of submitting it.');
+    }
+
     // Interview and quiz tasks are ONLY completed through their own runners
     // (which create their own submission). A plain "Submit Work" submission must
     // never attach to them — otherwise a stale client / bookmarked submit page
@@ -43,6 +82,10 @@ class SubmissionService {
     const taskType = task.typeOverride || task.roadmapTask?.type;
     if (taskType === 'interview' || taskType === 'quiz') {
       throw new ValidationError(`This is a ${taskType} task — complete it through the ${taskType}, not a work submission.`);
+    }
+    // Course tasks complete themselves when the course is finished on the provider.
+    if (taskType === 'course') {
+      throw new ValidationError('This is a course task — it completes automatically when you finish the course.');
     }
 
     // Upload files to Cloudinary
@@ -81,7 +124,10 @@ class SubmissionService {
         });
       } catch (error) {
         console.error('Error uploading file:', error);
-        throw new ValidationError(`Failed to upload file: ${file.originalname}`);
+        const detail = error?.message ? ` (${error.message})` : '';
+        throw new ValidationError(
+          `Could not upload "${file.originalname}"${detail}. Check the file type and size (max 10MB), then try again.`
+        );
       }
     }
 
@@ -129,8 +175,17 @@ class SubmissionService {
       ...(Number.isFinite(reportedHours) && reportedHours > 0 ? { timeSpentHours: reportedHours } : {})
     });
 
+    // Qualifying work in the System Pool stops here: no mentorship to resume,
+    // no roadmap to advance (a pool task may reuse a roadmap step, and advancing
+    // would hand the candidate that roadmap's NEXT step as ordinary work), no
+    // mentor to notify — the pool's reviewers hear instead.
+    if (task.poolMemberId) {
+      await require('./poolWorkEvents').onSubmitted(task, { submissionId: submission.id, version: newVersion });
+      return this.getSubmissionById(submission.id, { includePoolWork: true });
+    }
+
     // Re-engagement: a paused mentee who submits work has come back → resume.
-    require('./mentorshipPauseService').autoResumeIfPaused(task.menteeId, 'submitted work').catch(() => { });
+    mentorshipPauseService.autoResumeIfPaused(task.menteeId, 'submitted work', task.clanId).catch(() => { });
 
     // Assign the next roadmap step NOW (at submission), not at approval — so the
     // mentee has work to do while the mentor reviews. Within-roadmap only;
@@ -139,6 +194,24 @@ class SubmissionService {
     if (task.roadmapTaskId) {
       require('./linearRoadmapService').advanceOnSubmission(task.menteeId, task.roadmapTaskId)
         .catch((err) => console.error('Roadmap advance-on-submission failed (non-fatal):', err.message));
+    }
+
+    /**
+     * A repeating item rolls forward at SUBMISSION too, for exactly the reason
+     * the roadmap advances here: a daily habit the mentee has already done must
+     * not wait on how fast their mentor gets to it. Tomorrow's copy is
+     * tomorrow's obligation; if changes are asked for, those belong to THIS
+     * occurrence, which is still open and still theirs to fix.
+     *
+     * The spawner moves the rule onto the successor and never throws, so the
+     * approval hook further down becomes a no-op rather than a second copy.
+     */
+    // Awaited, unlike the roadmap advance above: the spawner already swallows
+    // its own errors and returns null, so awaiting cannot fail the submission —
+    // and it means the next occurrence is there before the mentee's plan
+    // reloads, rather than racing it.
+    if (task.repeatRule) {
+      await require('./scheduleBoardService').spawnNextOccurrence(task);
     }
 
     // Return complete submission with files
@@ -160,7 +233,8 @@ class SubmissionService {
         actionLabel: 'Review submission',
         relatedEntityType: 'task_submission',
         relatedEntityId: submission.id,
-        emailSubject: `${submitterName} submitted “${submittedTitle}” for review`
+        emailSubject: `${submitterName} submitted “${submittedTitle}” for review`,
+        clanId: task.clanId || null,
       },
       dedupe: {
         relatedEntityType: 'task_submitted',
@@ -175,6 +249,7 @@ class SubmissionService {
    * Request extension for a task
    */
   async requestExtension(taskId, menteeId, extensionData) {
+    await clanLifecycleService.assertTaskWritable(taskId);
     const task = await models.AssignedTask.findByPk(taskId);
 
     if (!task) {
@@ -227,7 +302,8 @@ class SubmissionService {
         actionLabel: 'Review Request',
         relatedEntityType: 'task_submission',
         relatedEntityId: submission.id,
-        emailSubject: 'Pathment: Extension request from mentee'
+        emailSubject: 'Pathment: Extension request from mentee',
+        clanId: task.clanId || null,
       },
       dedupe: {
         relatedEntityType: 'extension_requested',
@@ -251,10 +327,12 @@ class SubmissionService {
     if (!submission) {
       throw new NotFoundError('Submission not found');
     }
+    await clanLifecycleService.assertTaskWritable(submission.assignedTask);
 
     if (!(await authzService.canActOnTask(mentorId, submission.assignedTask, PERMISSIONS.TASK_REVIEW))) {
       throw new ForbiddenError('You do not have permission to act on this task');
     }
+    await assertWritableClanForMentorReview(submission.assignedTask?.clanId);
 
     if (!submission.extensionRequested) {
       throw new ValidationError('This is not an extension request');
@@ -320,7 +398,8 @@ class SubmissionService {
         actionLabel: 'View Task',
         relatedEntityType: 'task_submission',
         relatedEntityId: submission.id,
-        emailSubject: `Pathment: Extension ${approved ? 'approved' : 'rejected'}`
+        emailSubject: `Pathment: Extension ${approved ? 'approved' : 'rejected'}`,
+        clanId: submission.assignedTask.clanId || null,
       },
       dedupe: {
         relatedEntityType: 'extension_handled',
@@ -334,10 +413,17 @@ class SubmissionService {
   /**
    * Review task submission with detailed feedback
    */
-  async reviewSubmission(submissionId, mentorId, reviewData) {
+  /**
+   * `opts.asSystem` is for the system marking work itself (an auto-graded
+   * quiz), never for a person: it skips the reviewer check. Only internal
+   * callers pass it; no route does.
+   */
+  async reviewSubmission(submissionId, mentorId, reviewData, opts = {}) {
     const submission = await models.TaskSubmission.findByPk(submissionId, {
       include: [{
-        model: models.AssignedTask,
+        // withPoolWork: System Pool work is reviewed through this same path.
+        // Opening it is safe because canActOnTask demands pool.review for it.
+        model: models.AssignedTask.scope('withPoolWork'),
         as: 'assignedTask',
         include: [{
           model: models.RoadmapTask,
@@ -346,15 +432,18 @@ class SubmissionService {
       }]
     });
 
-    if (!submission) {
+    if (!submission || !submission.assignedTask) {
       throw new NotFoundError('Submission not found');
     }
+    await clanLifecycleService.assertTaskWritable(submission.assignedTask);
 
     const task = submission.assignedTask;
+    const isPoolWork = Boolean(task.poolMemberId);
 
-    if (!(await authzService.canActOnTask(mentorId, task, PERMISSIONS.TASK_REVIEW))) {
+    if (!opts.asSystem && !(await authzService.canActOnTask(mentorId, task, PERMISSIONS.TASK_REVIEW))) {
       throw new ForbiddenError('You do not have permission to review this submission');
     }
+    await assertWritableClanForMentorReview(task.clanId);
 
     if (submission.status !== 'pending' && submission.status !== 'reviewing') {
       throw new ValidationError('Submission cannot be reviewed in current status');
@@ -382,8 +471,8 @@ class SubmissionService {
       throw new ValidationError('Rating must be between 0 and 5');
     }
 
-    // Points are STANDARD by difficulty — not chosen by the mentor. Same
-    // difficulty always earns the same points (fair, ungameable leaderboard).
+    // Cap = assignment pointsBase (mentor-set) or roadmap/difficulty default.
+    // Mentor may award up to that max on approval (XP + coins via existing flow).
     const standardPoints = taskStandardPoints(task);
 
     // Create feedback
@@ -435,7 +524,23 @@ class SubmissionService {
       updateData.revisionCount = task.revisionCount + 1;
     }
 
+    // System Pool work never earns points: candidates are not in a clan yet, and
+    // their pool score comes from review ratings and quiz results instead.
+    const poolWorkEvents = isPoolWork ? require('./poolWorkEvents') : null;
+    if (isPoolWork && isApproved) updateData.pointsAwarded = 0;
+
     await task.update(updateData);
+
+    // Qualifying work stops here. Everything below is mentorship: advancing a
+    // roadmap, repeats, enrollment progress, streaks, badges, mentor stats, and
+    // notifications worded and linked for the mentee portal. None of it applies
+    // to someone who is not in a clan yet.
+    if (isPoolWork) {
+      await poolWorkEvents.onReviewed(task, {
+        submissionId: submission.id, isApproved, title: task.roadmapTask?.title || 'your work',
+      });
+      return submission;
+    }
 
     // The NEXT within-roadmap step was already assigned at submission time (so
     // the mentee wasn't idle). advanceOnApproval still runs here to (a) safety-
@@ -452,6 +557,19 @@ class SubmissionService {
       }
     }
 
+    /**
+     * A repeating item that has just been approved rolls forward here.
+     *
+     * Approval is the ONLY place work-for-review becomes complete, so it is the
+     * only place a mentor-set repeat can produce its next occurrence — the
+     * planner's own tick deliberately refuses to finish reviewable work. The
+     * spawner never throws and moves the rule onto the successor, so an
+     * approval processed twice cannot create two.
+     */
+    if (isApproved && task.repeatRule) {
+      await require('./scheduleBoardService').spawnNextOccurrence(task);
+    }
+
     // Update enrollment task stats so tasksCompleted/tasksTotal/overallProgressPercentage stay current
     const taskService = require('./taskService');
     await taskService.updateEnrollmentTaskStats(task.enrollmentId);
@@ -460,7 +578,6 @@ class SubmissionService {
     if (isApproved) {
       await this.updateMenteeGamificationProgress(task.menteeId);
 
-      const gamificationService = require('./gamificationService');
       const pointsToAward = updateData.pointsAwarded;
 
       try {
@@ -476,8 +593,20 @@ class SubmissionService {
 
         await gamificationService.updateStreak(task.menteeId);
 
-        // Re-check task-based badges after profile counters are refreshed.
-        await gamificationService.checkAndAwardBadges(task.menteeId);
+        // Re-check badges using the assignment's clan/enrollment (not UI clan).
+        let programId = null;
+        if (task.enrollmentId) {
+          const enrollment = await models.Enrollment.findByPk(task.enrollmentId, {
+            attributes: ['programId'],
+            skipOrganizationScope: true,
+          });
+          programId = enrollment?.programId || null;
+        }
+        await gamificationService.checkAndAwardBadges(task.menteeId, {
+          organizationId: task.organizationId,
+          programId,
+          clanId: task.clanId || null,
+        });
       } catch (gamificationError) {
         // Do not fail review flow if gamification side-effects fail.
         console.error('[Gamification] reviewSubmission side-effect failed:', {
@@ -489,8 +618,13 @@ class SubmissionService {
       }
     }
 
-    // Update mentor stats
+    // Update mentor stats + mentor auto-badges (reviews_given / tasks_approved).
     await this.updateMentorReviewStats(mentorId);
+    try {
+      await gamificationService.checkAndAwardBadges(mentorId);
+    } catch (err) {
+      console.error('[Gamification] mentor badge check after review failed:', err.message);
+    }
 
     // The task's roadmapTask is already loaded on `submission.assignedTask` at the
     // top of this method, so the title comes for free — no need to re-run the
@@ -512,7 +646,8 @@ class SubmissionService {
         actionLabel: isApproved ? 'See review' : 'View notes & resubmit',
         relatedEntityType: 'task_submission',
         relatedEntityId: submission.id,
-        emailSubject: isApproved ? `Approved: “${reviewedTitle}”` : `Revision requested: “${reviewedTitle}”`
+        emailSubject: isApproved ? `Approved: “${reviewedTitle}”` : `Revision requested: “${reviewedTitle}”`,
+        clanId: task.clanId || null,
       },
       dedupe: {
         relatedEntityType: 'submission_reviewed',
@@ -533,7 +668,8 @@ class SubmissionService {
           actionLabel: 'Read feedback',
           relatedEntityType: 'task_feedback',
           relatedEntityId: submission.id,
-          emailSubject: `${reviewerName} left feedback on “${reviewedTitle}”`
+          emailSubject: `${reviewerName} left feedback on “${reviewedTitle}”`,
+          clanId: task.clanId || null,
         },
         dedupe: {
           relatedEntityType: 'feedback_sent',
@@ -568,6 +704,7 @@ class SubmissionService {
     if (!submission) {
       throw new NotFoundError('Submission not found');
     }
+    await clanLifecycleService.assertTaskWritable(submission.assignedTask);
 
     if (submission.status !== 'approved' && submission.status !== 'revision_needed') {
       throw new ValidationError('Only a reviewed submission can be edited');
@@ -645,7 +782,8 @@ class SubmissionService {
           actionLabel: 'Read feedback',
           relatedEntityType: 'task_feedback',
           relatedEntityId: submission.id,
-          emailSubject: `Updated feedback on “${editedTitle}”`
+          emailSubject: `Updated feedback on “${editedTitle}”`,
+          clanId: task.clanId || null,
         },
         dedupe: {
           relatedEntityType: 'feedback_edited',
@@ -662,11 +800,13 @@ class SubmissionService {
   /**
    * Get submission by ID with all related data
    */
-  async getSubmissionById(submissionId) {
+  async getSubmissionById(submissionId, { includePoolWork = false } = {}) {
     const submission = await models.TaskSubmission.findByPk(submissionId, {
       include: [
         {
-          model: models.AssignedTask,
+          // System Pool work is only reachable by callers that opt in and then
+          // authorise it themselves (the pool and candidate services).
+          model: includePoolWork ? models.AssignedTask.scope('withPoolWork') : models.AssignedTask,
           as: 'assignedTask',
           include: [
             {
@@ -701,7 +841,9 @@ class SubmissionService {
       ]
     });
 
-    if (!submission) {
+    // A submission whose task is hidden is pool work reached without opting in:
+    // it does not exist for this caller (and the callers read assignedTask).
+    if (!submission || !submission.assignedTask) {
       throw new NotFoundError('Submission not found');
     }
 
@@ -887,17 +1029,15 @@ class SubmissionService {
   }
 
   /**
-   * Which of THIS mentor's clans each mentee sits in, so the approvals lists can
-   * be scoped by the sidebar clan switcher the same way the cohort views are.
-   * Mirrors getCohort's clan-attach: one clan per mentee (their active mentee
-   * membership in a clan this mentor runs). Batched — no per-item queries.
+   * Fallback clan attribution when AssignedTask.clanId is missing (legacy rows):
+   * first active mentee membership in a clan this mentor runs. Prefer
+   * `_clanOfTask` — membership alone is wrong for multi-clan mentees.
    */
   async _clanByMentee(mentorId, menteeIds = []) {
     const map = new Map();
-    if (!menteeIds.length) return map;
     const cohortService = require('./cohortService');
     const { clanIds, clanNameById } = await cohortService.mentorClanMap(mentorId);
-    if (!clanIds.length) return map;
+    if (!menteeIds.length || !clanIds.length) return { map, clanNameById };
     const rows = await models.ClanMembership.findAll({
       where: {
         clanId: { [Op.in]: clanIds },
@@ -910,7 +1050,19 @@ class SubmissionService {
     for (const r of rows) {
       if (!map.has(r.userId)) map.set(r.userId, { id: r.clanId, name: clanNameById.get(r.clanId) || null });
     }
-    return map;
+    return { map, clanNameById };
+  }
+
+  /**
+   * Clan for the sidebar Approvals filter. Use the task's clanId (the clan the
+   * work was assigned in) so a standing submission isn't tagged as the mentee's
+   * completed cohort when they belong to both.
+   */
+  _clanOfTask(task, clanByMentee, clanNameById) {
+    if (task?.clanId) {
+      return { id: task.clanId, name: clanNameById?.get(task.clanId) || null };
+    }
+    return clanByMentee.get(task?.menteeId) || null;
   }
 
   /**
@@ -932,7 +1084,7 @@ class SubmissionService {
         model: models.AssignedTask,
         as: 'assignedTask',
         required: true,
-        attributes: ['id', 'status', 'menteeId'],
+        attributes: ['id', 'status', 'menteeId', 'clanId'],
         where: await this._reviewableTaskWhere(mentorId),
       }],
     });
@@ -952,14 +1104,14 @@ class SubmissionService {
     const toReview = [...latestByTask.values()]
       .filter((s) => !(s.extensionRequested && s.extensionStatus === 'pending'));
 
-    const clanByMentee = await this._clanByMentee(
+    const { map: clanByMentee, clanNameById } = await this._clanByMentee(
       mentorId,
       [...new Set(toReview.map((s) => s.assignedTask?.menteeId).filter(Boolean))]
     );
 
     const byClan = {};
     for (const s of toReview) {
-      const clanId = clanByMentee.get(s.assignedTask?.menteeId)?.id;
+      const clanId = this._clanOfTask(s.assignedTask, clanByMentee, clanNameById)?.id;
       if (clanId) byClan[clanId] = (byClan[clanId] || 0) + 1;
     }
 
@@ -1024,7 +1176,7 @@ class SubmissionService {
       ? await models.UserSettings.findAll({ where: { userId: { [Op.in]: menteeIds } }, attributes: ['userId', 'timezone'] })
       : [];
     const tzByUser = new Map(tzRows.map((r) => [r.userId, r.timezone || 'UTC']));
-    const clanByMentee = await this._clanByMentee(mentorId, menteeIds);
+    const { map: clanByMentee, clanNameById } = await this._clanByMentee(mentorId, menteeIds);
 
     return latest.map((s) => {
       const t = s.assignedTask;
@@ -1032,8 +1184,8 @@ class SubmissionService {
       return {
         submissionId: s.id,
         taskId: t.id,
-        // The clan this mentee is in (for the sidebar clan-scope filter).
-        clan: clanByMentee.get(t.menteeId) || null,
+        // Clan the work was assigned in (sidebar filter) — not "first membership".
+        clan: this._clanOfTask(t, clanByMentee, clanNameById),
         // Stable peer-grouping key for the client's "group by task" view. Title
         // can be per-mentee overridden, so don't group by title.
         roadmapTaskId: t.roadmapTaskId || null,
@@ -1066,7 +1218,8 @@ class SubmissionService {
         deliverable: t.deliverableOverride || t.roadmapTask?.deliverable || null,
         criteria: (Array.isArray(t.acceptanceCriteriaOverride) && t.acceptanceCriteriaOverride.length)
           ? t.acceptanceCriteriaOverride : (t.roadmapTask?.acceptanceCriteria || []),
-        maxPoints: pointsForDifficulty(t.roadmapTask?.difficulty),
+        maxPoints: taskStandardPoints(t),
+        pointsBase: t.pointsBase ?? t.roadmapTask?.pointsBase ?? null,
         mentee: m ? {
           id: m.id,
           name: `${m.firstName} ${m.lastName}`.trim(),
@@ -1101,7 +1254,7 @@ class SubmissionService {
       order: [['updatedAt', 'DESC']],
     });
 
-    const clanByMentee = await this._clanByMentee(
+    const { map: clanByMentee, clanNameById } = await this._clanByMentee(
       mentorId,
       [...new Set(tasks.map((t) => t.menteeId).filter(Boolean))]
     );
@@ -1115,7 +1268,7 @@ class SubmissionService {
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
       return {
         taskId: t.id,
-        clan: clanByMentee.get(t.menteeId) || null,
+        clan: this._clanOfTask(t, clanByMentee, clanNameById),
         roadmapTaskId: t.roadmapTaskId || null,
         title: t.titleOverride || t.roadmapTask?.title || 'Task',
         type: t.typeOverride || t.roadmapTask?.type || null,
@@ -1161,7 +1314,7 @@ class SubmissionService {
       limit,
     });
 
-    const clanByMentee = await this._clanByMentee(
+    const { map: clanByMentee, clanNameById } = await this._clanByMentee(
       mentorId,
       [...new Set(tasks.map((t) => t.menteeId).filter(Boolean))]
     );
@@ -1173,14 +1326,14 @@ class SubmissionService {
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
       return {
         taskId: t.id,
-        clan: clanByMentee.get(t.menteeId) || null,
+        clan: this._clanOfTask(t, clanByMentee, clanNameById),
         roadmapTaskId: t.roadmapTaskId || null,
         title: t.titleOverride || t.roadmapTask?.title || 'Task',
         type: t.typeOverride || t.roadmapTask?.type || null,
         decision: latestFb?.decision === 'approved_notes' ? 'approved_notes' : 'approved',
         rating: t.finalRating ?? latestFb?.rating ?? null,
         pointsAwarded: t.pointsAwarded ?? 0,
-        maxPoints: pointsForDifficulty(t.roadmapTask?.difficulty),
+        maxPoints: taskStandardPoints(t),
         feedbackText: latestFb?.feedbackText || null,
         reviewedAt: t.completedAt || latestFb?.createdAt || t.updatedAt,
         isLate: t.isLate,

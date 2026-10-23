@@ -8,6 +8,7 @@ import { SelectMenu, type SelectOption } from '@/components/shared/SelectMenu';
 import { TablePagination } from '@/components/shared/TablePagination';
 import { Drawer } from '@/components/shared/Drawer';
 import { ClanAvatarEditor } from '@/components/shared/ClanAvatarEditor';
+import { ClanAvatar } from '@/components/shared/ClanAvatar';
 import { Avatar } from '@/components/shared/Avatar';
 import { CoMentorPermissionsDrawer } from '@/components/shared/CoMentorPermissionsDrawer';
 import { ReassignClanModal } from '@/components/admin/ReassignClanModal';
@@ -36,6 +37,7 @@ function CreateClanDrawer({ programs, mentors, onClose, onCreated }: {
   programs: any[]; mentors: Person[]; onClose: () => void; onCreated: () => void;
 }) {
   const [name, setName] = useState('');
+  const [kind, setKind] = useState<'cohort' | 'standing'>('cohort');
   const [programId, setProgramId] = useState('');
   const [leadMentorId, setLeadMentorId] = useState('');
   const [levelLabel, setLevelLabel] = useState('');
@@ -49,7 +51,7 @@ function CreateClanDrawer({ programs, mentors, onClose, onCreated }: {
     try {
       setSaving(true);
       await clanApi.create({
-        name: name.trim(), programId,
+        name: name.trim(), programId, kind,
         leadMentorId: leadMentorId || undefined,
         levelLabel: levelLabel.trim() || undefined,
         levels,
@@ -74,51 +76,71 @@ function CreateClanDrawer({ programs, mentors, onClose, onCreated }: {
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <div className="absolute inset-0 bg-black/40 dark:bg-black/70" onClick={onClose} aria-hidden="true" />
-      <div role="dialog" aria-modal="true" aria-label="New clan" className="relative w-full max-w-md h-full bg-card border-l border-slate-200 dark:border-slate-700 shadow-2xl dark:shadow-[-8px_0_30px_rgba(0,0,0,0.6)] flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
-          <h3 className="text-slate-900 font-semibold">New clan</h3>
-          <button onClick={onClose} aria-label="Close" className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-3">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Name <span className="text-red-500">*</span></label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Clan name (e.g. Phoenix)" className={field} />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Program <span className="text-red-500">*</span></label>
-            <SelectMenu value={programId} onChange={setProgramId} options={programOpts} placeholder="Select a program" ariaLabel="Program" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Lead mentor <span className="text-slate-400 font-normal">(optional)</span></label>
-            <SelectMenu value={leadMentorId} onChange={setLeadMentorId} options={mentorOpts} placeholder="No lead mentor yet" ariaLabel="Lead mentor" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Level label <span className="text-slate-400 font-normal">(optional)</span></label>
-            <input value={levelLabel} onChange={(e) => setLevelLabel(e.target.value)} placeholder="e.g. Intermediate" className={field} />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Levels served <span className="text-slate-400 font-normal">(for intake assignment)</span></label>
-            <ClanLevelsField programId={programId} value={levels} onChange={setLevels} />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Countries served <span className="text-slate-400 font-normal">(comma-separated, optional)</span></label>
-            <input value={countries} onChange={(e) => setCountries(e.target.value)} placeholder="e.g. Pakistan, India" className={field} />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Tags <span className="text-slate-400 font-normal">(comma-separated)</span></label>
-            <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="e.g. frontend, react" className={field} />
-          </div>
-        </div>
-        <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 border border-slate-200 text-slate-700 rounded-xl text-sm hover:bg-slate-50">Cancel</button>
+    <Drawer
+      open
+      onClose={onClose}
+      width="sm"
+      title="New clan"
+      footer={(dismiss) => (
+        <>
+          <button onClick={dismiss} className="px-4 py-2 border border-slate-200 text-slate-700 rounded-xl text-sm hover:bg-slate-50">Cancel</button>
           <button onClick={save} disabled={saving} className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm inline-flex items-center gap-2 disabled:opacity-50">
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}Create clan
           </button>
+        </>
+      )}
+    >
+      <div className="space-y-3">
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Name <span className="text-red-500">*</span></label>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Clan name (e.g. Phoenix)" className={field} />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Program <span className="text-red-500">*</span></label>
+          <SelectMenu value={programId} onChange={setProgramId} options={programOpts} placeholder="Select a program" ariaLabel="Program" />
+        </div>
+        {/* An admin could approve a mentor's request for a standing clan and
+            could not make one themselves. The rule is about authority, not
+            about which door you came through. */}
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Kind</label>
+          <SelectMenu
+            value={kind}
+            onChange={(value) => setKind(value as 'cohort' | 'standing')}
+            options={[
+              { value: 'cohort', label: 'Cohort clan', description: 'Runs with the programme, capped at 25 by default' },
+              { value: 'standing', label: 'Standing clan', description: 'Open-ended mentoring space, no cap, no programme enrolment' },
+            ]}
+            ariaLabel="Clan kind"
+          />
+          <p className="mt-1 text-xs text-slate-500">
+            {kind === 'standing'
+              ? 'A standing clan keeps running after its programme closes. Work done in it does not count toward the programme record.'
+              : 'A cohort clan belongs to the programme intake and closes with it.'}
+          </p>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Lead mentor <span className="text-slate-400 font-normal">(optional)</span></label>
+          <SelectMenu value={leadMentorId} onChange={setLeadMentorId} options={mentorOpts} placeholder="No lead mentor yet" ariaLabel="Lead mentor" />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Level label <span className="text-slate-400 font-normal">(optional)</span></label>
+          <input value={levelLabel} onChange={(e) => setLevelLabel(e.target.value)} placeholder="e.g. Intermediate" className={field} />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Levels served <span className="text-slate-400 font-normal">(for intake assignment)</span></label>
+          <ClanLevelsField programId={programId} value={levels} onChange={setLevels} />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Countries served <span className="text-slate-400 font-normal">(comma-separated, optional)</span></label>
+          <input value={countries} onChange={(e) => setCountries(e.target.value)} placeholder="e.g. Pakistan, India" className={field} />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Tags <span className="text-slate-400 font-normal">(comma-separated)</span></label>
+          <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="e.g. frontend, react" className={field} />
         </div>
       </div>
-    </div>
+    </Drawer>
   );
 }
 
@@ -395,7 +417,7 @@ function ClanDrawer({ clanId, mentors, mentees, onClose, onChanged }: {
                         {(pickResults.length > 0 || searching) && (
                           <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-card shadow-lg dark:shadow-[0_8px_30px_rgba(0,0,0,0.5)]">
                             {searching ? (
-                              <div className="py-4 flex justify-center"><Loader2 className="w-4 h-4 animate-spin text-slate-400" /></div>
+                              <div className="py-4 flex justify-center"><Loader2 className="w-4 h-4 animate-spin text-brand-600" /></div>
                             ) : pickResults.map((p) => {
                               // A platform admin can't be a mentee — show them
                               // greyed with the reason rather than omitting them,
@@ -700,7 +722,7 @@ function AdminClansInner() {
                   const n = counts(c);
                   return <tr key={c.id} className={selected.has(c.id) ? 'bg-brand-50 dark:bg-brand-950/30' : ''}>
                     <td><input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleOne(c.id)} aria-label={`Select ${c.name}`} className="h-4 w-4 rounded border-border" /></td>
-                    <td><div className="flex items-center gap-3"><Avatar name={c.name} src={c.avatarUrl} size="sm"/><button type="button" onClick={() => setOpenClan(c.id)} className="font-semibold text-brand-700 dark:text-brand-300 text-left hover:underline">{c.name}</button></div><p className="text-xs text-muted-foreground mt-1">{c.program?.name || 'No program'}{c.levelLabel ? ` · ${c.levelLabel}` : ''}</p>{c.tags?.length > 0 && <p className="mt-1 text-xs text-muted-foreground">{c.tags.slice(0,3).join(' · ')}{c.tags.length>3 ? ` +${c.tags.length-3}` : ''}</p>}</td>
+                    <td><div className="flex items-center gap-3"><ClanAvatar name={c.name} src={c.avatarUrl} size="sm"/><button type="button" onClick={() => setOpenClan(c.id)} className="font-semibold text-brand-700 dark:text-brand-300 text-left hover:underline">{c.name}</button></div><p className="text-xs text-muted-foreground mt-1">{c.program?.name || 'No program'}{c.levelLabel ? ` · ${c.levelLabel}` : ''}</p>{c.tags?.length > 0 && <p className="mt-1 text-xs text-muted-foreground">{c.tags.slice(0,3).join(' · ')}{c.tags.length>3 ? ` +${c.tags.length-3}` : ''}</p>}</td>
                     <td>{c.leadMentor ? `${c.leadMentor.firstName} ${c.leadMentor.lastName}` : <span className="text-amber-700 dark:text-amber-300">Needs a lead mentor</span>}</td>
                     <td className="tabular-nums">{n.mentees}</td><td className="tabular-nums">{n.mentors}</td>
                     <td><span className={`rounded-full px-2.5 py-1 text-xs font-medium whitespace-nowrap ${c.publicJoinAllowed ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-muted text-muted-foreground'}`}>{c.publicJoinAllowed ? c.publicJoinEnabled ? 'Link active' : 'Allowed' : 'Closed'}</span></td>

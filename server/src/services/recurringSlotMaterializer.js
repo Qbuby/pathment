@@ -1,9 +1,35 @@
+const { Op } = require('sequelize');
 const { models, sequelize } = require('../db');
 const { TASK_TYPES } = require('../utils/taskSchedule');
 const { zonedWallClockToUtc } = require('../utils/timezone');
 const { nextOccurrences } = require('../utils/reviewRecurrence');
+const { VISIBLE_MEMBERSHIP_STATUSES, CLAN_ROLE_RANK } = require('../config/membership');
 
-const HORIZON_DAYS = 14;
+/**
+ * How far ahead a repeat is allowed to materialise. Was 14 days, which for a
+ * weekday repeat is ten tasks in somebody's list before they have done the
+ * first one. A week is enough to plan around and small enough to be wrong
+ * about.
+ */
+const HORIZON_DAYS = 7;
+
+/**
+ * How many past-due, never-submitted occurrences of the SAME repeat may be
+ * outstanding before the repeat stops producing new ones.
+ *
+ * A repeat is a standing instruction, not a licence to pile up. Somebody who
+ * stopped submitting for a month came back to twenty-two open "Tech talk"
+ * tasks, every one overdue - useless to them, and it buries the mentor's
+ * review queue under one mentee. Three is a fortnight of slack on a weekly
+ * repeat and still a short list to catch up on.
+ */
+const MAX_OVERDUE_OCCURRENCES = 3;
+
+/** Statuses that mean the mentee has not handed this occurrence in yet. */
+const UNSUBMITTED_STATUSES = ['assigned', 'not_started', 'in_progress', 'revision_needed'];
+
+/** Clan roles that can own an occurrence on a mentee's behalf. */
+const MENTOR_CLAN_ROLES = ['lead_mentor', 'core_team', 'co_mentor'];
 
 class RecurringSlotMaterializer {
   /**
@@ -102,7 +128,102 @@ class RecurringSlotMaterializer {
     });
   }
 
+  /**
+   * Who the occurrence is assigned BY.
+   *
+   * `taskService._isMentorForMentee` refuses when the mentor and the mentee are
+   * the same person, and it is right to: a co-mentor of the clan they also
+   * learn in matches every clan check below it, so without that line they could
+   * assign their own work and then review it. That check stays exactly as it is.
+   *
+   * What it was never meant to judge is a SCHEDULER acting on a repeat somebody
+   * set earlier. Core team members are precisely the overlapping case -
+   * `co_mentor` and `mentee` in one standing clan - so when such a person put a
+   * repeat on their own task, every occurrence this file computed was refused
+   * with "You are not the mentor for this mentee", hourly, into the log and
+   * nowhere a human would look. Fourteen refusals in a single tick on
+   * production, and a mentor UI still cheerfully reading "Repeats every
+   * weekday".
+   *
+   * So the scheduler stops asking the guard to approve a self-assignment and
+   * names a real mentor instead: the clan's lead, or the most senior other
+   * mentor in it. A clan with nobody but the mentee has no honest answer, and
+   * the slot is skipped with a reason rather than failing once per occurrence
+   * for ever.
+   */
+  async _responsibleMentorId(menteeId, mentorId, clanId) {
+    if (mentorId && mentorId !== menteeId) return mentorId;
+    if (!clanId) return null;
+
+    const clan = await models.Clan.findByPk(clanId, { attributes: ['leadMentorId'] });
+    if (clan?.leadMentorId && clan.leadMentorId !== menteeId) return clan.leadMentorId;
+
+    const rows = await models.ClanMembership.findAll({
+      where: {
+        clanId,
+        userId: { [Op.ne]: menteeId },
+        status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES },
+        role: { [Op.in]: MENTOR_CLAN_ROLES },
+      },
+      attributes: ['userId', 'role'],
+    });
+    const senior = [...rows].sort(
+      (a, b) => (CLAN_ROLE_RANK[b.role] ?? -1) - (CLAN_ROLE_RANK[a.role] ?? -1)
+    )[0];
+    return senior?.userId || null;
+  }
+
+  /**
+   * Tell the mentor once that a repeat has stopped for a backlog.
+   *
+   * Written straight to the table rather than through notificationOrchestrator
+   * because that dedupes on (type, relatedEntity) with no time window at all:
+   * routed through it, a mentee who falls behind again in three months would
+   * be silently skipped, for ever, on the strength of one notice from today.
+   * A week is the right memory for this. In-app only on purpose - a paused
+   * repeat is worth seeing, not worth an email.
+   */
+  async _noteBacklog(menteeId, mentorId, overdueCount, title) {
+    if (!mentorId || mentorId === menteeId || !models.Notification) return;
+    const since = new Date(Date.now() - 7 * 86400000);
+    const already = await models.Notification.findOne({
+      where: {
+        userId: mentorId,
+        type: 'task',
+        relatedEntityType: 'recurring_backlog',
+        relatedEntityId: menteeId,
+        createdAt: { [Op.gte]: since },
+      },
+      attributes: ['id'],
+    });
+    if (already) return;
+
+    const mentee = await models.User.findByPk(menteeId, { attributes: ['firstName', 'lastName'] });
+    const name = mentee ? `${mentee.firstName || ''} ${mentee.lastName || ''}`.trim() : 'A mentee';
+    await models.Notification.create({
+      userId: mentorId,
+      type: 'task',
+      audience: 'mentor',
+      title: 'A repeating task has paused',
+      message: `${name || 'A mentee'} has ${overdueCount} overdue "${title}" tasks, so no new ones are being created until they catch up.`,
+      actionUrl: `/mentor/mentees/${menteeId}`,
+      actionLabel: 'Open mentee',
+      relatedEntityType: 'recurring_backlog',
+      relatedEntityId: menteeId,
+      status: 'unread',
+    });
+  }
+
   async _materialize(menteeId, mentorId, slotId, recConfig, clanId = null) {
+    const clan = clanId && await models.Clan.findByPk(clanId);
+    if (clan?.kind !== 'standing' && clan?.frozenAt) return { createdForSlot: 0, updatedForSlot: 0 };
+
+    const assigningMentorId = await this._responsibleMentorId(menteeId, mentorId, clanId);
+    if (!assigningMentorId) {
+      console.warn(`[recurringSlotMaterializer] Slot ${slotId} for mentee ${menteeId} has no mentor other than the mentee; skipping`);
+      return { createdForSlot: 0, updatedForSlot: 0, skipped: 'no-mentor' };
+    }
+
     const taskService = require('./taskService');
     const now = new Date();
     const horizon = new Date(now.getTime() + HORIZON_DAYS * 86400000);
@@ -142,6 +263,39 @@ class RecurringSlotMaterializer {
 
     if (occurrences.length === 0) {
       return { createdForSlot, updatedForSlot };
+    }
+
+    /**
+     * Backpressure. Past-due occurrences of THIS repeat that were never handed
+     * in are counted, and once there are too many the repeat stops producing.
+     * Nothing already created is cancelled and nothing is lost: the count is
+     * recomputed every tick, so the moment they submit, the next occurrence
+     * appears by itself.
+     *
+     * Only PAST-DUE ones count. A repeat is allowed to run a week ahead (see
+     * HORIZON_DAYS) and those are not late yet, so a mentee keeping up is never
+     * throttled by work they have not reached.
+     *
+     * Existing occurrences are still refreshed below while a repeat is paused -
+     * the date or title may have changed, and an occurrence someone can see
+     * should be correct whether or not a new one is due.
+     */
+    const overdueOpen = await models.AssignedTask.count({
+      where: {
+        menteeId,
+        scheduleSlotId: slotId,
+        status: { [Op.in]: UNSUBMITTED_STATUSES },
+        dueDate: { [Op.lt]: new Date(new Date().toISOString().split('T')[0]) },
+      },
+    });
+    const pausedForBacklog = overdueOpen >= MAX_OVERDUE_OCCURRENCES;
+    if (pausedForBacklog) {
+      await this._noteBacklog(
+        menteeId,
+        assigningMentorId,
+        overdueOpen,
+        String(recConfig.title || '').trim() || 'Scheduled Task'
+      );
     }
 
     // Batch-fetch all existing tasks for this slot + occurrence dates
@@ -198,6 +352,8 @@ class RecurringSlotMaterializer {
         continue;
       }
 
+      if (pausedForBacklog) continue;
+
       try {
         await taskService.createCustomTask(
           {
@@ -212,7 +368,7 @@ class RecurringSlotMaterializer {
             clanId: clanId || undefined,
             skipNotification: true,
           },
-          mentorId
+          assigningMentorId
         );
         createdForSlot++;
       } catch (err) {
@@ -222,7 +378,7 @@ class RecurringSlotMaterializer {
       }
     }
 
-    return { createdForSlot, updatedForSlot };
+    return { createdForSlot, updatedForSlot, ...(pausedForBacklog ? { pausedForBacklog: overdueOpen } : {}) };
   }
 }
 

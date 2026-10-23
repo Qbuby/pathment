@@ -17,7 +17,8 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock,
-  Key
+  Key,
+  ShieldAlert
 } from 'lucide-react';
 import securityService, {
   // Session,
@@ -28,6 +29,9 @@ import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { validatePassword } from '@/lib/utils/validation';
 import { PasswordRequirements } from './PasswordRequirements';
 import { BackupCodesModal } from './BackupCodesModal';
+import { TablePagination } from './TablePagination';
+import { usePagination } from '@/lib/hooks/shared/usePagination';
+import { Spinner } from './LoadingSpinner';
 
 const formatDate = (dateString: string) => {
   return new Date(dateString).toLocaleDateString('en-US', {
@@ -352,6 +356,27 @@ export default function SecurityTab({ showAuditLogs = false }: SecurityTabProps)
   // const [sessions, setSessions] = useState<Session[]>([]);
   const [twoFactorStatus, setTwoFactorStatus] = useState<TwoFactorStatus | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  /**
+   * The access log is a searchable, paged read now.
+   *
+   * It used to fetch the newest fifty and drop them into a 384px scroll box:
+   * no search, no paging, and session heartbeats outnumbering everything a
+   * person actually did. Every one of those is a separate reason the screen
+   * could not answer "what happened to this account last Tuesday".
+   */
+  const [logSearch, setLogSearch] = useState('');
+  const [logQuery, setLogQuery] = useState('');
+  const [showBackground, setShowBackground] = useState(false);
+  /**
+   * The log drew a red "failed" badge and gave no way to ask for those rows,
+   * so finding a refused sign-in meant paging through every successful
+   * request around it — the one question a security log is opened to answer
+   * was the one it could not be asked. Same for "what happened yesterday".
+   */
+  const [onlyFailed, setOnlyFailed] = useState(false);
+  const [windowDays, setWindowDays] = useState<number | null>(null);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const logsPg = usePagination({ initialPage: 1, initialLimit: 20 });
   const [loading, setLoading] = useState(true);
   const [disabling2FA, setDisabling2FA] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
@@ -372,16 +397,39 @@ export default function SecurityTab({ showAuditLogs = false }: SecurityTabProps)
       // setSessions(sessionsData);
       setTwoFactorStatus(twoFactorData);
 
-      if (showAuditLogs) {
-        const logsData = await securityService.getAuditLogs();
-        setAuditLogs(logsData.logs);
-      }
+      // The log loads on its own, below, so searching or paging it does not
+      // re-fetch the 2FA status alongside.
+
     } catch (error) {
       console.error('Failed to load security data:', error);
     } finally {
       setLoading(false);
     }
   };
+
+  // Debounced so typing does not fire a request per keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => { setLogQuery(logSearch.trim()); logsPg.goToPage(1); }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logSearch]);
+
+  const logsPage = logsPg.page;
+  const logsLimit = logsPg.limit;
+  const setLogsTotal = logsPg.setTotal;
+  useEffect(() => {
+    if (!showAuditLogs) return;
+    let live = true;
+    setLogsLoading(true);
+    securityService
+      .getAuditLogs(logsLimit, (logsPage - 1) * logsLimit, {
+        search: logQuery, includeNoise: showBackground, onlyFailed, days: windowDays,
+      })
+      .then((data) => { if (!live) return; setAuditLogs(data.logs); setLogsTotal(data.total); })
+      .catch(() => { if (live) setAuditLogs([]); })
+      .finally(() => { if (live) setLogsLoading(false); });
+    return () => { live = false; };
+  }, [showAuditLogs, logsPage, logsLimit, logQuery, showBackground, onlyFailed, windowDays, setLogsTotal]);
 
   const handleChangePassword = async (
     currentPassword: string,
@@ -567,32 +615,112 @@ export default function SecurityTab({ showAuditLogs = false }: SecurityTabProps)
       {/* Admin Access Log Section */}
       {showAuditLogs && (
         <div className="space-y-3">
-          <h3 className="text-slate-900 font-semibold flex items-center gap-2">
-            <Clock className="w-5 h-5" />
-            Admin Access Log
-          </h3>
-          {auditLogs.length > 0 ? (
-            <div className="space-y-2 max-h-96 overflow-y-auto">
-              {auditLogs.map((log) => (
-                <div key={log.id} className="p-3 border border-slate-200 rounded-lg">
-                  <div className="flex items-start justify-between gap-3 mb-0.5">
-                    <p className="text-slate-900 font-medium">{log.label || log.action}</p>
-                    <span className="text-xs text-slate-500 shrink-0">{formatDate(log.createdAt)}</span>
-                  </div>
-                  {(log.summary || log.target) && (
-                    <p className="text-sm text-slate-600">{log.summary || log.target}</p>
-                  )}
-                  {(log.ipAddress || log.device) && (
-                    <p className="text-xs text-slate-400 mt-1">
-                      {[log.ipAddress && `IP ${log.ipAddress}`, log.device].filter(Boolean).join(' · ')}
-                    </p>
-                  )}
-                </div>
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h3 className="text-slate-900 font-semibold flex items-center gap-2">
+                <Clock className="w-5 h-5" />
+                Access log
+              </h3>
+              <p className="mt-0.5 text-sm text-slate-500">
+                What this account did, newest first. Search by what happened, by area, or by IP.
+              </p>
+            </div>
+            <label className="inline-flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+              <input
+                type="checkbox"
+                checked={showBackground}
+                onChange={(e) => { setShowBackground(e.target.checked); logsPg.goToPage(1); }}
+                className="rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+              />
+              Include background activity
+            </label>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              value={logSearch}
+              onChange={(e) => setLogSearch(e.target.value)}
+              placeholder="Search the log — e.g. clan, sign in, 223.123."
+              aria-label="Search the access log"
+              className="min-w-56 flex-1 rounded-xl border border-slate-200 bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-slate-700"
+            />
+            {/* A window in whole days, because that is how the question gets
+                asked out loud: "anything odd yesterday?" */}
+            <div className="inline-flex rounded-xl border border-slate-200 p-0.5 dark:border-slate-700">
+              {([[null, 'All time'], [1, '24h'], [7, '7d'], [30, '30d']] as const).map(([value, label]) => (
+                <button
+                  key={label}
+                  type="button"
+                  aria-pressed={windowDays === value}
+                  onClick={() => { setWindowDays(value); logsPg.goToPage(1); }}
+                  className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                    windowDays === value
+                      ? 'bg-brand-600 text-white'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                >
+                  {label}
+                </button>
               ))}
             </div>
+            <button
+              type="button"
+              aria-pressed={onlyFailed}
+              onClick={() => { setOnlyFailed((v) => !v); logsPg.goToPage(1); }}
+              className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${
+                onlyFailed
+                  ? 'border-red-300 bg-red-50 text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300'
+                  : 'border-slate-200 text-slate-600 hover:text-slate-900 dark:border-slate-700 dark:text-slate-300'
+              }`}
+            >
+              <ShieldAlert className="h-3.5 w-3.5" aria-hidden />
+              Failed only
+            </button>
+          </div>
+
+          {logsLoading ? (
+            <div className="flex justify-center py-10"><Spinner /></div>
+          ) : auditLogs.length > 0 ? (
+            <>
+              <ul className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 dark:divide-slate-800 dark:border-slate-700">
+                {auditLogs.map((log) => (
+                  <li key={log.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-3">
+                    <p className="min-w-0 flex-1 text-sm font-medium text-slate-900 dark:text-slate-100">
+                      {log.label || log.action}
+                      {/* A request that did not succeed is the single most
+                          useful thing in an access log and was invisible. */}
+                      {log.failed && (
+                        <span className="ml-2 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-600 dark:bg-red-500/15 dark:text-red-300">
+                          failed{log.status ? ` · ${log.status}` : ''}
+                        </span>
+                      )}
+                      {log.noise && (
+                        <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                          background
+                        </span>
+                      )}
+                    </p>
+                    <span className="shrink-0 text-xs text-slate-500">{formatDate(log.createdAt)}</span>
+                    <p className="w-full text-xs text-slate-500 dark:text-slate-400">
+                      {[log.summary, log.target, log.device, log.ipAddress && `IP ${log.ipAddress}`]
+                        .filter(Boolean).join(' · ')}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+              <TablePagination pagination={logsPg} />
+            </>
           ) : (
-            <div className="p-4 bg-slate-50 rounded-lg text-slate-600 text-center">
-              No access logs found
+            <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500 dark:border-slate-700">
+              {/* Say which filter emptied it, or the page reads as "no data". */}
+              {logQuery || onlyFailed || windowDays
+                ? <>
+                    Nothing{onlyFailed ? ' failed' : ''}
+                    {logQuery ? <> matching &ldquo;{logQuery}&rdquo;</> : ''}
+                    {windowDays ? ` in the last ${windowDays === 1 ? '24 hours' : `${windowDays} days`}` : ''}.
+                    {!showBackground && ' Background activity is hidden — tick the box above to include it.'}
+                  </>
+                : 'Nothing recorded for this account yet.'}
             </div>
           )}
         </div>

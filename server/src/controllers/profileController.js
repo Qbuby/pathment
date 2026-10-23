@@ -285,7 +285,7 @@ await user.update({
    */
   updateProfile = catchAsync(async (req, res) => {
     const userId = req.user.id;
-    const { firstName, lastName, bio, phone, profilePictureUrl, city, country, languages, timezone } = req.body;
+    const { firstName, lastName, bio, phone, profilePictureUrl, city, country, countryCode, region, languages, timezone } = req.body;
 
     // Phone (optional) must look like a real phone, not free text.
     if (phone !== undefined && phone !== null && String(phone).trim()) {
@@ -309,6 +309,11 @@ await user.update({
       profilePictureUrl: profilePictureUrl !== undefined ? profilePictureUrl : user.profilePictureUrl,
       city: city !== undefined ? city : user.city,
       country: country !== undefined ? country : user.country,
+      // Upper-cased so the stored key matches the dataset whatever the client sends.
+      countryCode: countryCode !== undefined
+        ? (countryCode ? String(countryCode).trim().toUpperCase().slice(0, 2) : null)
+        : user.countryCode,
+      region: region !== undefined ? (region || null) : user.region,
       languages: Array.isArray(languages)
         ? languages.map((l) => String(l).trim()).filter(Boolean)
         : user.languages

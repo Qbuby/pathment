@@ -395,7 +395,7 @@ export function InterviewKitDrawer({
       }
     >
       {loading ? (
-        <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-slate-300" /></div>
+        <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-brand-600" /></div>
       ) : (
         <div className="space-y-6">
           {/* Meta */}

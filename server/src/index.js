@@ -138,21 +138,6 @@ async function start() {
     await sequelize.authenticate();
     console.log('✓ Database connection established successfully');
 
-    // Bootstrap default badges once on startup (idempotent findOrCreate).
-    if (process.env.GAMIFICATION_BOOTSTRAP_DISABLED !== 'true') {
-      try {
-        const gamificationService = require('./services/gamificationService');
-        let badgeCount = 0;
-        await require('./utils/workspaceExecution').forEachWorkspace(async () => {
-          badgeCount += await gamificationService.createDefaultBadges();
-        });
-        console.log(`✓ Gamification badges verified: ${badgeCount}`);
-      } catch (bootstrapError) {
-        // Do not block API startup because badges can also be initialized via admin endpoint.
-        console.warn('⚠ Gamification bootstrap skipped:', bootstrapError.message);
-      }
-    }
-
     // Sync models (use migrations in production)
     // Commented out for now - use migrations instead
     // if (process.env.NODE_ENV === 'development') {
@@ -182,8 +167,14 @@ async function start() {
     if (process.env.CERTIFICATE_WORKER_DISABLED !== 'true') {
       require('./workers/certificateWorker').start();
     }
+
     if (process.env.NOTIFICATION_SCHEDULER_DISABLED !== 'true') {
       notificationScheduler.start();
+    }
+
+    // Pull progress for open course enrollments (Buildment) every 15 minutes.
+    if (process.env.COURSE_SYNC_DISABLED !== 'true') {
+      require('./workers/courseSyncWorker').start();
     }
 
     server.listen(PORT, () => {

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useClan, ALL_CLANS } from '@/lib/context/ClanContext';
+import { useClan, ALL_CLANS, isMentorWriteLockedForClan } from '@/lib/context/ClanContext';
 import { toast } from 'sonner';
 import {
   ClipboardCheck, CheckCircle2, Clock, Loader2, ChevronRight, CalendarClock, Check, X,
@@ -48,7 +48,13 @@ type Tab = 'review' | 'changes' | 'extensions' | 'reviewed';
 export default function MentorApprovals() {
   const { queue, changesRequested, reviewed, hiddenByClan, loading, error, refetch, bulkReview, handleExtension } = useMentorApprovals();
   const { clans, activeClanId, setActiveClanId } = useClan();
-  const activeClanName = clans.find((c) => c.id === activeClanId)?.name ?? null;
+  const activeClan = clans.find((c) => c.id === activeClanId) ?? null;
+  const activeClanName = activeClan?.name ?? null;
+  // All clans: lock per task clan (Standee writable, frozen cohort not).
+  // Specific clan: whole page follows that clan's historical state.
+  const itemLocked = (item: { clan?: { id: string } | null }) =>
+    isMentorWriteLockedForClan(clans, activeClanId, item.clan?.id ?? null);
+  const HISTORICAL_TITLE = 'Completed programs are read-only';
   const [tab, setTab] = useState<Tab>('review');
   // Task-type filter, shared across every tab (assignment / quiz / interview / …).
   const [typeFilter, setTypeFilter] = useState('all');
@@ -219,6 +225,17 @@ export default function MentorApprovals() {
     () => queue.filter((q) => selected.has(q.submissionId) && isBulkable(q)),
     [queue, selected]
   );
+  const nextWritable = filteredReview.find((i) => !itemLocked(i)) ?? null;
+  const selectedAllWritable = selectedItems.length > 0 && selectedItems.every((i) => !itemLocked(i));
+  const reviewingLocked = reviewing ? itemLocked(reviewing) : false;
+
+  // "Next" in the review drawer walks the To-review list in the order it is
+  // shown. Interviews and quizzes open their own drawers, so they are skipped.
+  const reviewOrder = useMemo(
+    () => (groupByTask ? groups.flatMap((g) => g.items) : filteredReview).filter((i) => i.type !== 'interview' && i.type !== 'quiz'),
+    [groupByTask, groups, filteredReview]
+  );
+  const reviewingIndex = reviewing ? reviewOrder.findIndex((i) => i.submissionId === reviewing.submissionId) : -1;
 
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -362,10 +379,11 @@ export default function MentorApprovals() {
         </div>
         {tab === 'review' && (
           <div className="flex flex-wrap gap-2">
-          {filteredReview.length > 0 && <button onClick={() => setReviewing(filteredReview[0])} className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-700"><ChevronRight className="h-4 w-4" />Review next</button>}
+          {nextWritable && <button onClick={() => setReviewing(nextWritable)} className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"><ChevronRight className="h-4 w-4" />Review next</button>}
           <button
             onClick={() => setBulkOpen(true)}
-            disabled={selected.size === 0}
+            disabled={!selectedAllWritable}
+            title={!selectedAllWritable && selectedItems.length > 0 ? HISTORICAL_TITLE : undefined}
             className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-medium text-brand-700 hover:bg-muted transition-colors disabled:opacity-50 shrink-0"
           >
             <ClipboardCheck className="w-4 h-4" />
@@ -852,14 +870,16 @@ export default function MentorApprovals() {
                     <div className="flex items-center gap-2 mt-0.5">
                       <button
                         onClick={() => decideExtension(item, false)}
-                        disabled={busy}
+                        disabled={busy || itemLocked(item)}
+                        title={itemLocked(item) ? HISTORICAL_TITLE : undefined}
                         className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 text-sm text-slate-700 hover:border-red-300 hover:text-red-700 disabled:opacity-50"
                       >
                         <X className="w-4 h-4" /> Decline
                       </button>
                       <button
                         onClick={() => decideExtension(item, true)}
-                        disabled={busy}
+                        disabled={busy || itemLocked(item)}
+                        title={itemLocked(item) ? HISTORICAL_TITLE : undefined}
                         className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-brand-600 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
                       >
                         {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Approve
@@ -880,6 +900,7 @@ export default function MentorApprovals() {
           taskId={reviewing.taskId}
           onClose={() => setReviewing(null)}
           onFinalized={() => { setSelected(new Set()); refetch(); }}
+          readOnly={reviewingLocked}
         />
       )}
 
@@ -888,12 +909,24 @@ export default function MentorApprovals() {
           taskId={reviewing.taskId}
           onClose={() => setReviewing(null)}
           onReviewed={() => { setSelected(new Set()); refetch(); }}
+          readOnly={reviewingLocked}
         />
       )}
 
       {reviewing && reviewing.type !== 'interview' && reviewing.type !== 'quiz' && (
         <ReviewDrawer
           item={reviewing}
+          readOnly={reviewingLocked}
+          showMentee
+          next={reviewOrder.length > 1 && reviewingIndex >= 0 ? {
+            onClick: () => setReviewing(reviewOrder[reviewingIndex + 1] ?? reviewing),
+            disabled: reviewingIndex === reviewOrder.length - 1,
+            position: `${reviewingIndex + 1} of ${reviewOrder.length}`,
+          } : undefined}
+          prev={reviewOrder.length > 1 && reviewingIndex >= 0 ? {
+            onClick: () => setReviewing(reviewOrder[reviewingIndex - 1] ?? reviewing),
+            disabled: reviewingIndex === 0,
+          } : undefined}
           onClose={() => setReviewing(null)}
           onReviewed={() => { setSelected(new Set()); refetch(); }}
         />
@@ -909,6 +942,7 @@ export default function MentorApprovals() {
           onClose={() => setBulkOpen(false)}
           onReviewed={() => {}}
           onSubmit={runBulkReview}
+          readOnly={!selectedAllWritable}
         />
       )}
     </div>

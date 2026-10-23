@@ -6,13 +6,17 @@ import {
   matchesMentorPath,
 } from '@/lib/config/mentorWorkspaces';
 import { logicalPathname, workspacePath } from '@/lib/services/workspace-scope';
+import { useCoursesStatus } from '@/lib/hooks/shared';
 
 export function MentorWorkspaceTabs() {
   const pathname = logicalPathname(usePathname());
   const workspace = mentorWorkspaces.find((group) =>
     group.tabs.some((tab) => matchesMentorPath(pathname, tab.href)),
   );
+  const needsCourses = !!workspace?.tabs.some((tab) => 'requires' in tab && tab.requires === 'courses');
+  const { connected: coursesConnected } = useCoursesStatus(needsCourses);
   if (!workspace) return null;
+  const tabs = workspace.tabs.filter((tab) => !('requires' in tab) || tab.requires !== 'courses' || coursesConnected);
   return (
     <div className="mb-7">
       <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
@@ -22,7 +26,7 @@ export function MentorWorkspaceTabs() {
         aria-label={`${workspace.label} tools`}
         className="flex gap-1 overflow-x-auto rounded-2xl border border-border bg-card p-1.5"
       >
-        {workspace.tabs.map((tab) => (
+        {tabs.map((tab) => (
           <Link
             key={tab.href}
             href={workspacePath(tab.href)}

@@ -6,6 +6,8 @@ const notificationOrchestrator = require('./notificationOrchestrator');
 const { NOTIFICATION_EVENTS } = require('../config/notificationMatrix');
 const authzService = require('./authzService');
 const { PERMISSIONS } = require('../config/permissions');
+const submissionService = require('./submissionService');
+const clanLifecycleService = require('./clanLifecycleService');
 
 /**
  * InterviewSessionService — the candidate runner (Phase 2). Owns starting/resuming
@@ -15,10 +17,11 @@ const { PERMISSIONS } = require('../config/permissions');
  */
 class InterviewSessionService {
   /** Load the assignment + kit for a task, asserting the mentee owns it. */
-  async _loadContext(taskId, menteeId) {
-    const task = await models.AssignedTask.findByPk(taskId);
+  async _loadContext(taskId, menteeId, { clanId = null } = {}) {
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     if (task.menteeId !== menteeId) throw new ForbiddenError('This interview is not assigned to you');
+    if (clanId && task.clanId && task.clanId !== clanId) throw new NotFoundError('Task not found');
 
     const assignment = await models.InterviewAssignment.findOne({ where: { assignedTaskId: taskId } });
     if (!assignment) throw new NotFoundError('This task is not an interview');
@@ -53,8 +56,8 @@ class InterviewSessionService {
    * The candidate's view: kit meta + public questions + options + current attempt
    * state (whether they can start, resume an in-progress attempt, or are done).
    */
-  async getForCandidate(taskId, menteeId) {
-    const { task, assignment, kit, questions } = await this._loadContext(taskId, menteeId);
+  async getForCandidate(taskId, menteeId, { clanId = null } = {}) {
+    const { task, assignment, kit, questions } = await this._loadContext(taskId, menteeId, { clanId });
 
     // Interviewer identity: the mentor's kit config, defaulting the NAME to the
     // kit creator's own name (so it's "Meet <mentor>", not a generic persona).
@@ -145,6 +148,7 @@ class InterviewSessionService {
    */
   async startQuestion(sessionId, menteeId, questionId) {
     const session = await this._openSession(sessionId, menteeId);
+    await clanLifecycleService.assertTaskWritable(session.assignedTaskId);
     if (!questionId) throw new ValidationError('questionId is required');
 
     const question = await models.InterviewQuestion.findByPk(questionId);
@@ -179,8 +183,9 @@ class InterviewSessionService {
   }
 
   /** Start a fresh attempt or resume the in-progress one. Enforces retake rules. */
-  async startOrResume(taskId, menteeId) {
-    const { assignment } = await this._loadContext(taskId, menteeId);
+  async startOrResume(taskId, menteeId, { clanId = null } = {}) {
+    await clanLifecycleService.assertTaskWritable(taskId);
+    const { assignment } = await this._loadContext(taskId, menteeId, { clanId });
 
     const existing = await models.InterviewSession.findOne({
       where: { assignedTaskId: taskId, menteeId, status: 'in_progress' },
@@ -196,7 +201,7 @@ class InterviewSessionService {
     });
     if (latestSubmitted && (latestSubmitted.meta?.redoQuestionIds || []).length > 0) {
       await latestSubmitted.update({ status: 'in_progress' });
-      const task = await models.AssignedTask.findByPk(taskId);
+      const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
       if (task) await task.update({ status: 'in_progress' });
       return this._sessionShape(latestSubmitted);
     }
@@ -218,7 +223,8 @@ class InterviewSessionService {
     });
 
     // Mark the task in-progress the first time they begin.
-    await models.AssignedTask.update(
+    // withPoolWork: ownership was checked above, and pool work starts too.
+    await models.AssignedTask.scope('withPoolWork').update(
       { status: 'in_progress', startedAt: sequelize.literal('COALESCE(started_at, NOW())') },
       { where: { id: taskId, status: { [Op.in]: ['assigned', 'not_started'] } } }
     );
@@ -254,6 +260,7 @@ class InterviewSessionService {
    */
   async saveAnswer(sessionId, menteeId, questionId, payload = {}) {
     const session = await this._openSession(sessionId, menteeId);
+    await clanLifecycleService.assertTaskWritable(session.assignedTaskId);
     if (!questionId) throw new ValidationError('questionId is required');
 
     // During a mentor-requested redo, only the flagged questions may be re-answered.
@@ -306,6 +313,7 @@ class InterviewSessionService {
    *  just-submitted session too, so a background/retry upload isn't lost. */
   async attachAudio(sessionId, menteeId, questionId, file) {
     const session = await this._ownedSession(sessionId, menteeId);
+    await clanLifecycleService.assertTaskWritable(session.assignedTaskId);
     if (!questionId) throw new ValidationError('questionId is required');
     if (!file || !file.buffer) throw new ValidationError('No audio file received');
 
@@ -348,6 +356,7 @@ class InterviewSessionService {
   /** Append proctor events (focus-loss, fullscreen-exit, paste, snapshot refs). */
   async logProctorEvents(sessionId, menteeId, events = []) {
     const session = await this._openSession(sessionId, menteeId);
+    await clanLifecycleService.assertTaskWritable(session.assignedTaskId);
     if (!Array.isArray(events) || !events.length) return { logged: 0 };
     const clean = events
       .filter((e) => e && typeof e.type === 'string')
@@ -363,6 +372,7 @@ class InterviewSessionService {
    */
   async attachSnapshot(sessionId, menteeId, file, questionId = null) {
     const session = await this._openSession(sessionId, menteeId);
+    await clanLifecycleService.assertTaskWritable(session.assignedTaskId);
     if (!file || !file.buffer) throw new ValidationError('No snapshot received');
     const result = await uploadToCloudinary(file.buffer, 'pathment/interviews/snapshots', 'image');
     const meta = { url: result.secure_url, publicId: result.public_id };
@@ -381,6 +391,11 @@ class InterviewSessionService {
     }
   }
 
+  async _assertReviewerCanWrite(mentorId, task) {
+    await this._assertReviewer(mentorId, task);
+    await submissionService.assertClanWritableForReview(task?.clanId);
+  }
+
   /**
    * The mentor's review payload for an interview task: kit questions WITH their
    * reference answers, the candidate's latest submitted attempt (transcript /
@@ -389,7 +404,7 @@ class InterviewSessionService {
    * can see "what he said"); reviewer power is required for anyone else.
    */
   async getForReview(taskId, requesterId) {
-    const task = await models.AssignedTask.findByPk(taskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     const isOwnerMentee = task.menteeId === requesterId;
     if (!isOwnerMentee) await this._assertReviewer(requesterId, task);
@@ -499,9 +514,10 @@ class InterviewSessionService {
 
   /** Save a per-answer grade (mentor). Creates the answer row if the mentee skipped it. */
   async gradeAnswer(taskId, mentorId, questionId, { pointsAwarded, scoreNote } = {}) {
-    const task = await models.AssignedTask.findByPk(taskId);
+    await clanLifecycleService.assertTaskWritable(taskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
-    await this._assertReviewer(mentorId, task);
+    await this._assertReviewerCanWrite(mentorId, task);
 
     const session = await this._latestSubmittedSession(taskId);
     if (!session) throw new NotFoundError('No submitted interview to grade');
@@ -530,9 +546,10 @@ class InterviewSessionService {
   /** Delete the proctor snapshot images only (mentor). Strips them from the log
    *  and best-effort removes the files from Cloudinary; behavior flags are kept. */
   async deleteSnapshots(taskId, mentorId) {
-    const task = await models.AssignedTask.findByPk(taskId);
+    await clanLifecycleService.assertTaskWritable(taskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
-    await this._assertReviewer(mentorId, task);
+    await this._assertReviewerCanWrite(mentorId, task);
 
     const session = await this._latestSubmittedSession(taskId);
     if (!session) throw new NotFoundError('No interview session found');
@@ -554,9 +571,10 @@ class InterviewSessionService {
   /** Flag (or clear the flag on) an interview for follow-up (mentor). Stored on
    *  the session meta so it survives and is visible on the review. */
   async setFlag(taskId, mentorId, { flagged, reason } = {}) {
-    const task = await models.AssignedTask.findByPk(taskId);
+    await clanLifecycleService.assertTaskWritable(taskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
-    await this._assertReviewer(mentorId, task);
+    await this._assertReviewerCanWrite(mentorId, task);
 
     const session = await this._latestSubmittedSession(taskId);
     if (!session) throw new NotFoundError('No interview session found');
@@ -584,9 +602,10 @@ class InterviewSessionService {
    * independent of the full-retake setting.
    */
   async requestRedo(taskId, mentorId, { questionIds = [], note } = {}) {
-    const task = await models.AssignedTask.findByPk(taskId);
+    await clanLifecycleService.assertTaskWritable(taskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
-    await this._assertReviewer(mentorId, task);
+    await this._assertReviewerCanWrite(mentorId, task);
 
     const requested = [...new Set((questionIds || []).map(String))].filter(Boolean);
     if (requested.length === 0) throw new ValidationError('Select at least one question to redo.');
@@ -641,9 +660,10 @@ class InterviewSessionService {
    * answer; the mentor still decides.
    */
   async aiDraftAnswer(taskId, mentorId, questionId) {
-    const task = await models.AssignedTask.findByPk(taskId);
+    await clanLifecycleService.assertTaskWritable(taskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
-    await this._assertReviewer(mentorId, task);
+    await this._assertReviewerCanWrite(mentorId, task);
 
     // AI draft is mentor-initiated and runs on the mentor's OWN key, so it's
     // available whenever this is a real interview — not gated to the assign-time
@@ -718,9 +738,10 @@ class InterviewSessionService {
    * the mentor still sets the final score (the client applies these as drafts).
    */
   async aiDraftAll(taskId, mentorId, { questionIds } = {}) {
-    const task = await models.AssignedTask.findByPk(taskId);
+    await clanLifecycleService.assertTaskWritable(taskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
-    await this._assertReviewer(mentorId, task);
+    await this._assertReviewerCanWrite(mentorId, task);
 
     const assignment = await models.InterviewAssignment.findOne({ where: { assignedTaskId: taskId } });
     if (!assignment) throw new NotFoundError('This task is not an interview');
@@ -841,9 +862,10 @@ class InterviewSessionService {
    * fits the difficulty-based points economy.
    */
   async finalizeReview(taskId, mentorId, { overallNote } = {}) {
-    const task = await models.AssignedTask.findByPk(taskId);
+    await clanLifecycleService.assertTaskWritable(taskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
-    await this._assertReviewer(mentorId, task);
+    await this._assertReviewerCanWrite(mentorId, task);
 
     const session = await this._latestSubmittedSession(taskId);
     if (!session) throw new NotFoundError('No submitted interview to review');
@@ -855,7 +877,6 @@ class InterviewSessionService {
     const totalAwarded = answers.reduce((s, a) => s + (Number(a.pointsAwarded) || 0), 0);
     const pct = totalPossible > 0 ? (totalAwarded / totalPossible) * 100 : 0;
 
-    const submissionService = require('./submissionService');
     await submissionService.reviewSubmission(submissionId, mentorId, {
       decision: 'approved',
       isApproved: true,
@@ -874,7 +895,8 @@ class InterviewSessionService {
    */
   async submit(sessionId, menteeId) {
     const session = await this._openSession(sessionId, menteeId);
-    const task = await models.AssignedTask.findByPk(session.assignedTaskId);
+    await clanLifecycleService.assertTaskWritable(session.assignedTaskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(session.assignedTaskId);
     if (!task) throw new NotFoundError('Task not found');
 
     const answeredCount = await models.InterviewAnswer.count({ where: { sessionId } });
@@ -918,6 +940,11 @@ class InterviewSessionService {
 
       return { submissionId: submission.id, sessionId: session.id, version };
     }).then(async (out) => {
+      // Pool work → the pool's reviewers hear, not a mentor.
+      if (task.poolMemberId) {
+        await require('./poolWorkEvents').onSubmitted(task, { submissionId: out.submissionId, version: out.version, kind: 'interview' });
+        return out;
+      }
       // Notify the mentor — same deep link as normal submissions (Approvals + drawer).
       try {
         const submitter = await models.User.findByPk(menteeId, { attributes: ['firstName', 'lastName'] });

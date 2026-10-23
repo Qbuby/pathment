@@ -66,7 +66,7 @@ export default function MentorInterviewsPage() {
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-slate-300" /></div>
+        <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-brand-600" /></div>
       ) : kits.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-slate-200 p-12 text-center">
           <Mic className="w-10 h-10 text-slate-300 mx-auto mb-3" />

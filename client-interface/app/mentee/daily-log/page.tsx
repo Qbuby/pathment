@@ -11,7 +11,7 @@ import {
   Sun,
 } from "lucide-react";
 import { useDailyLog, useMenteeTasks } from "@/lib/hooks/mentee";
-import { useClan } from "@/lib/context/ClanContext";
+import { useClan, isHistoricalCohortClan } from "@/lib/context/ClanContext";
 import { scheduleApi, type ScheduleSlot } from "@/lib/services/schedule-api";
 
 function toKey(d: Date): string {
@@ -19,7 +19,12 @@ function toKey(d: Date): string {
 }
 
 export default function MenteeDailyLog() {
-  const { menteeActiveClanId } = useClan();
+  const { menteeClans, menteeActiveClanId } = useClan();
+  const historical = isHistoricalCohortClan(
+    menteeClans.find((c) => c.id === menteeActiveClanId),
+  );
+  const HISTORICAL_TITLE = "Completed programs are read-only";
+  const CLOSED_TITLE = "That day is closed — you can only log today";
   const { entries, loading, save } = useDailyLog();
   const { tasks } = useMenteeTasks();
 
@@ -47,6 +52,25 @@ export default function MenteeDailyLog() {
   }, []);
 
   const [activeKey, setActiveKey] = useState(days[0].key);
+  /**
+   * Earlier days are here to read, not to rewrite.
+   *
+   * This page used to invite the opposite — "Missed a day? Tap it and
+   * backfill" — and the server stored whatever date the browser sent, streak
+   * included. A log you can fill in afterwards measures nothing, and the gaps
+   * are the signal a mentor actually reads. The server decides the day now; so
+   * does this.
+   */
+  const isToday = activeKey === days[0].key;
+  const activeDay = days.find((d) => d.key === activeKey);
+  /** "Yesterday" reads better than "Oct 16"; a bare weekday ("thu") does not. */
+  const activeDayName = activeDay?.label === "Yesterday" ? "Yesterday" : activeDay?.sub;
+  const lockedBecause = historical
+    ? HISTORICAL_TITLE
+    : !isToday
+      ? CLOSED_TITLE
+      : null;
+  const locked = lockedBecause !== null;
   const entryByKey = useMemo(
     () => Object.fromEntries(entries.map((e) => [e.dateKey, e])),
     [entries],
@@ -110,10 +134,10 @@ export default function MenteeDailyLog() {
     });
 
   const onSave = async () => {
+    if (locked) return;
     try {
       setSaving(true);
       await save({
-        dateKey: activeKey,
         tasksDone: [...tasksDone],
         slotsDone: [...slotsDone],
         note: note.trim() || undefined,
@@ -131,7 +155,8 @@ export default function MenteeDailyLog() {
       <div className="mentee-page-heading">
         <h1 className="text-slate-900 mb-2">Daily log</h1>
         <p className="text-slate-600">
-          A quick end-of-day check-in. Missed a day? Tap it and backfill.
+          A quick end-of-day check-in. Earlier days are here to read — a day
+          closes when the day does, so the gaps mean something.
         </p>
       </div>
 
@@ -175,6 +200,13 @@ export default function MenteeDailyLog() {
         </div>
       ) : (
         <div className="bg-card rounded-3xl border border-border p-6 shadow-sm space-y-5">
+          {!isToday && !historical && (
+            <p className="rounded-xl bg-slate-50 px-3.5 py-2.5 text-sm text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
+              {activeDayName} is closed. You can read what you logged, but only
+              today can be written — that is what makes the gaps worth anything.
+            </p>
+          )}
+
           {/* Rituals / slots for this day */}
           {daySlots.length > 0 && (
             <div>
@@ -199,7 +231,9 @@ export default function MenteeDailyLog() {
                         type="checkbox"
                         checked={slotsDone.has(s.id)}
                         onChange={() => toggleSlot(s.id)}
-                        className="mt-0.5 w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                        disabled={locked}
+                        title={lockedBecause ?? undefined}
+                        className="mt-0.5 w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 disabled:opacity-50"
                       />
                       <span className="text-slate-400 text-xs w-20 shrink-0 pt-0.5">
                         {s.time}
@@ -258,7 +292,9 @@ export default function MenteeDailyLog() {
                     type="checkbox"
                     checked={tasksDone.has(t.id)}
                     onChange={() => toggle(t.id)}
-                    className="w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                    disabled={locked}
+                    title={lockedBecause ?? undefined}
+                    className="w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 disabled:opacity-50"
                   />
                   <span className="text-sm text-slate-700">{taskTitle(t)}</span>
                 </label>
@@ -276,15 +312,18 @@ export default function MenteeDailyLog() {
               value={note}
               onChange={(e) => setNote(e.target.value)}
               rows={3}
+              disabled={locked}
+              title={lockedBecause ?? undefined}
               placeholder="How did today go? Anything you got stuck on?"
-              className="w-full border border-slate-300 rounded-xl p-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="w-full border border-slate-300 rounded-xl p-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-50"
             />
           </div>
 
           <div className="flex justify-end">
             <button
               onClick={onSave}
-              disabled={saving}
+              disabled={saving || locked}
+              title={lockedBecause ?? undefined}
               className="px-5 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm font-medium inline-flex items-center gap-2 disabled:opacity-50"
             >
               {saving ? (

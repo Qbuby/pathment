@@ -4,6 +4,7 @@ const { NotFoundError, ValidationError } = require('../utils/errors/errorTypes')
 const { normalizeTaskSchedule } = require('../utils/taskSchedule');
 const linearRoadmapService = require('./linearRoadmapService');
 const { resolveMenteeClanId, listMenteeClans, clanScopedWhere } = require('./menteeClanScope');
+const clanLifecycleService = require('./clanLifecycleService');
 
 /**
  * scheduleTemplateService - reusable day-shape templates + per-mentee filled
@@ -59,7 +60,7 @@ class ScheduleTemplateService {
     return models.ScheduleTemplate.findAll({ where: { source: 'org' }, order: [['created_at', 'DESC']] });
   }
 
-  async createOrgTemplate(adminId, { name, description, blocks }) {
+  async createOrgTemplate(adminId, { name, description, blocks, menteeSelectable }) {
     if (!name || !name.trim()) throw new ValidationError('name is required');
     return models.ScheduleTemplate.create({
       name: name.trim(),
@@ -67,6 +68,9 @@ class ScheduleTemplateService {
       source: 'org',
       ownerMentorId: null,
       blocks: this._normalizeBlocks(blocks),
+      // Offered to mentees only when an admin says so. Some templates are the
+      // programme's shape and should only ever arrive from a mentor.
+      menteeSelectable: menteeSelectable === true,
       createdBy: adminId
     });
   }
@@ -77,6 +81,7 @@ class ScheduleTemplateService {
     if (updates.name !== undefined) t.name = updates.name;
     if (updates.description !== undefined) t.description = updates.description;
     if (updates.blocks !== undefined) t.blocks = this._normalizeBlocks(updates.blocks);
+    if (updates.menteeSelectable !== undefined) t.menteeSelectable = updates.menteeSelectable === true;
     await t.save();
     return t;
   }
@@ -161,6 +166,7 @@ class ScheduleTemplateService {
     for (const menteeId of menteeIds) {
       const resolvedClanId = await resolveMenteeClanId(menteeId, clanId, { actorId: assignedBy });
       if (!resolvedClanId) throw new ValidationError('Mentee has no clan membership to attach this schedule to');
+      await clanLifecycleService.assertClanWritable(resolvedClanId);
       let ms = await models.MenteeSchedule.findOne({ where: { menteeId, clanId: resolvedClanId } });
       if (!ms) {
         const memberships = await listMenteeClans(menteeId);
@@ -254,8 +260,9 @@ class ScheduleTemplateService {
 
   /** Fill/clear one slot: kind 'roadmap' (roadmapChain) | 'recurring' (recurring) | 'empty'. */
   async updateSlot(menteeId, slotId, patch, mentorId = null, clanId = null) {
-    const { ms } = await this._findSchedule(menteeId, clanId, mentorId);
+    const { ms, clanId: resolvedClanId } = await this._findSchedule(menteeId, clanId, mentorId);
     if (!ms) throw new NotFoundError('Mentee has no schedule assigned');
+    await clanLifecycleService.assertClanWritable(resolvedClanId);
     const schedule = Array.isArray(ms.schedule) ? ms.schedule : [];
     let idx = schedule.findIndex((s, i) => (s.id || slug(s.label) || `block-${i}`) === slotId);
     if (idx === -1 && /^(slot|block)-\d+$/.test(slotId)) {
@@ -317,9 +324,13 @@ class ScheduleTemplateService {
           startsOn,
           endsOn,
           dueOffsetDays,
-          intervalWeeks
+          intervalWeeks,
+          clanId: ms.clanId || null,
+          mentorId: mentorId || slot.recurring?.mentorId || ms.assignedBy || null,
         };
       }
+      // Keep materializer scoped to this schedule's clan (standing vs cohort).
+      if (slot.recurring) slot.recurring = { ...slot.recurring, clanId: ms.clanId || slot.recurring.clanId || null };
       slot.roadmapChain = [];
     } else if (slot.kind === 'empty') {
       slot.roadmapChain = [];
@@ -337,7 +348,9 @@ class ScheduleTemplateService {
     let chainStarted = null;
     if (slot.kind === 'roadmap' && mentorId && Array.isArray(slot.roadmapChain) && slot.roadmapChain.length) {
       try {
-        const started = await linearRoadmapService.startChainHead(mentorId, menteeId, slot.id, slot.roadmapChain, slot.startStep || 0);
+        const started = await linearRoadmapService.startChainHead(
+          mentorId, menteeId, slot.id, slot.roadmapChain, slot.startStep || 0, ms.clanId || clanId || null,
+        );
         if (started) chainStarted = slot.roadmapChain[0];
       } catch (_) { /* slot config still saved; start is best-effort */ }
     }
@@ -350,12 +363,33 @@ class ScheduleTemplateService {
    * shortcut: configure a block once, push it to all, then tweak individuals.
    * Returns { applied } (how many mentee schedules had the slot).
    */
-  async applySlotToAll(mentorId, slotId, patch, menteeIds = null) {
+  /**
+   * Push one block's contents to a whole roster.
+   *
+   * It now LEAVES ALONE anybody who has made that block their own, and says
+   * whose it skipped. Before, this overwrote every copy unconditionally: a
+   * mentee who had moved their deep-work block to the evening because they work
+   * evenings would find it back at 10am with no explanation and no way to tell
+   * it had happened. A mentor pushing an update to twenty people should not have
+   * to choose between keeping everyone in step and bulldozing the few who have
+   * adapted it — so they get both, plus the names.
+   *
+   * A mentee's OWN block is never touched either, whatever it is called. That
+   * one is not a copy of anything.
+   *
+   * `force: true` is the deliberate override, for when the point really is to
+   * reset everybody.
+   */
+  async applySlotToAll(mentorId, slotId, patch, menteeIds = null, { force = false } = {}) {
     const where = Array.isArray(menteeIds) && menteeIds.length
       ? { menteeId: menteeIds, assignedBy: mentorId }
       : { assignedBy: mentorId };
-    const schedules = await models.MenteeSchedule.findAll({ where });
+    const schedules = await models.MenteeSchedule.findAll({
+      where,
+      include: [{ model: models.User, as: 'mentee', attributes: ['id', 'firstName', 'lastName'], required: false }],
+    });
     let applied = 0;
+    const skipped = [];
     for (const ms of schedules) {
       const sched = Array.isArray(ms.schedule) ? ms.schedule : [];
       let idx = sched.findIndex((s, i) => (s.id || slug(s.label) || `block-${i}`) === slotId);
@@ -365,11 +399,23 @@ class ScheduleTemplateService {
       }
       if (idx === -1) continue;
 
-      const targetSlotId = sched[idx].id || slotId;
-      await this.updateSlot(ms.menteeId, targetSlotId, patch, mentorId);
+      const slot = sched[idx];
+      const theirs = slot.owner === 'mentee' || slot.editedByMentee === true;
+      if (theirs && !force) {
+        skipped.push({
+          menteeId: ms.menteeId,
+          name: [ms.mentee?.firstName, ms.mentee?.lastName].filter(Boolean).join(' ') || 'A mentee',
+          reason: slot.owner === 'mentee' ? 'their own block' : 'they changed this block',
+        });
+        continue;
+      }
+
+      const targetSlotId = slot.id || slotId;
+      // Pass each row's clanId so dual-clan mentees get the right schedule updated.
+      await this.updateSlot(ms.menteeId, targetSlotId, patch, mentorId, ms.clanId || null);
       applied += 1;
     }
-    return { applied };
+    return { applied, skipped };
   }
 
   /**

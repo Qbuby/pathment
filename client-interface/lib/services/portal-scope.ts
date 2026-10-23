@@ -1,4 +1,6 @@
 import { roleFromPathname, type NotificationRole } from '@/lib/utils/notification-audience';
+import { readClanChoice } from '@/lib/services/clan-choice';
+import { getUser } from '@/lib/services/token-store';
 
 /**
  * Which portal the user currently has open, sent with every request.
@@ -19,9 +21,6 @@ import { roleFromPathname, type NotificationRole } from '@/lib/utils/notificatio
  * user's real roles and a portal they do not hold resolves to nothing extra.
  */
 
-/** Must match ClanContext storage keys. Mentor and mentee workspaces are independent. */
-const MENTOR_CLAN_STORAGE_KEY = 'pathment-active-clan';
-const MENTEE_CLAN_STORAGE_KEY = 'pathment-active-mentee-clan';
 const ALL_CLANS = 'all';
 
 export const PORTAL_ROLE_HEADER = 'X-Portal-Role';
@@ -50,14 +49,14 @@ function currentClanId(): string | null {
    */
   if (role === 'admin') return null;
 
-  try {
-    const key = role === 'mentee' ? MENTEE_CLAN_STORAGE_KEY : MENTOR_CLAN_STORAGE_KEY;
-    const saved = window.localStorage.getItem(key);
-    return saved && saved !== ALL_CLANS ? saved : null;
-  } catch {
-    // Private mode / blocked storage: no clan filter is a fine answer.
-    return null;
-  }
+  // The choice is stored per account, so the header needs to know whose it is.
+  // No signed-in user means no clan to narrow by — which is the right answer
+  // for the public and auth routes that reach this before a session exists.
+  const userId = getUser<{ id?: string }>()?.id ?? null;
+  if (!userId) return null;
+
+  const saved = readClanChoice(role === 'mentee' ? 'mentee' : 'mentor', userId);
+  return saved && saved !== ALL_CLANS ? saved : null;
 }
 
 /** Headers describing the current portal. Empty on the server or a neutral page. */

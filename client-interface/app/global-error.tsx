@@ -8,7 +8,10 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
   return (
     <html lang="en">
       <body>
-        <ErrorView error={error} reset={reset} home="/" title="The app hit a snag" />
+        {/* No `title` override: ErrorView reads the error and says the most
+            specific true thing — "You are offline" and "Your session ended"
+            are both more useful than any headline this file could pick. */}
+        <ErrorView error={error} reset={reset} home="/" />
       </body>
     </html>
   );

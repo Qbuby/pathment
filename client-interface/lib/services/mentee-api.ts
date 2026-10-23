@@ -9,6 +9,8 @@ export interface TaskProgressEntry {
   minutesSpent: number | null;
   loggedAt: string;
   updatedAt: string;
+  /** Filled in after the fact rather than written on the day. Shown, not hidden. */
+  addedLate: boolean;
 }
 
 export interface TaskProgressDay {
@@ -21,6 +23,10 @@ export interface TaskProgressDay {
 
 export interface TaskProgress {
   days: TaskProgressDay[];
+  /** Whether the mentee may still write here. False once the task is with the mentor. */
+  canLog: boolean;
+  /** Why not, in words a mentee can read. Null while the log is open. */
+  closedBecause: string | null;
   summary: {
     loggedDays: number;
     elapsedDays: number;
@@ -32,9 +38,13 @@ export interface TaskProgress {
 }
 
 export const menteeApi = {
-  getAll: (filters?: { search?: string; page?: number; limit?: number }) => {
+  getAll: (filters?: { search?: string; page?: number; limit?: number; programId?: string; clanId?: string }) => {
     const params = new URLSearchParams();
     if (filters?.search) params.append('search', filters.search);
+    // Narrowing only: the server intersects these with what the caller may
+    // already see, so naming a programme cannot widen anything.
+    if (filters?.programId) params.append('programId', filters.programId);
+    if (filters?.clanId) params.append('clanId', filters.clanId);
     if (filters?.page) params.append('page', String(filters.page));
     if (filters?.limit) params.append('limit', String(filters.limit));
     const qs = params.toString();
@@ -50,7 +60,9 @@ export const menteeApi = {
 
   // Daily check-in log.
   getDailyLog: () => apiClient.get('/mentee/daily-log'),
-  saveDailyLog: (data: { dateKey: string; tasksDone: string[]; slotsDone?: string[]; note?: string }) =>
+  // No date: the server decides which day this is, from the mentee's own
+  // timezone. A client-supplied one used to be stored verbatim, streak and all.
+  saveDailyLog: (data: { tasksDone: string[]; slotsDone?: string[]; note?: string }) =>
     apiClient.post('/mentee/daily-log', data),
 
   // ── Day-by-day progress on ONE task ──────────────────────────────────────
@@ -58,8 +70,11 @@ export const menteeApi = {
   // work done where the work actually happens.
   getTaskProgress: (taskId: string) =>
     apiClient.get<{ data: TaskProgress }>(`/mentee/tasks/${taskId}/progress`),
-  logTaskProgress: (taskId: string, note: string, minutesSpent?: number) =>
-    apiClient.post<{ data: { entry: TaskProgressEntry } }>(`/mentee/tasks/${taskId}/progress`, { note, minutesSpent }),
+  /** `dateKey` fills in a day that was missed; omit it and the server writes today. */
+  logTaskProgress: (taskId: string, note: string, opts?: { minutesSpent?: number; dateKey?: string }) =>
+    apiClient.post<{ data: { entry: TaskProgressEntry } }>(`/mentee/tasks/${taskId}/progress`, {
+      note, minutesSpent: opts?.minutesSpent, dateKey: opts?.dateKey,
+    }),
   removeTaskProgress: (taskId: string, dateKey: string) =>
     apiClient.delete(`/mentee/tasks/${taskId}/progress/${dateKey}`),
 

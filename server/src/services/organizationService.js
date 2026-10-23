@@ -2,16 +2,29 @@ const { Op } = require('sequelize');
 const { models, sequelize } = require('../db');
 const { getRequestContext } = require('../utils/auditContext');
 const { NotFoundError, ForbiddenError, ValidationError, ConflictError } = require('../utils/errors/errorTypes');
+const AppError = require('../utils/errors/AppError');
+const { orgLogoThumb } = require('../utils/imageUrl');
+const authz = require('./authzService');
+const { PERMISSIONS } = require('../config/permissions');
+const {
+  uploadToCloudinary,
+  deleteFromCloudinary,
+  extractPublicId,
+} = require('../utils/cloudinaryUpload');
 
 const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const RESERVED_SLUGS = new Set(['pathment', 'www', 'app', 'api', 'links', 'meet', 'staging', 'status', 'support', 'admin', 'mail', 'cdn', 'assets']);
+const LOGO_FOLDER = 'pathment/org-logos';
+const LOGO_MIME = ['image/png', 'image/jpeg'];
+const LOGO_MAX_BYTES = 5 * 1024 * 1024;
 
 const serializeOrganization = (organization, membership = null) => ({
   id: organization.id,
   name: organization.name,
   slug: organization.slug,
   status: organization.status,
-  logoUrl: organization.logoUrl || null,
+  // CDN thumb for UI; DB keeps the original upload URL.
+  logoUrl: orgLogoThumb(organization.logoUrl || null) || null,
   primaryColor: organization.primaryColor,
   timezone: organization.timezone,
   settings: organization.settings || {},
@@ -23,12 +36,19 @@ class OrganizationService {
     return process.env.MULTI_TENANT_WORKSPACES_ENABLED === 'true';
   }
 
+  organizationSignupEnabled() {
+    // First-workspace signup and additional-workspace creation are separate
+    // product decisions. The old rollout switch must not dead-end a new company.
+    return process.env.PUBLIC_ORGANIZATION_SIGNUP_ENABLED !== 'false';
+  }
+
   assertWorkspaceAvailable(organization) {
     if (!organization) throw new NotFoundError('Organization not found');
     if (['suspended', 'archived'].includes(organization.status)) {
       throw new ForbiddenError('This workspace is unavailable');
     }
-    if (!this.workspaceCreationEnabled() && organization.slug !== this.defaultSlug() &&
+    const isPublicSignup = organization.settings?.onboardingSource === 'public_signup';
+    if (!this.workspaceCreationEnabled() && !isPublicSignup && organization.slug !== this.defaultSlug() &&
         !require('../utils/stagingWorkspaceDemo').isDemo(organization)) {
       throw new ForbiddenError('Additional workspaces are not available during the workspace rollout');
     }
@@ -92,8 +112,8 @@ class OrganizationService {
     return rows.map(row => serializeOrganization(row.organization, row));
   }
 
-  async create(userId, input = {}) {
-    if (!this.workspaceCreationEnabled()) {
+  async create(userId, input = {}, options = {}) {
+    if (!this.workspaceCreationEnabled() && !options.allowInitialWorkspace) {
       throw new ForbiddenError('Workspace creation is not available during the workspace rollout');
     }
     const name = String(input.name || '').trim();
@@ -103,15 +123,17 @@ class OrganizationService {
     catch { throw new ValidationError('Choose a valid IANA timezone'); }
     if (name.length < 2 || name.length > 160) throw new ValidationError('Organization name must be between 2 and 160 characters');
     if (!slug) throw new ValidationError('Workspace URL must use lowercase letters, numbers, and single hyphens');
-    if (await models.Organization.findOne({ where: { slug }, skipOrganizationScope: true })) {
+    if (await models.Organization.findOne({ where: { slug }, skipOrganizationScope: true, transaction: options.transaction })) {
       throw new ConflictError('That workspace URL is already in use');
     }
 
-    const { sequelize } = require('../db');
-    return sequelize.transaction(async (transaction) => {
+    const createInTransaction = async (transaction) => {
       const plan = await models.Plan.findOne({ where: { key: 'starter', active: true }, transaction });
       if (!plan) throw new NotFoundError('Starter plan is not configured');
-      const organization = await models.Organization.create({ name, slug, timezone, status: 'active', createdBy: userId }, { transaction });
+      const organization = await models.Organization.create({
+        name, slug, timezone, status: 'active', createdBy: userId,
+        ...(options.allowInitialWorkspace ? { settings: { onboardingSource: 'public_signup' } } : {}),
+      }, { transaction });
       const membership = await models.OrganizationMembership.create({
         organizationId: organization.id, userId, role: 'owner', status: 'active', joinedAt: new Date(),
       }, { transaction, skipOrganizationScope: true });
@@ -122,10 +144,14 @@ class OrganizationService {
         organizationId: organization.id, organizationSlug: organization.slug, userId,
       }, async () => {
         await models.AdminProfile.create({ userId }, { transaction });
-        await require('./gamificationService').createDefaultBadges({ transaction });
       });
       return serializeOrganization(organization, membership);
-    }).catch(error => {
+    };
+
+    const operation = options.transaction
+      ? createInTransaction(options.transaction)
+      : sequelize.transaction(createInTransaction);
+    return operation.catch(error => {
       if (error.name === 'SequelizeUniqueConstraintError' &&
           (error.fields?.slug !== undefined || error.errors?.some(item => item.path === 'slug'))) {
         throw new ConflictError('That workspace URL is already in use');
@@ -138,7 +164,13 @@ class OrganizationService {
     const membership = await models.OrganizationMembership.findOne({
       where: { userId, organizationId, status: 'active' },
     });
-    if (!membership) throw new ForbiddenError('You do not have access to this organization');
+    if (!membership) {
+      throw new AppError(
+        'You no longer have access to this workspace. Choose one of your available workspaces.',
+        403,
+        'WORKSPACE_ACCESS_DENIED'
+      );
+    }
     return membership;
   }
 
@@ -148,6 +180,15 @@ class OrganizationService {
     const organization = await models.Organization.findByPk(id);
     if (!organization) throw new NotFoundError('Organization not found');
     return { organization: serializeOrganization(organization, membership), membership };
+  }
+
+  async assertCanManage(user, organizationId) {
+    if (!user?.id) throw new ForbiddenError('Organization admin access is required');
+    const membership = await this.assertMembership(user.id, organizationId);
+    if (!(await authz.can(user, PERMISSIONS.SYSTEM_SETTINGS))) {
+      throw new ForbiddenError('Organization admin access is required');
+    }
+    return membership;
   }
 
   async subscription(organizationId, options = {}) {
@@ -160,20 +201,48 @@ class OrganizationService {
     });
     if (!subscription) throw new NotFoundError('Organization subscription not found');
     const plan = subscription.plan?.toJSON() || {};
+    const published = plan.limits || {};
+    const limits = { ...published, ...(subscription.overrides?.limits || {}) };
+
+    /**
+     * Say WHICH limits this workspace has had changed for it.
+     *
+     * The settings page reads the effective limits for the usage bars and the
+     * plan's own published limits for the plan cards, which is correct and
+     * reads as a contradiction: an overridden workspace saw "1089 / Unlimited"
+     * above a Growth card promising 1500 members, with nothing on the page
+     * explaining how both could be true. An admin can only conclude the
+     * numbers are broken.
+     *
+     * A key appears here only when the effective value actually differs from
+     * what the plan publishes, so a workspace with no overrides sends an empty
+     * list and nothing changes for it.
+     */
+    const overriddenLimits = Object.keys(limits)
+      .filter((key) => String(limits[key]) !== String(published[key]));
+
     return {
       ...subscription.toJSON(),
-      plan: { ...plan, limits: { ...(plan.limits || {}), ...(subscription.overrides?.limits || {}) },
-        features: { ...(plan.features || {}), ...(subscription.overrides?.features || {}) } },
+      plan: {
+        ...plan,
+        limits,
+        features: { ...(plan.features || {}), ...(subscription.overrides?.features || {}) },
+        /** What the plan itself promises, before anything was changed for this workspace. */
+        publishedLimits: published,
+        publishedFeatures: plan.features || {},
+      },
+      overriddenLimits,
     };
   }
 
-  async overview(userId, organizationId = null) {
-    const { organization, membership } = await this.currentForUser(userId, organizationId);
-    const [subscription, organizations, usage] = await Promise.all([
-      this.subscription(organization.id), this.memberships(userId), this.usage(organization.id),
+  async overview(user, organizationId = null) {
+    const { organization, membership } = await this.currentForUser(user.id, organizationId);
+    const [subscription, organizations, usage, canManageOrganization] = await Promise.all([
+      this.subscription(organization.id), this.memberships(user.id), this.usage(organization.id),
+      authz.can(user, PERMISSIONS.SYSTEM_SETTINGS),
     ]);
     return { organization, membership: membership.toJSON(), subscription, organizations, usage,
-      workspaceCreationEnabled: this.workspaceCreationEnabled() };
+      canManageOrganization, workspaceCreationEnabled: this.workspaceCreationEnabled() };
   }
 
   async usage(organizationId, options = {}) {
@@ -195,15 +264,14 @@ class OrganizationService {
       const plan = row.toJSON();
       return { ...plan,
         limits: Object.fromEntries(['members', 'programs', 'clans'].map(key => [key, plan.limits[key]])),
-        features: Object.fromEntries(['certificates', 'aiEvaluation', 'advancedAnalytics']
+        features: Object.fromEntries(['certificates', 'aiEvaluation', 'advancedAnalytics', 'programCompletionStanding']
           .map(key => [key, Boolean(plan.features[key])])),
       };
     });
   }
 
-  async requestPlan(userId, organizationId, planKey) {
-    const membership = await this.assertMembership(userId, organizationId);
-    if (!['owner', 'admin'].includes(membership.role)) throw new ForbiddenError('Organization admin access is required');
+  async requestPlan(user, organizationId, planKey) {
+    await this.assertCanManage(user, organizationId);
     const plan = await models.Plan.findOne({ where: { key: String(planKey || ''), active: true } });
     if (!plan) throw new NotFoundError('Plan not found');
     await sequelize.transaction(async transaction => {
@@ -222,29 +290,82 @@ class OrganizationService {
     return this.subscription(organizationId);
   }
 
-  async update(userId, organizationId, patch) {
-    const membership = await this.assertMembership(userId, organizationId);
-    if (!['owner', 'admin'].includes(membership.role)) throw new ForbiddenError('Organization admin access is required');
+  async update(user, organizationId, patch) {
+    const membership = await this.assertCanManage(user, organizationId);
     const organization = await models.Organization.findByPk(organizationId);
     if (!organization) throw new NotFoundError('Organization not found');
-    const changesBranding = patch.logoUrl !== undefined || patch.primaryColor !== undefined;
-    if (changesBranding && !(await this.entitlement(organizationId, 'customBranding'))) {
+    if (patch.logoUrl !== undefined) {
+      throw new ValidationError('Upload a workspace logo instead of setting a URL');
+    }
+    if (patch.primaryColor !== undefined && !(await this.entitlement(organizationId, 'customBranding'))) {
       throw new ForbiddenError('Custom branding is available on the Growth plan and above');
     }
     if (patch.timezone !== undefined) {
       try { new Intl.DateTimeFormat('en', { timeZone: patch.timezone }); }
       catch { throw new ValidationError('Choose a valid IANA timezone'); }
     }
-    const allowed = ['name', 'logoUrl', 'primaryColor', 'timezone'];
+    const allowed = ['name', 'primaryColor', 'timezone'];
     for (const key of allowed) if (patch[key] !== undefined) organization[key] = patch[key];
     if (!organization.name?.trim()) throw new ValidationError('Organization name is required');
     await organization.save();
     return serializeOrganization(organization, membership);
   }
 
+  async assertCanEditLogo(user, organizationId) {
+    const membership = await this.assertCanManage(user, organizationId);
+    if (!(await this.entitlement(organizationId, 'customBranding'))) {
+      throw new ForbiddenError('Custom branding is available on the Growth plan and above');
+    }
+    const organization = await models.Organization.findByPk(organizationId);
+    if (!organization) throw new NotFoundError('Organization not found');
+    return { organization, membership };
+  }
+
+  async setLogo(user, organizationId, file) {
+    const { organization, membership } = await this.assertCanEditLogo(user, organizationId);
+    if (!file || !LOGO_MIME.includes(file.mimetype) || file.size > LOGO_MAX_BYTES) {
+      throw new ValidationError('Choose a PNG or JPG image up to 5 MB');
+    }
+    const previous = organization.logoUrl;
+    const result = await uploadToCloudinary(file.buffer, LOGO_FOLDER, 'image');
+    const url = result.secure_url || result.url;
+    if (!url) throw new ValidationError('Could not upload the file');
+    organization.logoUrl = url;
+    await organization.save();
+    if (previous && previous.includes('res.cloudinary.com') && previous.includes(LOGO_FOLDER)) {
+      deleteFromCloudinary(extractPublicId(previous), 'image').catch(() => {});
+    }
+    return serializeOrganization(organization, membership);
+  }
+
+  async removeLogo(user, organizationId) {
+    const { organization, membership } = await this.assertCanEditLogo(user, organizationId);
+    const previous = organization.logoUrl;
+    organization.logoUrl = null;
+    await organization.save();
+    if (previous && previous.includes('res.cloudinary.com') && previous.includes(LOGO_FOLDER)) {
+      deleteFromCloudinary(extractPublicId(previous), 'image').catch(() => {});
+    }
+    return serializeOrganization(organization, membership);
+  }
+
   async entitlement(organizationId, feature) {
     const { plan } = await this.subscription(organizationId);
+    if (feature === 'programCompletionStanding') {
+      // Standing-clan requests only. Program closeout is not plan-gated.
+      if (typeof plan.features?.programCompletionStanding === 'boolean') {
+        return plan.features.programCompletionStanding;
+      }
+      // Until features JSON is migrated: paid price → enabled, free/Starter → not.
+      return Number(plan.monthlyPriceCents || 0) > 0 || Number(plan.annualPriceCents || 0) > 0;
+    }
     return Boolean(plan.features?.[feature]);
+  }
+
+  async requireEntitlement(organizationId, feature, message) {
+    if (!await this.entitlement(organizationId, feature)) {
+      throw new ForbiddenError(message || 'This feature is not included in your current plan');
+    }
   }
 
   async assertLimit(organizationId, resource, currentValue = null, options = {}) {

@@ -1,6 +1,7 @@
 const authzService = require('../services/authzService');
 const { PERMISSIONS } = require('../config/permissions');
 const { AuthenticationError, AuthorizationError } = require('../utils/errors/errorTypes');
+const { requestedClanId } = require('./portalScope');
 
 /**
  * requirePermission('task.review', scopeResolver?)
@@ -58,6 +59,32 @@ function requireMenteeAccess(param = 'id') {
         : (req._assignments || (await authzService.getAssignments(req.user)));
 
       const allowed = await authzService.canViewMentee(req.user, req.params[param], {
+        assignments: req._assignments
+      });
+      if (!allowed) throw new AuthorizationError('You do not have access to this mentee');
+      next();
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+/** The body-field equivalent of requireMenteeAccess, for actions such as rewards. */
+function requireMenteeBodyAccess(field = 'menteeId') {
+  return async (req, res, next) => {
+    try {
+      if (!req.user) throw new AuthenticationError('You must be logged in to access this resource');
+
+      req._assignments = req.loadAssignments
+        ? await req.loadAssignments()
+        : (req._assignments || (await authzService.getAssignments(req.user)));
+
+      const menteeId = req.body && req.body[field];
+      // Leave required-field validation to the controller so malformed input is
+      // a 400, not reported as though a real mentee was outside the caller's scope.
+      if (!menteeId) return next();
+
+      const allowed = await authzService.canViewMentee(req.user, menteeId, {
         assignments: req._assignments
       });
       if (!allowed) throw new AuthorizationError('You do not have access to this mentee');
@@ -164,6 +191,22 @@ function requirePermissionMinScope(permission, minLevel = 'program') {
   };
 }
 
+/**
+ * Platform-level actions (e.g. the external app catalog) span every workspace,
+ * so no workspace role or permission may grant them. Until a platform
+ * super-admin role exists, the allow-list is PLATFORM_ADMIN_EMAILS
+ * (comma-separated). Unset = nobody, so the routes are closed by default.
+ */
+function requirePlatformAdmin(req, res, next) {
+  if (!req.user) return next(new AuthenticationError('You must be logged in to access this resource'));
+  const allowed = String(process.env.PLATFORM_ADMIN_EMAILS || '')
+    .split(',').map((email) => email.trim().toLowerCase()).filter(Boolean);
+  if (!allowed.includes(String(req.user.email || '').toLowerCase())) {
+    return next(new AuthorizationError('Platform admin access is required'));
+  }
+  next();
+}
+
 /** Common scope resolvers for route params (and a couple body-based ones). */
 const scope = {
   clan: (param = 'id') => async (req) => authzService.scopeOfClan(req.params[param]),
@@ -174,16 +217,28 @@ const scope = {
   delay: (param = 'id') => async (req) => authzService.scopeOfDelay(req.params[param]),
   announcement: (param = 'id') => async (req) => authzService.scopeOfAnnouncement(req.params[param]),
   track: (param = 'id') => async (req) => authzService.scopeOfTrack(req.params[param]),
-  mentee: (param = 'id') => async (req) => authzService.scopeOfMentee(req.params[param]),
-  menteeBody: (field = 'menteeId') => async (req) => authzService.scopeOfMentee(req.body && req.body[field]),
+  mentee: (param = 'id') => async (req) =>
+    authzService.scopeOfMentee(req.params[param], requestedClanId(req)),
+  menteeBody: (field = 'menteeId') => async (req) =>
+    authzService.scopeOfMentee(req.body && req.body[field], requestedClanId(req)),
   // Task creation names its target in the body (enrollmentId or menteeId).
-  taskTarget: () => async (req) =>
-    req.body && req.body.enrollmentId
-      ? authzService.scopeOfEnrollment(req.body.enrollmentId)
-      : authzService.scopeOfMentee(req.body && req.body.menteeId),
+  taskTarget: () => async (req) => {
+    if (req.body && req.body.enrollmentId) return authzService.scopeOfEnrollment(req.body.enrollmentId);
+    return authzService.scopeOfMentee(req.body && req.body.menteeId, requestedClanId(req));
+  },
   // Announcement creation names its audience in the body.
   announcementBody: () => async (req) =>
     authzService.scopeOfAnnouncementAudience(req.body && req.body.audience, req.body && req.body.audienceId)
 };
 
-module.exports = { requirePermission, requireAnyPermission, requireAddClanMember, requireMenteeAccess, requirePermissionAnyScope, requirePermissionMinScope, scope };
+module.exports = {
+  requirePermission,
+  requireAnyPermission,
+  requireAddClanMember,
+  requireMenteeAccess,
+  requireMenteeBodyAccess,
+  requirePermissionAnyScope,
+  requirePermissionMinScope,
+  requirePlatformAdmin,
+  scope
+};

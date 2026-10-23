@@ -10,6 +10,11 @@ const { getRequestContext } = require('../utils/auditContext');
 // a clan/program scope grants the mentor switch (drives getCapabilities).
 const MENTOR_PERMISSIONS = [P.MENTEE_VIEW, P.MENTEE_MANAGE, P.TASK_ASSIGN, P.TASK_REVIEW];
 
+// The System Pool permissions. Holding any of them at org/program scope opens
+// the Selection pools area — and only that; they are not mentoring powers, so
+// they never switch on the mentor portal either.
+const POOL_PERMISSIONS = [P.POOL_MANAGE, P.POOL_MEMBERS, P.POOL_ASSIGN, P.POOL_REVIEW, P.POOL_SELECT];
+
 
 // In-memory cache of admin-defined custom roles (key → { permissions[], scope }).
 // Invalidated by accessService whenever a custom role changes.
@@ -31,6 +36,21 @@ const ADMIN_TIER_ROLES = new Set(['super_admin', 'program_admin', 'intake_manage
 
 // Scope hierarchy for "minimum scope" checks (org is broadest).
 const SCOPE_RANK = { org: 3, program: 2, clan: 1, self: 0 };
+
+// The three hats somebody can be wearing, which decide what a scoped read
+// returns (see programScopeFor).
+const PORTAL_HATS = ['admin', 'mentor', 'mentee'];
+
+// Enrolment statuses that mean the connection to the programme is over, so it
+// no longer puts the person inside that programme's scope. Mirrors the same
+// list in getCapabilities, which decides whether somebody is a mentee at all.
+//
+// 'program_completed' is deliberately NOT here. An alumnus is still OF that
+// programme and still belongs to its standing clan, so it stays in their
+// scope. announcementService closes a narrower window on completion — it
+// stops them receiving NEW posts — and that is a different question from
+// whether the programme is theirs.
+const DEAD_ENROLMENT_STATUSES = ['rejected', 'dropped'];
 
 const roleExists = (key, custom) => Boolean(ROLES[key] || (custom && custom[key]));
 const grants = (key, perm, custom) => {
@@ -117,7 +137,7 @@ class AuthzService {
     if ((!organizationId && user.role === 'admin') || ['owner', 'admin'].includes(organizationMembership?.role)) {
       add('super_admin', 'org');
     }
-    if ((legacyAccountRole && user.role === 'mentee') || (organizationId &&
+    if ((legacyAccountRole && user.role === 'mentee' && !(await this.isPoolCandidateOnly(user))) || (organizationId &&
         await models.MenteeProfile.findOne({ where: { userId: user.id }, attributes: ['id'] }))) {
       add('mentee', 'self', user.id);
     }
@@ -277,7 +297,8 @@ class AuthzService {
     if ((legacyAccountRole && user.role === 'mentor') || mentorsSomewhere ||
         (getRequestContext().organizationId && await models.MentorProfile.findOne({ where: { userId: user.id }, attributes: ['id'] }))) caps.add('mentor');
 
-    if ((legacyAccountRole && user.role === 'mentee') || assignments.some(a => a.role === 'mentee')) {
+    if ((legacyAccountRole && user.role === 'mentee' && !(await this.isPoolCandidateOnly(user))) ||
+        assignments.some(a => a.role === 'mentee')) {
       caps.add('mentee');
     } else {
       const enrollment = await models.Enrollment.findOne({
@@ -287,7 +308,64 @@ class AuthzService {
       if (enrollment) caps.add('mentee');
     }
 
+    // A System Pool candidate: someone in a selection pool. It opens the
+    // candidate area — their own qualifying work and outcome — and nothing
+    // else. It is kept after placement so they can still read their outcome.
+    if (models.PoolMember && await models.PoolMember.findOne({ where: { userId: user.id }, attributes: ['id'] })) {
+      caps.add('candidate');
+    }
+
     return [...caps];
+  }
+
+  /**
+   * Is this account ONLY a System Pool candidate — invited into a pool, never
+   * given a mentee profile?
+   *
+   * In the default workspace a stored `role = 'mentee'` alone used to mean
+   * "mentee". A pool candidate's account is created with that role (invites
+   * have no other learner role), so without this they would walk straight
+   * into the mentee portal: the community lounge, org-wide announcements, the
+   * directory. They get a mentee profile — and with it the mentee portal —
+   * when they are placed into a clan.
+   *
+   * Only reached for legacy-role mentees, and a real mentee has a profile, so
+   * nobody who has the mentee portal today loses it.
+   */
+  async isPoolCandidateOnly(user) {
+    if (!user || !models.PoolMember) return false;
+    const profile = await models.MenteeProfile.findOne({ where: { userId: user.id }, attributes: ['id'] });
+    if (profile) return false;
+    const member = await models.PoolMember.findOne({ where: { userId: user.id }, attributes: ['id'] });
+    return Boolean(member);
+  }
+
+  /**
+   * May this person enter the Selection pools area? True for anyone holding a
+   * `pool.*` permission at org or programme scope. Separate from
+   * `hasAdminAccess` on purpose: a pool reviewer must not become an admin of
+   * the programme's mentees, clans or cohorts.
+   */
+  async hasPoolAccess(user, opts = {}) {
+    if (!user) return false;
+    const custom = await loadCustomRoles();
+    const assignments = opts.assignments || (await this.getAssignments(user));
+    return assignments.some((a) => ['org', 'program'].includes(a.scopeType) &&
+      POOL_PERMISSIONS.some((perm) => assignmentGrants(a, perm, custom)));
+  }
+
+  /**
+   * The programmes whose pools this person can see: null = every programme
+   * (an org-scoped holder), otherwise the programme ids they hold any pool
+   * permission at.
+   */
+  async poolProgramScope(user, opts = {}) {
+    if (!user) return [];
+    const custom = await loadCustomRoles();
+    const assignments = opts.assignments || (await this.getAssignments(user));
+    const holds = (a) => POOL_PERMISSIONS.some((perm) => assignmentGrants(a, perm, custom));
+    if (assignments.some((a) => a.scopeType === 'org' && holds(a))) return null;
+    return [...new Set(assignments.filter((a) => a.scopeType === 'program' && a.scopeId && holds(a)).map((a) => a.scopeId))];
   }
 
   /**
@@ -336,6 +414,130 @@ class AuthzService {
     return true;
   }
 
+  /**
+   * The programmes and clans this person's reads are bounded to, in the portal
+   * they currently have open. ONE answer, asked by every surface.
+   *
+   * Every scope leak this codebase has had was the same mistake: a service
+   * asking "is this person an admin?" and never "an admin of WHAT?", each one
+   * re-deriving "my programmes" slightly differently. There were three
+   * divergent implementations at the last count, so fixing one left the others
+   * leaking, and they leaked one at a time for weeks.
+   *
+   *   { unrestricted: true }              an ORG-tier admin wearing the admin hat
+   *   { programIds: [], clanIds: [] }     everybody else, already deduped
+   *
+   * The hat decides which memberships count, exactly as `actsAsAdmin` does:
+   * somebody who administers one programme, mentors two clans and learns in a
+   * third gets a different bound on each screen, and all three are true. With
+   * no hat stated anywhere the answer is the union of everything they hold,
+   * which is what a background job or a legacy caller means.
+   *
+   * `clanIds` is NOT "the clans of programIds", except for an admin. An admin
+   * OF a programme oversees every clan in it; a mentee enrolled in the same
+   * programme does not, and expanding their programme back into clans would
+   * hand them every sibling clan's clan-targeted content.
+   */
+  async programScopeFor(user, portalRole = null, opts = {}) {
+    const none = { unrestricted: false, programIds: [], clanIds: [] };
+    if (!user) return none;
+
+    const contextHat = getRequestContext().portalRole;
+    const hat = PORTAL_HATS.includes(portalRole)
+      ? portalRole
+      : (PORTAL_HATS.includes(contextHat) ? contextHat : null);
+    const wears = (role) => hat === null || hat === role;
+
+    const programIds = new Set();
+    const clanIds = new Set();
+
+    if (wears('admin')) {
+      // Resolved here rather than up front: only the admin hat needs them, and
+      // this runs on the chat directory, which is a hot path.
+      const assignments = opts.assignments || (await this.getAssignments(user));
+      const adminScope = await this.adminProgramScope(user, { assignments });
+      // Unrestricted beats every other hat: there is nothing left to bound.
+      if (adminScope === null) return { unrestricted: true, programIds: null, clanIds: null };
+      adminScope.forEach((id) => programIds.add(id));
+      (await this.clanIdsInPrograms(adminScope)).forEach((id) => clanIds.add(id));
+    }
+
+    if (wears('mentor')) {
+      (await this.mentoredClanIds(user.id)).forEach((id) => clanIds.add(id));
+      // A 1:1 match with no clan behind it still places the mentor in that
+      // mentee's programme.
+      if (models.MentorMenteeMatch) {
+        const matches = await models.MentorMenteeMatch.findAll({
+          where: { mentorId: user.id, status: 'active' },
+          include: [{ model: models.Enrollment, as: 'enrollment', attributes: ['programId'] }],
+        });
+        matches.forEach((m) => m.enrollment?.programId && programIds.add(m.enrollment.programId));
+      }
+    }
+
+    if (wears('mentee')) {
+      const mine = await models.ClanMembership.findAll({
+        where: { userId: user.id, status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES }, role: 'mentee' },
+        attributes: ['clanId'],
+      });
+      mine.forEach((m) => m.clanId && clanIds.add(m.clanId));
+      const enrolments = await models.Enrollment.findAll({
+        where: { menteeId: user.id, status: { [Op.notIn]: DEAD_ENROLMENT_STATUSES } },
+        attributes: ['programId'],
+      });
+      enrolments.forEach((e) => e.programId && programIds.add(e.programId));
+    }
+
+    // A clan in scope brings its own programme with it. Never the reverse.
+    if (clanIds.size && models.Clan) {
+      const clans = await models.Clan.findAll({
+        where: { id: { [Op.in]: [...clanIds] } },
+        attributes: ['programId'],
+        raw: true,
+        paranoid: false,
+      });
+      clans.forEach((c) => c.programId && programIds.add(c.programId));
+    }
+
+    return { unrestricted: false, programIds: [...programIds], clanIds: [...clanIds] };
+  }
+
+  /** Every clan belonging to any of `programIds`. */
+  async clanIdsInPrograms(programIds) {
+    if (!Array.isArray(programIds) || programIds.length === 0 || !models.Clan) return [];
+    const clans = await models.Clan.findAll({
+      where: { programId: { [Op.in]: programIds } },
+      attributes: ['id'],
+      raw: true,
+      paranoid: false,
+    });
+    return clans.map((c) => c.id);
+  }
+
+  /**
+   * The admin user ids reachable from a programme bound: every org-tier admin,
+   * plus the admins OF those programmes.
+   *
+   * Org admins are reachable from every scope deliberately. Being limited to
+   * one programme is a reason to NEED an org admin, not a reason to be cut off
+   * from one. What must not come too is the admins of other programmes, which
+   * is what put the people running unrelated fellowships in a mentee's chat
+   * directory.
+   */
+  async adminUserIdsFor(programIds = []) {
+    if (!models.RoleAssignment) return [];
+    const custom = await loadCustomRoles();
+    const isAdminRole = (role) => ADMIN_TIER_ROLES.has(role) || Boolean(custom[role]);
+    const bounded = Array.isArray(programIds) && programIds.length > 0;
+    const rows = await models.RoleAssignment.findAll({
+      where: bounded
+        ? { [Op.or]: [{ scopeType: 'org' }, { scopeType: 'program', scopeId: { [Op.in]: programIds } }] }
+        : { scopeType: 'org' },
+      attributes: ['userId', 'role'],
+    });
+    return [...new Set(rows.filter((r) => isAdminRole(r.role)).map((r) => r.userId))];
+  }
+
   /** Called by accessService when custom roles change. */
   invalidateCustomRoles() { invalidateCustomRoles(); }
 
@@ -353,6 +555,23 @@ class AuthzService {
 
     const assignments = opts.assignments || (await this.getAssignments(user));
     if (await this.hasAdminAccess(user, { assignments })) return true;
+
+    // When a clan is selected, access must come through THAT clan — not another
+    // membership the mentee happens to share with the viewer.
+    if (opts.clanId) {
+      const resource = await this.scopeOfClan(opts.clanId);
+      if (!(await this.can(user, P.MENTEE_VIEW, resource, { assignments }))) return false;
+      const membership = await models.ClanMembership.findOne({
+        where: {
+          clanId: opts.clanId,
+          userId: menteeId,
+          status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES },
+          role: 'mentee'
+        },
+        attributes: ['id']
+      });
+      return Boolean(membership);
+    }
 
     const match = await models.MentorMenteeMatch.findOne({
       where: { mentorId: user.id, menteeId, status: 'active' }, attributes: ['id']
@@ -389,6 +608,16 @@ class AuthzService {
     if (!user) return false;
     const assignments = await this.getAssignments(user);
 
+    // System Pool work answers to the POOL, never to a clan or to whoever
+    // assigned it: the candidate is in no clan yet, and once they are placed
+    // their new mentor must not gain rights over the work that selected them.
+    const poolMemberId = task.poolMemberId !== undefined
+      ? task.poolMemberId
+      : (await models.AssignedTask.scope('withPoolWork').findByPk(task.id, { attributes: ['poolMemberId'] }))?.poolMemberId;
+    if (poolMemberId) {
+      return this._canActOnPoolTask(user, { menteeId: task.menteeId, poolMemberId }, permissions, { assignments });
+    }
+
     // No self-review. A co-mentor of the clan they're also a mentee in holds
     // task.review over that clan's mentees — themselves included — so without
     // this they could approve and score their own submissions. Admins keep
@@ -406,6 +635,52 @@ class AuthzService {
     return false;
   }
 
+  /**
+   * May `user` act on a piece of System Pool work?
+   *
+   * Reviewing it needs `pool.review` at the pool's programme. Merely looking
+   * (the callers that pass `mentee.view`) is allowed to anyone holding any
+   * `pool.*` permission there. Nobody — admins included — reviews their own
+   * qualifying work: the candidate is being selected on it.
+   */
+  async _canActOnPoolTask(user, { menteeId, poolMemberId }, permissions, { assignments }) {
+    if (menteeId && menteeId === user.id) return false;
+    const resource = await this.scopeOfPoolMember(poolMemberId);
+    if (!resource) return false;
+    const perms = Array.isArray(permissions) ? permissions : [permissions];
+    const wanted = new Set();
+    for (const p of perms) {
+      if (p === P.TASK_REVIEW || p === P.POOL_REVIEW) wanted.add(P.POOL_REVIEW);
+      else if (p === P.MENTEE_VIEW) POOL_PERMISSIONS.forEach((pp) => wanted.add(pp));
+      else if (POOL_PERMISSIONS.includes(p)) wanted.add(p);
+    }
+    for (const p of wanted) {
+      if (await this.can(user, p, resource, { assignments })) return true;
+    }
+    return false;
+  }
+
+  /**
+   * A pool member resolves to their pool's PROGRAMME — never to a clan. Even
+   * after placement, qualifying work is the pool's, not the new clan's.
+   */
+  async scopeOfPoolMember(poolMemberId) {
+    if (!poolMemberId || !models.PoolMember) return null;
+    const member = await models.PoolMember.findByPk(poolMemberId, {
+      attributes: ['id', 'userId'],
+      include: [{ model: models.CandidatePool, as: 'pool', attributes: ['programId'] }],
+    });
+    if (!member?.pool) return null;
+    return { programId: member.pool.programId, userId: member.userId || undefined };
+  }
+
+  /** A pool resolves to its programme — the scope every `pool.*` check uses. */
+  async scopeOfPool(poolId) {
+    if (!poolId || !models.CandidatePool) return null;
+    const pool = await models.CandidatePool.findByPk(poolId, { attributes: ['id', 'programId'] });
+    return pool ? { programId: pool.programId } : null;
+  }
+
   // ── Scope resolvers (locate a resource in the hierarchy) ─────────────────────
   /** A clan resource: covers clan + its program. */
   async scopeOfClan(clanId) {
@@ -416,8 +691,17 @@ class AuthzService {
 
   /** An assigned task: covers the mentee (self), their clan, and the program. */
   async scopeOfAssignedTask(taskId) {
-    const task = await models.AssignedTask.findByPk(taskId, { attributes: ['id', 'menteeId', 'enrollmentId', 'clanId'] });
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId, {
+      attributes: ['id', 'menteeId', 'enrollmentId', 'clanId', 'poolMemberId'],
+    });
     if (!task) return null;
+    // Pool work locates in its pool's programme, and ONLY there. Never fall
+    // back to "the mentee's only clan" below: after placement that would hand
+    // the new clan's mentors the work the candidate was selected on.
+    if (task.poolMemberId) {
+      const pool = await this.scopeOfPoolMember(task.poolMemberId);
+      return pool ? { userId: task.menteeId, programId: pool.programId } : { userId: task.menteeId };
+    }
     const out = { userId: task.menteeId };
     if (task.clanId) out.clanId = task.clanId;
     if (task.enrollmentId) {
@@ -598,20 +882,36 @@ class AuthzService {
    * `role: 'mentee'` matters — someone who co-mentors clan B while learning in
    * clan A must resolve to A, or their mentors lose access to their own mentee.
    */
-  async scopeOfMentee(menteeId) {
+  /**
+   * Mentee resource scope. Prefer an explicit clan (portal X-Active-Clan) when
+   * the mentee is in both a completed cohort and a standing clan — never pick
+   * an arbitrary first membership.
+   */
+  async scopeOfMentee(menteeId, preferredClanId = null) {
     if (!menteeId) return null;
     const out = { userId: menteeId };
-    // Paused counts (see VISIBLE_MEMBERSHIP_STATUSES), but an active placement
-    // must win when a mentee holds both - 'active' sorts before 'paused'.
-    const membership = await models.ClanMembership.findOne({
-      where: {
-        userId: menteeId,
-        status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES },
-        role: 'mentee'
-      },
-      attributes: ['clanId'],
-      order: [['status', 'ASC']]
-    });
+    const baseWhere = {
+      userId: menteeId,
+      status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES },
+      role: 'mentee',
+    };
+    let membership = null;
+    if (preferredClanId) {
+      membership = await models.ClanMembership.findOne({
+        where: { ...baseWhere, clanId: preferredClanId },
+        attributes: ['clanId'],
+      });
+    }
+    if (!membership) {
+      const rows = await models.ClanMembership.findAll({
+        where: baseWhere,
+        attributes: ['clanId'],
+        order: [['status', 'ASC']],
+      });
+      if (rows.length === 1) membership = rows[0];
+      // Multi-clan without a preferred clan: leave clanId unset so we don't
+      // authorize against the wrong side (standing vs cohort).
+    }
     if (membership) {
       out.clanId = membership.clanId;
       const clan = await models.Clan.findByPk(membership.clanId, { attributes: ['programId'] });
@@ -620,21 +920,41 @@ class AuthzService {
     return out;
   }
 
-  /** An enrollment: its program + the mentee (self) + their clan. */
+  /** An enrollment: its program + the mentee (self) + their cohort clan for that program. */
   async scopeOfEnrollment(enrollmentId) {
     if (!enrollmentId) return null;
     const enr = await models.Enrollment.findByPk(enrollmentId, { attributes: ['menteeId', 'programId'] });
     if (!enr) return null;
     const out = { userId: enr.menteeId, programId: enr.programId };
-    const membership = await models.ClanMembership.findOne({
+    // Prefer membership linked to this enrollment, then cohort clan for the program
+    // — never a standing membership that shares the same programId.
+    let membership = await models.ClanMembership.findOne({
       where: {
         userId: enr.menteeId,
+        enrollmentId,
         status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES },
-        role: 'mentee'
+        role: 'mentee',
       },
       attributes: ['clanId'],
-      order: [['status', 'ASC']]
     });
+    if (!membership && enr.programId) {
+      membership = await models.ClanMembership.findOne({
+        where: {
+          userId: enr.menteeId,
+          status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES },
+          role: 'mentee',
+        },
+        attributes: ['clanId'],
+        include: [{
+          model: models.Clan,
+          as: 'clan',
+          required: true,
+          attributes: [],
+          where: { programId: enr.programId, kind: 'cohort' },
+        }],
+        order: [['status', 'ASC']],
+      });
+    }
     if (membership) out.clanId = membership.clanId;
     return out;
   }

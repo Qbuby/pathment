@@ -42,6 +42,8 @@ export const activityApi = {
       params: { days },
     }),
 
-  getAdminOverview: (days = 7) =>
-    apiClient.get<AdminActivityOverview>('/activity/admin/overview', { params: { days } }),
+  getAdminOverview: (days = 7, programId?: string | null) =>
+    apiClient.get<AdminActivityOverview>('/activity/admin/overview', {
+      params: { days, programId: programId || undefined },
+    }),
 };

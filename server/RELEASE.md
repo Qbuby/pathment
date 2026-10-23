@@ -10,15 +10,31 @@ commands see its "Day-2 operations" section.
 
 The two environments handle the **database schema completely differently**:
 
-| | How schema changes reach it | Auto-deploy trigger |
-|---|---|---|
-| **Staging** | `db:sync` runs on every deploy → schema is **auto-derived from the models**. No migration needed. | push to `staging` |
-| **Production** | **Migrations only**, run **manually**. `db:sync` is NEVER run (it would alter/drop real user data). | push to `main` |
+Both are Heroku container apps (`pathment-staging`, `pathment-api`) with their own
+Postgres, and **both get schema changes the same way: migrations, run by hand.**
 
-**The trap:** a feature works on staging because `db:sync` silently added the column.
-On prod that column does **not** exist until you write and run a migration. If the new
-code deploys before the migration runs, Sequelize `SELECT`s a missing column and those
-endpoints 500. **Every model change needs a matching migration to reach prod.**
+| | How schema changes reach it | Deploy |
+|---|---|---|
+| **Staging** | **Migrations only.** `heroku run node scripts/migrate.js -a pathment-staging` | `git push staging-heroku staging:main` (or Deploy in the dashboard) |
+| **Production** | **Migrations only.** `heroku run node scripts/migrate.js -a pathment-api` | `git push production-heroku main:main` |
+
+> This page used to claim `db:sync` ran on every staging deploy, so staging needed no
+> migrations. It does not, and has not for some time: the boot-time sync in
+> `src/index.js` is commented out, and `syncDatabase.js` refuses outright when `DYNO`
+> is set. Believing the old note is how staging came to sit two migrations behind its
+> own models while reading as if it were up to date. **If a model changed, staging
+> needs the migration too** — it is not a schema that heals itself.
+
+**The trap, either way:** a feature works locally because `db:sync` silently added the
+column. On a deployed environment that column does **not** exist until you write and
+run a migration. If the new code deploys before the migration runs, Sequelize
+`SELECT`s a missing column and those endpoints 500. **Every model change needs a
+matching migration.** Run it BEFORE the code that needs it — additive nullable columns
+are invisible to the old code still serving, so there is no broken window.
+
+Before deploying either one, check the build will install: CI runs `npm ci` in
+`server/`, and the Dockerfile runs it again on `node:20`'s npm. A lock file relocked
+by a newer npm can pass locally and fail the build.
 
 ---
 
@@ -50,7 +66,7 @@ Also sanity-check:
 
 ---
 
-## 2. Promote main → staging
+## 2. Promote staging → main
 
 ```bash
 cd /media/sheryar-ahmed/01DC5351630C77508/industry/os/pathment
@@ -58,60 +74,93 @@ git fetch origin
 git checkout main
 git reset --hard origin/main          # local main = remote
 git merge --ff-only origin/staging    # clean fast-forward, no merge commit
-git push origin main                  # ← auto-deploys prod (GitHub Action)
+git push origin main
 git checkout staging                  # back to the working branch
 ```
 
 `--ff-only` refuses anything that isn't a clean fast-forward. If it errors, **stop** —
 the branches have diverged and need a closer look, not a force.
 
-The prod Action (`.github/workflows/deploy-prod.yml`) SSHes in, `git reset --hard
-origin/main`, then `docker compose up -d --build`. It does **not** run migrations.
+**Pushing `main` deploys nothing.** There is no deploy workflow — `.github/workflows/`
+holds `ci.yml` and nothing else. Prod is a Heroku **container** app built from the root
+`Dockerfile`, and it ships when you say so:
+
+```bash
+git push production-heroku main:main   # or Heroku dashboard → Deploy branch
+heroku releases -a pathment-api -n 3   # confirm "Deploy <sha>" is your sha
+```
+
+`git push origin main` is still worth doing first, so the deployed sha exists on the
+remote and `main` records what production is running.
 
 ---
 
 ## 3. Run the release's migrations on prod
 
-If preflight found new migrations, run each one **right after the Action finishes**.
-SSH into the prod box, then:
-
 ```bash
-cd ~/pathment/server 2>/dev/null || cd /root/pathment/server
-docker compose run --rm api node scripts/migrations/<NNN>_<name>.js
+heroku run node scripts/migrate.js --status -a pathment-api   # what's pending
+heroku run node scripts/migrate.js -a pathment-api            # apply all of it
 ```
 
-Migrations here are idempotent (they skip columns/tables that already exist), so a
-re-run is safe. Rollback for a migration that supports it:
+`migrate.js` records what it ran in `schema_migrations`, so it is safe on every deploy
+and only ever applies what is new. Destructive `*drop*` migrations are **skipped** —
+pass `--include-drops` only when you mean it. A single migration, or a rollback where
+one is supported:
 
 ```bash
-docker compose run --rm api node scripts/migrations/<NNN>_<name>.js --rollback
+heroku run node scripts/migrations/<NNN>_<name>.js -a pathment-api
+heroku run node scripts/migrations/<NNN>_<name>.js --rollback -a pathment-api
 ```
 
-### Zero broken-window variant (preferred for additive migrations)
-Because additive (nullable) columns are invisible to the currently-running old code,
-you can add them **before** switching to the new code — no window where code is ahead
-of schema. Do this on the prod box instead of relying on timing:
+### The gotcha: `heroku run` runs the DEPLOYED code
+A one-off dyno gets the current slug, so **a migration that isn't deployed yet does not
+exist to run.** That rules out the obvious "migrate first, deploy second" ordering, and
+it is quietly dangerous: `migrate.js` on the old slug reports "schema is up to date"
+while the new release's migrations sit in your working copy, unlisted and unrun. Two
+ways round it, in order of preference:
 
 ```bash
-cd ~/pathment && git fetch origin main && git reset --hard origin/main
+# (a) additive migrations — run them from your checkout BEFORE deploying, so the new
+#     columns exist before the code that reads them. Nullable additions are invisible
+#     to the old code still serving, so there is no broken window.
 cd server
-docker compose build api                                       # build new image; old container keeps serving
-docker compose run --rm api node scripts/migrations/<NNN>_*.js # add columns while old code still runs
-docker compose up -d api                                       # now restart into the new code
+DATABASE_URL="$(heroku config:get DATABASE_URL -a pathment-api)" \
+  node scripts/migrations/<NNN>_*.js --dry-run     # read it first, every time
+DATABASE_URL="$(heroku config:get DATABASE_URL -a pathment-api)" \
+  node scripts/migrations/<NNN>_*.js
+# scripts/migrations/_db.js is SSL-aware, which is why this works against Heroku PG.
+# Then deploy, then record the run so a later migrate.js agrees with reality:
+heroku pg:psql -a pathment-api \
+  -c "insert into schema_migrations (name) values ('<NNN>_<name>.js') on conflict do nothing"
+
+# (b) deploy, then migrate immediately. Simpler, but the endpoints that read the new
+#     column 500 for the seconds in between.
 ```
 
-> Don't use this for **destructive** migrations (drop/rename) — those must go in a
+> Don't use (a) for **destructive** migrations (drop/rename) — those must go in a
 > *later* release after no code references the old shape (see Expand → contract).
+
+**Take a backup before anything that writes:** `heroku pg:backups:capture -a pathment-api`.
+
+### A database that has never seen migrate.js
+If `schema_migrations` doesn't exist, the schema was built by `db:sync` from the models.
+Do **not** try to replay history — seven early migrations have no exported `up()` and
+`migrate.js` throws on the first one it meets. Baseline instead, after checking the
+schema really is current (diff `information_schema.columns` against a database you know
+is fully migrated):
+
+```bash
+heroku run node scripts/migrate.js --baseline -a <app>   # record as applied, change nothing
+```
 
 ---
 
 ## 4. Verify
 
 ```bash
-# On the prod box:
-docker compose ps                       # api healthy
-docker compose logs --tail=50 api       # no boot errors / no "column does not exist"
-curl -s https://<API_DOMAIN>/api/health # 200
+heroku ps -a pathment-api                          # web.1 up
+heroku logs -a pathment-api -n 50                  # no boot errors / no "column does not exist"
+curl -s https://<API_DOMAIN>/api/health            # 200
 ```
 
 Then in the app: hit the feature that shipped (e.g. assign a task with an override),
@@ -121,12 +170,11 @@ and skim `/admin/emails` if the release touched mail.
 
 ## 5. If something's wrong — roll back
 
-Code rollback (redeploy the previous good commit):
+Code rollback — Heroku keeps the previous slug, so this needs no rebuild:
 
 ```bash
-# on prod box
-cd ~/pathment && git reset --hard <previous-good-sha> && cd server
-docker compose up -d --build
+heroku releases -a pathment-api -n 5    # find the last good "Deploy <sha>"
+heroku rollback vNNN -a pathment-api
 ```
 
 Then, if the bad release ran a migration and the previous code can't tolerate the new
@@ -152,11 +200,11 @@ old and new code briefly overlap.
 
 ## Known caveat: brief deploy downtime
 
-Today, `docker compose up -d --build` stops the old container and starts the new one,
-and Caddy proxies to it during the ~10–25s cold boot → users see 502s for those seconds
-on each prod deploy. We've chosen to live with this for now. The fix (blue-green +
-graceful shutdown, zero downtime) is designed but deferred — pick it up when deploy
-frequency makes the 502 window worth removing.
+A deploy builds the image, then cycles the single web dyno, so there is a short window
+— roughly the cold boot — where requests can fail. With one dyno there is nothing to
+roll onto. We've chosen to live with it. The fix (a second dyno so Heroku can cycle
+them in turn, plus graceful shutdown) is understood but deferred — pick it up when
+deploy frequency makes the window worth paying for.
 
 ---
 

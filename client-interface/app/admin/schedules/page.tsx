@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { CalendarClock, Plus, Trash2, X, Loader2, Pencil, Clock, FileJson } from 'lucide-react';
+import { CalendarClock, Plus, Trash2, Loader2, Pencil, Clock, FileJson } from 'lucide-react';
+import { Drawer } from '@/components/shared/Drawer';
 import { scheduleApi, type ScheduleBlock } from '@/lib/services/schedule-api';
 import { ScheduleJsonPanel } from '@/components/shared/ScheduleJsonPanel';
 import { downloadScheduleTemplateJson } from '@/lib/utils/schedule-json';
 import { useConfirm } from '@/lib/context/ConfirmContext';
 
-interface OrgTemplate { id: string; name: string; description?: string | null; blocks: ScheduleBlock[] }
+interface OrgTemplate { id: string; name: string; description?: string | null; blocks: ScheduleBlock[]; menteeSelectable?: boolean }
 interface DraftBlock { label: string; time: string; days: string; bookable: boolean }
 
 const DAY_OPTS = ['everyday', 'weekdays', 'weekends'];
@@ -74,8 +75,10 @@ export default function AdminSchedulesPage() {
                 {(t.blocks || []).length === 0 ? (
                   <p className="text-sm text-slate-400 py-1">No blocks yet.</p>
                 ) : (
-                  t.blocks.map((b) => (
-                    <div key={b.id} className="flex items-center gap-2 py-1.5 text-sm">
+                  // A block saved before ids were stored has none, and React
+                  // then warns about a duplicate key for every card on screen.
+                  t.blocks.map((b, i) => (
+                    <div key={b.id || `${t.id}:${i}`} className="flex items-center gap-2 py-1.5 text-sm">
                       <Clock className="w-3.5 h-3.5 text-slate-300 shrink-0" />
                       <span className="text-slate-700 truncate flex-1">{b.label}</span>
                       <span className="text-xs text-slate-400">{b.time || 'Flexible'}</span>
@@ -101,8 +104,35 @@ function TemplateDrawer({ template, onClose, onSaved }: { template: OrgTemplate 
     template?.blocks?.length ? template.blocks.map((b) => ({ label: b.label, time: b.time, days: b.days, bookable: b.bookable })) : [blankBlock()]
   );
   const [saving, setSaving] = useState(false);
+  /**
+   * Whether mentees may take this one themselves.
+   *
+   * Off by default on purpose: some templates ARE the programme's shape and
+   * should only ever arrive from a mentor. The ones that are just useful
+   * day-shapes — "Evening study", "Weekend sprint" — are better taken by
+   * whoever knows how they work than requested from somebody who does not.
+   */
+  const [menteeSelectable, setMenteeSelectable] = useState(template?.menteeSelectable ?? false);
 
   const setBlock = (i: number, patch: Partial<DraftBlock>) => setBlocks((prev) => prev.map((b, j) => (j === i ? { ...b, ...patch } : b)));
+
+  const offerToggle = (
+    <label className="flex items-start gap-2.5 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+      <input
+        type="checkbox"
+        id="template-mentee-selectable"
+        checked={menteeSelectable}
+        onChange={(e) => setMenteeSelectable(e.target.checked)}
+        className="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+      />
+      <span className="min-w-0">
+        <span className="block text-sm font-medium text-slate-900 dark:text-slate-100">Mentees can choose this themselves</span>
+        <span className="mt-0.5 block text-xs text-slate-500">
+          It appears in their planner to take without asking. Taking it adds the blocks to their day — it never replaces what a mentor set.
+        </span>
+      </span>
+    </label>
+  );
 
   const submit = async () => {
     const clean = blocks.map((b) => ({ ...b, label: b.label.trim() })).filter((b) => b.label);
@@ -110,7 +140,7 @@ function TemplateDrawer({ template, onClose, onSaved }: { template: OrgTemplate 
     if (clean.length === 0) { toast.error('Add at least one block'); return; }
     try {
       setSaving(true);
-      const payload = { name: name.trim(), description: description.trim() || undefined, blocks: clean };
+      const payload = { name: name.trim(), description: description.trim() || undefined, blocks: clean, menteeSelectable };
       if (template) await scheduleApi.updateOrgTemplate(template.id, payload);
       else await scheduleApi.createOrgTemplate(payload);
       toast.success(template ? 'Template updated' : 'Template created');
@@ -119,14 +149,20 @@ function TemplateDrawer({ template, onClose, onSaved }: { template: OrgTemplate 
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <div className="absolute inset-0 bg-black/40 dark:bg-black/70" onClick={onClose} />
-      <div role="dialog" aria-modal="true" aria-label={template ? 'Edit template' : 'New template'} className="relative w-full max-w-lg h-full bg-card border-l border-slate-200 dark:border-slate-700 shadow-2xl dark:shadow-[-8px_0_30px_rgba(0,0,0,0.6)] flex flex-col">
-        <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
-          <h2 className="font-semibold text-slate-900">{template ? 'Edit template' : 'New org template'}</h2>
-          <button onClick={onClose} aria-label="Close" className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+    <Drawer
+      open
+      onClose={onClose}
+      title={template ? 'Edit template' : 'New org template'}
+      footer={(dismiss) => (
+        <>
+          <button onClick={dismiss} className="px-4 py-2 border border-slate-200 text-slate-700 rounded-xl text-sm hover:bg-slate-50">Cancel</button>
+          <button onClick={submit} disabled={saving} className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm inline-flex items-center gap-2 disabled:opacity-50">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}{template ? 'Save' : 'Create template'}
+          </button>
+        </>
+      )}
+    >
+      <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Name <span className="text-red-500">*</span></label>
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Daily fellowship rhythm" className={field} />
@@ -134,6 +170,10 @@ function TemplateDrawer({ template, onClose, onSaved }: { template: OrgTemplate 
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className={`${field} resize-none`} />
+          </div>
+
+          <div>
+            {offerToggle}
           </div>
           <ScheduleJsonPanel
             current={{ name, description, blocks }}
@@ -165,14 +205,7 @@ function TemplateDrawer({ template, onClose, onSaved }: { template: OrgTemplate 
               ))}
             </div>
           </div>
-        </div>
-        <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 border border-slate-200 text-slate-700 rounded-xl text-sm hover:bg-slate-50">Cancel</button>
-          <button onClick={submit} disabled={saving} className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm inline-flex items-center gap-2 disabled:opacity-50">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}{template ? 'Save' : 'Create template'}
-          </button>
-        </div>
       </div>
-    </div>
+    </Drawer>
   );
 }

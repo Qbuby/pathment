@@ -41,6 +41,14 @@ export interface CohortMentee {
   tasksHard: number;
   sentiment: string;
   clan?: { id: string; name: string } | null;
+  /** All active memberships in the mentor's clans (standing + cohort dual members). */
+  clans?: Array<{ id: string; name: string | null }> | null;
+  /**
+   * Paused in this clan. Only ever set when the caller asked for paused
+   * mentees; they are excluded from every total, and belong at the end of a
+   * roster rather than in the middle of it.
+   */
+  paused?: boolean;
   /** Joined the platform within the last ~10 days — show a "New" badge. */
   isNew?: boolean;
   joinedAt?: string | null;
@@ -53,6 +61,8 @@ export interface CohortTotals {
   openBlockers: number;
   atRisk: number;
   onTimeRate: number;
+  /** How many paused mentees came with the roster, when they were asked for. */
+  paused?: number;
 }
 
 export interface UseMentorCohortReturn {
@@ -66,12 +76,12 @@ export interface UseMentorCohortReturn {
 }
 
 const EMPTY_COHORT: CohortMentee[] = [];
-
 export function useMentorCohort(): UseMentorCohortReturn {
   const { activeClanId } = useClan();
 
   const { data, loading, error, refetch } = useApiQuery<{ cohort: CohortMentee[]; totals: CohortTotals | null }>({
-    queryKey: qk.mentor.cohort,
+    // Clan is also sent via X-Active-Clan; key it so switching Standee ↔ cohort refetches.
+    queryKey: [...qk.mentor.cohort, activeClanId],
     queryFn: async () => {
       const res = await mentorApi.getCohort();
       return { cohort: res?.data?.cohort ?? [], totals: res?.data?.totals ?? null };
@@ -98,12 +108,16 @@ export function useMentorCohort(): UseMentorCohortReturn {
   const totals = useMemo<CohortTotals | null>(() => {
     if (activeClanId === ALL_CLANS) return rawTotals;
     if (!cohort.length && !allCohort.length) return rawTotals;
+    // Same rule as the server's: the headline numbers describe the people
+    // still taking part, so a paused mentee never moves them.
+    const counted = cohort.filter((m) => !m.paused);
     return {
-      mentees: cohort.length,
-      pendingApprovals: cohort.reduce((n, m) => n + (m.pendingApprovals || 0), 0),
-      openBlockers: cohort.reduce((n, m) => n + (m.openBlockers || 0), 0),
-      atRisk: cohort.filter((m) => m.risk !== 'low').length,
-      onTimeRate: cohort.length ? Math.round(cohort.reduce((n, m) => n + (m.onTimeRate || 0), 0) / cohort.length) : 0,
+      mentees: counted.length,
+      pendingApprovals: counted.reduce((n, m) => n + (m.pendingApprovals || 0), 0),
+      openBlockers: counted.reduce((n, m) => n + (m.openBlockers || 0), 0),
+      atRisk: counted.filter((m) => m.risk !== 'low').length,
+      onTimeRate: counted.length ? Math.round(counted.reduce((n, m) => n + (m.onTimeRate || 0), 0) / counted.length) : 0,
+      paused: cohort.length - counted.length,
     };
   }, [cohort, allCohort, activeClanId, rawTotals]);
 

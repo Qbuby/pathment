@@ -46,7 +46,8 @@ test('workspace selection rejects reserved hosts, invalid storage, and invalid e
   f.localStorage.setItem('pathment-active-workspace', '../evil');
   assert.equal(f.scope.activeWorkspaceSlug(), null);
   f.localStorage.setItem('pathment-active-workspace', 'acme');
-  assert.equal(f.scope.activeWorkspaceSlug(), 'acme');
+  assert.equal(f.scope.activeWorkspaceSlug(), null, 'neutral login must not inherit a stale workspace');
+  assert.equal(f.scope.rememberedWorkspaceSlug(), 'acme');
   f.window.location.pathname = '/w/app/login';
   assert.equal(f.scope.activeWorkspaceSlug(), null);
   assert.throws(() => f.scope.switchWorkspace('../evil'));
@@ -54,6 +55,23 @@ test('workspace selection rejects reserved hosts, invalid storage, and invalid e
   assert.equal(f.scope.activeWorkspaceSlug(), 'other');
   f.scope.switchWorkspace('acme');
   assert.equal(f.window.location.destination, 'https://app.pathment.me/w/acme/login');
+});
+
+test('revoked workspace access clears the stale selection and returns to account routing', () => {
+  const window = browser('https://app.pathment.me/w/revoked/admin/dashboard');
+  const localStorage = storage();
+  localStorage.setItem('pathment-active-workspace', 'revoked');
+  const document = { cookie: 'pathment-workspace=revoked' };
+  const scope = load('lib/services/workspace-scope.ts', {}, { window, localStorage, document });
+
+  assert.equal(scope.recoverFromWorkspaceAccessDenied('FORBIDDEN', 'revoked'), false);
+  assert.equal(window.location.destination, undefined);
+  assert.equal(scope.recoverFromWorkspaceAccessDenied('WORKSPACE_ACCESS_DENIED', undefined), false, 'unscoped denials must not evict the active workspace');
+  assert.equal(scope.recoverFromWorkspaceAccessDenied('WORKSPACE_ACCESS_DENIED', 'another'), false, 'late denials from a prior workspace must be ignored');
+  assert.equal(scope.recoverFromWorkspaceAccessDenied('WORKSPACE_ACCESS_DENIED', 'revoked'), true);
+  assert.equal(localStorage.getItem('pathment-active-workspace'), null);
+  assert.match(document.cookie, /Max-Age=0/);
+  assert.equal(window.location.destination, '/');
 });
 
 test('redirects stay inside the selected workspace', () => {
@@ -85,6 +103,48 @@ test('proxy workspace cookie takes precedence over stale storage on short links'
   assert.equal(scope.activeWorkspaceSlug(), 'devweekends');
   window.location.pathname = '/w/explicit/login';
   assert.equal(scope.activeWorkspaceSlug(), 'explicit');
+});
+
+test('account entry routes never scope API calls with a remembered workspace', () => {
+  for (const path of ['/', '/login', '/register', '/reset-password', '/verify-email', '/workspaces']) {
+    const localStorage = storage();
+    localStorage.setItem('pathment-active-workspace', 'old-workspace');
+    const window = browser(`https://app.pathment.me${path}`);
+    const scope = load('lib/services/workspace-scope.ts', {}, {
+      window, localStorage, document: { cookie: 'pathment-workspace=old-workspace' },
+    });
+    assert.equal(scope.activeWorkspaceSlug(), null, path);
+    assert.equal(scope.workspaceScopeHeaders()['X-Pathment-Workspace'], undefined, path);
+    assert.equal(scope.rememberedWorkspaceSlug(), 'old-workspace', path);
+  }
+});
+
+test('legacy axios services carry the selected workspace header', () => {
+  let requestInterceptor;
+  const instance = {
+    interceptors: {
+      request: { use: success => { requestInterceptor = success; } },
+      response: { use() {} },
+    },
+  };
+  load('lib/services/axios-instance.ts', {
+    axios: { default: { create: () => instance } },
+    '../utils/api-error': { normalizeAxiosError() {} },
+    './token-store': { tokenStore: { getToken: () => 'token' } },
+    './auth-session': {
+      refreshAccessToken: async () => 'renewed', handleSessionExpired() {},
+      SessionExpiredError: class SessionExpiredError extends Error {},
+    },
+    './portal-scope': { portalScopeHeaders: () => ({ 'X-Portal-Role': 'admin' }) },
+    './workspace-scope': {
+      workspaceScopeHeaders: () => ({ 'X-Pathment-Workspace': 'play-review' }),
+      recoverFromWorkspaceAccessDenied: () => false,
+    },
+  });
+  const config = requestInterceptor({ headers: {} });
+  assert.equal(config.headers.Authorization, 'Bearer token');
+  assert.equal(config.headers['X-Portal-Role'], 'admin');
+  assert.equal(config.headers['X-Pathment-Workspace'], 'play-review');
 });
 
 test('destination creates a tab-bound verifier and only sends its challenge to legacy', async () => {
@@ -152,8 +212,10 @@ test('proxy validates cookie fallback, ignores forwarded host, and rewrites scop
   }
   assert.equal(proxy(request('/')).kind, 'next');
   assert.equal(proxy(request('/workspaces', 'devweekends')).kind, 'next');
-  assert.equal(proxy(request('/login')).url.pathname, '/');
-  assert.equal(proxy(request('/login', 'acme')).url.pathname, '/w/acme/login');
+  assert.equal(proxy(request('/login')).kind, 'next');
+  assert.equal(proxy(request('/login', 'acme')).kind, 'next');
+  assert.equal(proxy(request('/register', 'acme')).kind, 'next');
+  assert.equal(proxy(request('/reset-password', 'acme')).kind, 'next');
   assert.equal(proxy(request('/api/health')).kind, 'next');
   assert.equal(proxy(request('/w/acme/report.csv')).url.pathname, '/report.csv');
   assert.equal(proxy(request('/w/app/login')).status, 404);

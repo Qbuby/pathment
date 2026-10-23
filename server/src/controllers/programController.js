@@ -1,4 +1,6 @@
 const programService = require('../services/programService');
+const programLifecycleService = require('../services/programLifecycleService');
+const authzService = require('../services/authzService');
 const { successResponse, paginatedResponse } = require('../utils/responses');
 const { catchAsync } = require('../middlewares/errorHandler');
 
@@ -27,7 +29,16 @@ class ProgramController {
     const result = await programService.getPrograms(
       req.query,
       req.user?.id,
-      req.user?.role
+      // NOT `req.user.role` — that is the account's signup role, and somebody
+      // who administers this workspace may well have signed up as a mentor.
+      // Reading it here served them the anonymous view of their own
+      // programmes: published-and-public only, which silently hid every
+      // completed or private one and made the status filter look broken.
+      req.user ? await req.loadWorkspaceRole() : null,
+      // …and being AN admin is not the same as being an admin of everything.
+      // null for an org-tier admin or an anonymous caller; a list of ids for
+      // somebody whose admin role was granted at programme scope.
+      req.user ? await authzService.adminProgramScope(req.user) : null,
     );
 
     res.status(200).json(paginatedResponse(
@@ -46,7 +57,8 @@ class ProgramController {
     const program = await programService.getProgramById(
       req.params.id,
       req.user?.id,
-      req.user?.role
+      req.user ? await req.loadWorkspaceRole() : null,
+      req.user ? await authzService.adminProgramScope(req.user) : null,
     );
 
     res.status(200).json(successResponse(
@@ -162,6 +174,50 @@ class ProgramController {
       'Program statistics retrieved successfully',
       stats
     ));
+  });
+
+  /**
+   * Preview formal program close (admin)
+   * @route GET /api/programs/:id/completion
+   * @access Admin
+   */
+  previewCompletion = catchAsync(async (req, res) => {
+    const preview = await programLifecycleService.preview(req.params.id, req.user);
+    res.status(200).json(successResponse('Program completion', preview));
+  });
+
+  /**
+   * Formally close a program
+   * @route POST /api/programs/:id/close
+   * @access Admin
+   */
+  closeProgram = catchAsync(async (req, res) => {
+    const program = await programLifecycleService.closeProgram(req.params.id, req.user, req.body || {});
+    res.status(200).json(successResponse('Program closed', program));
+  });
+
+  /**
+   * Reopen a formally closed program
+   * @route POST /api/programs/:id/reopen
+   * @access Admin
+   */
+  reopenProgram = catchAsync(async (req, res) => {
+    const result = await programLifecycleService.reopenProgram(
+      req.params.id,
+      req.body.reason,
+      req.user
+    );
+    res.status(200).json(successResponse('Program reopened', result));
+  });
+
+  /**
+   * Final results after program close
+   * @route GET /api/programs/:id/results
+   * @access Admin, Mentor, Mentee (scoped in service)
+   */
+  getFinalResults = catchAsync(async (req, res) => {
+    const results = await programLifecycleService.results(req.params.id, req.user);
+    res.status(200).json(successResponse('Final results', results));
   });
 }
 

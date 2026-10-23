@@ -1,15 +1,20 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
-import { X, Sparkles, ArrowRight } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { X, ArrowRight, Flame, Trophy } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/context/AuthContext";
-import { logicalPathname, workspacePath } from "@/lib/services/workspace-scope";
+import { activeWorkspaceSlug, logicalPathname, workspacePath } from "@/lib/services/workspace-scope";
 import {
   gamificationApi,
   type PointsHistoryEntry,
 } from "@/lib/services/gamification-api";
+
+/** Daily login is awarded on auth; keep enough window to finish onboarding. */
+const DAILY_LOGIN_FRESH_MS = 15 * 60 * 1000;
+/** Single live award (task approve, etc.) — not a seed backlog. */
+const LIVE_AWARD_FRESH_MS = 90 * 1000;
 
 function formatReason(item: PointsHistoryEntry): string {
   if (item.reason && item.reason.trim()) {
@@ -30,156 +35,335 @@ function formatReason(item: PointsHistoryEntry): string {
   return typeMap[item.sourceType] || "Activity Milestone";
 }
 
+function readSeenIds(cacheKey: string): string[] {
+  try {
+    const stored = JSON.parse(localStorage.getItem(cacheKey) || "[]");
+    return Array.isArray(stored)
+      ? stored.filter((id): id is string => typeof id === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeSeenIds(cacheKey: string, ids: string[]) {
+  try {
+    const existing = readSeenIds(cacheKey);
+    const updated = Array.from(new Set([...existing, ...ids]));
+    localStorage.setItem(cacheKey, JSON.stringify(updated.slice(-150)));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function ageMs(item: PointsHistoryEntry): number {
+  const t = new Date(item.createdAt).getTime();
+  return Number.isFinite(t) ? Date.now() - t : Number.POSITIVE_INFINITY;
+}
+
+/** Pick at most one toast-worthy row; never a backlog dump from demo seed. */
+function pickToastItems(unseen: PointsHistoryEntry[]): PointsHistoryEntry[] {
+  const daily = unseen
+    .filter((i) => i.sourceType === "daily_login" && ageMs(i) <= DAILY_LOGIN_FRESH_MS)
+    .sort((a, b) => ageMs(a) - ageMs(b));
+  if (daily.length) return [daily[0]];
+
+  const live = unseen
+    .filter((i) => i.sourceType !== "daily_login" && ageMs(i) <= LIVE_AWARD_FRESH_MS)
+    .sort((a, b) => ageMs(a) - ageMs(b));
+  // One live award only — multiple “fresh” rows almost always means seed/backfill.
+  if (live.length === 1) return live;
+  return [];
+}
+
+/** Hide toast during profile setup only — do not treat /login as blocked or we
+ *  mark the fresh daily-login XP as “seen” before the mentee reaches the app. */
+function isOnboardingPath(logical: string, raw: string): boolean {
+  return logical.startsWith("/onboarding") || raw.includes("/onboarding");
+}
+
 export function PointsEarnedNotifier() {
   const { user } = useAuth();
-  const pathname = logicalPathname(usePathname());
+  const rawPath = usePathname() || "";
+  const pathname = logicalPathname(rawPath);
+  const hasWorkspace = Boolean(activeWorkspaceSlug());
   const [items, setItems] = useState<PointsHistoryEntry[]>([]);
-  const [visible, setVisible] = useState(false);
+  const [itemsOwnerId, setItemsOwnerId] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
+  /**
+   * How many days in a row, for a check-in toast.
+   *
+   * The toast used to lead with "+1 XP", which is not a number anybody can
+   * care about — it is the same every day and it buys nothing on its own. The
+   * streak is the number that makes someone come back tomorrow, and it was the
+   * one thing the card did not show. Null until it arrives, so the toast can
+   * open immediately and fill in.
+   */
+  const [streak, setStreak] = useState<number | null>(null);
+  const [dismissedOwnerId, setDismissedOwnerId] = useState<string | null>(null);
+
+  const blocked = !hasWorkspace || isOnboardingPath(pathname, rawPath);
+  const userId = user?.id || null;
+  const dismissed = dismissedOwnerId === userId;
+  const visible = !blocked && !dismissed && itemsOwnerId === userId && items.length > 0;
+
+  // Hide toast on onboarding, but keep a fresh daily_login toastable for after setup.
   useEffect(() => {
-    setItems([]);
-    setVisible(false);
-    setDismissed(false);
-  }, [user?.id]);
-
-  const checkUnseenPoints = useCallback(async () => {
-    if (!user || !user.id || dismissed) return;
-
-    const cacheKey = `pathment_seen_point_ids_${user.id}`;
-    let seenIds: string[] = [];
-    try {
-      const stored = JSON.parse(localStorage.getItem(cacheKey) || "[]");
-      seenIds = Array.isArray(stored)
-        ? stored.filter((id): id is string => typeof id === "string")
-        : [];
-    } catch {
-      seenIds = [];
-    }
-
-    try {
-      const history = await gamificationApi.getUserPointsHistory(user.id, 10);
-      const unseen = (history || []).filter(
-        (item) => Number(item.pointsChange) > 0 && !seenIds.includes(item.id),
-      );
-
-      if (unseen.length > 0) {
-        setItems(unseen);
-
-        setVisible(true);
+    if (!blocked) return;
+    if (!userId) return;
+    const cacheKey = `pathment_seen_point_ids_${userId}`;
+    let cancelled = false;
+    (async () => {
+      try {
+        const history = await gamificationApi.getUserPointsHistory(userId, 20);
+        if (cancelled) return;
+        // Mark backlog only — never eat today’s fresh daily check-in.
+        const ids = (history || [])
+          .filter(
+            (i) =>
+              Number(i.pointsChange) > 0 &&
+              !(i.sourceType === "daily_login" && ageMs(i) <= DAILY_LOGIN_FRESH_MS),
+          )
+          .map((i) => i.id);
+        if (ids.length) writeSeenIds(cacheKey, ids);
+      } catch {
+        /* ignore */
       }
-    } catch {
-      // Silently ignore points fetch errors
-    }
-  }, [user, dismissed]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [blocked, userId]);
 
   useEffect(() => {
-    if (user?.id) {
-      const timer = setTimeout(() => {
-        checkUnseenPoints();
-      }, 800);
-      return () => clearTimeout(timer);
-    }
-  }, [user?.id, checkUnseenPoints]);
+    if (!userId || dismissed || blocked) return;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      const cacheKey = `pathment_seen_point_ids_${userId}`;
+      const seenIds = new Set(readSeenIds(cacheKey));
+      try {
+        const history = await gamificationApi.getUserPointsHistory(userId, 15);
+        if (cancelled) return;
+        const unseen = (history || []).filter(
+          (item) => Number(item.pointsChange) > 0 && !seenIds.has(item.id),
+        );
+        const toastItems = pickToastItems(unseen);
+        const toastIds = new Set(toastItems.map((item) => item.id));
+        const quietIds = unseen.filter((item) => !toastIds.has(item.id)).map((item) => item.id);
+        if (quietIds.length) writeSeenIds(cacheKey, quietIds);
+        if (toastItems.length) {
+          setItems(toastItems);
+          setItemsOwnerId(userId);
+          if (toastItems[0].sourceType === 'daily_login') {
+            // Secondary and optional: a missing streak costs the headline, not
+            // the toast.
+            gamificationApi.getUserStats(userId)
+              .then((stats) => { if (!cancelled) setStreak(Number(stats?.currentStreak) || 0); })
+              .catch(() => { /* headline falls back to the check-in itself */ });
+          }
+        }
+      } catch {
+        // A toast is optional; points history remains available on the page.
+      }
+    }, 900);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [userId, dismissed, blocked]);
 
-  const handleDismiss = useCallback(() => {
-    setVisible(false);
-    setDismissed(true);
-
-    if (!user?.id || items.length === 0) return;
-
-    const cacheKey = `pathment_seen_point_ids_${user.id}`;
-    try {
-      const existing: string[] = JSON.parse(
-        localStorage.getItem(cacheKey) || "[]",
-      );
-      const newIds = items.map((i) => i.id);
-      const updated = Array.from(new Set([...existing, ...newIds]));
-      localStorage.setItem(cacheKey, JSON.stringify(updated.slice(-100)));
-    } catch {
-      // Ignore storage errors
-    }
-  }, [user?.id, items]);
+  const handleDismiss = () => {
+    if (!userId || items.length === 0) return;
+    setDismissedOwnerId(userId);
+    writeSeenIds(
+      `pathment_seen_point_ids_${userId}`,
+      items.map((i) => i.id),
+    );
+  };
 
   useEffect(() => {
     if (visible && !paused) {
       const timer = setTimeout(() => {
-        handleDismiss();
-      }, 6000);
+        if (!userId) return;
+        setDismissedOwnerId(userId);
+        writeSeenIds(
+          `pathment_seen_point_ids_${userId}`,
+          items.map((item) => item.id),
+        );
+      }, 6500);
       return () => clearTimeout(timer);
     }
-  }, [visible, paused, handleDismiss]);
+  }, [visible, paused, userId, items]);
 
-  if (!visible || items.length === 0) return null;
+  if (blocked || !visible || items.length === 0) return null;
 
   const totalPoints = items.reduce(
     (sum, item) => sum + Number(item.pointsChange || 0),
     0,
   );
   const primaryItem = items[0];
-
-  const dailyLogin =
-    items.length === 1 && primaryItem.sourceType === "daily_login";
+  const dailyLogin = primaryItem.sourceType === "daily_login";
   const rewardsHref = pathname.startsWith("/mentee")
     ? "/mentee/gamification"
     : null;
 
+  /**
+   * The streak is the headline, not the points.
+   *
+   * A check-in is +1 XP every single day, so leading with it shouted the one
+   * number that can never change. "12 days" is what makes tomorrow matter, and
+   * it is the whole reason a streak mechanic works.
+   */
+  const days = streak ?? 0;
+  const headline = dailyLogin
+    ? (days > 1 ? `${days} day streak` : "Checked in today")
+    : formatReason(primaryItem);
+  const sub = dailyLogin
+    ? (days > 1 ? "Come back tomorrow to keep it alive" : "Come back tomorrow to start a streak")
+    : "Your level progress just moved forward";
+
+  /**
+   * The run so far, one pip per day.
+   *
+   * Capped at fourteen: past that the row becomes a texture rather than a
+   * count, and the number above it already says the total. Derived from the
+   * streak, never invented.
+   */
+  const PIPS = 14;
+  const pips = dailyLogin && streak !== null
+    ? Array.from({ length: Math.min(Math.max(days, 7), PIPS) }, (_, i) => i < days)
+    : null;
+
   return (
-    <aside
-      onMouseEnter={() => setPaused(true)}
-      onMouseLeave={() => setPaused(false)}
-      onFocus={() => setPaused(true)}
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget))
-          setPaused(false);
-      }}
-      role="status"
-      aria-live="polite"
-      aria-atomic="true"
-      className="fixed bottom-5 left-4 right-4 sm:right-auto lg:left-72 z-50 sm:w-96 rounded-2xl border border-border bg-card p-4 text-foreground shadow-lg motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200"
-    >
-      <div className="flex items-start gap-3">
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200">
-          <Sparkles className="h-5 w-5" aria-hidden="true" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold">
-            {dailyLogin
-              ? "A little progress, every day"
-              : items.length > 1
-                ? `${items.length} rewards earned`
-                : formatReason(primaryItem)}
-          </p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            <span className="font-semibold text-foreground">
-              +{totalPoints} {totalPoints === 1 ? "point" : "points"}
+    <div className="pointer-events-none fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+0.75rem)] z-[80] flex justify-center sm:inset-auto sm:right-6 sm:top-6 sm:block">
+      <aside
+        onMouseEnter={() => setPaused(true)}
+        onMouseLeave={() => setPaused(false)}
+        onFocus={() => setPaused(true)}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget))
+            setPaused(false);
+        }}
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        aria-label={`${headline}. You earned ${totalPoints} XP.`}
+        /**
+         * Dark in both themes, on purpose.
+         *
+         * This is the one moment in the product that is a celebration rather
+         * than a piece of furniture, and a card that matches every other card
+         * cannot say so. A deep brand surface separates it from the page
+         * underneath without needing an outline to do it.
+         */
+        className="pointer-events-auto relative w-full max-w-[400px] overflow-hidden rounded-[1.25rem] bg-linear-to-br from-brand-800 via-brand-900 to-slate-950 text-white shadow-[0_20px_50px_-16px_rgba(6,78,59,0.65)] ring-1 ring-white/10 motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:slide-in-from-bottom-2 sm:motion-safe:slide-in-from-top-2 sm:motion-safe:duration-300"
+      >
+        {/* A few pieces of confetti behind the mark. Placed by hand rather than
+            at random so they never collide with the close button, and gone
+            entirely when motion is turned down. */}
+        <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-0 w-32 overflow-hidden">
+          {[
+            { c: "bg-amber-300", s: "h-1.5 w-1.5 rounded-full", t: "top-5 left-6", d: "0ms" },
+            { c: "bg-emerald-300", s: "h-1 w-3 rounded-full rotate-12", t: "top-9 left-20", d: "260ms" },
+            { c: "bg-amber-400", s: "h-1 w-2.5 rounded-full -rotate-12", t: "bottom-7 left-7", d: "520ms" },
+            { c: "bg-white/70", s: "h-1 w-1 rounded-full", t: "bottom-5 left-24", d: "140ms" },
+            { c: "bg-emerald-200", s: "h-1.5 w-1.5 rounded-full", t: "top-4 left-28", d: "400ms" },
+          ].map((bit, i) => (
+            <span
+              key={i}
+              style={{ animationDelay: bit.d }}
+              className={`absolute ${bit.t} ${bit.s} ${bit.c} opacity-80 motion-safe:animate-pm-confetti`}
+            />
+          ))}
+        </div>
+
+        <div className="relative flex items-center gap-4 p-4 pr-10">
+          {/*
+              One mark carrying both facts: what happened, and what it was
+              worth. The XP rides on the flame instead of competing with the
+              streak for the headline.
+          */}
+          <div className="relative shrink-0">
+            <div
+              className={`flex h-14 w-14 items-center justify-center rounded-2xl shadow-lg ${
+                dailyLogin
+                  ? "bg-linear-to-br from-amber-300 to-orange-600 shadow-orange-900/40"
+                  : "bg-linear-to-br from-emerald-300 to-teal-600 shadow-emerald-900/40"
+              }`}
+            >
+              {dailyLogin
+                ? <Flame className="h-7 w-7 text-white drop-shadow" aria-hidden="true" />
+                : <Trophy className="h-7 w-7 text-white drop-shadow" aria-hidden="true" />}
+            </div>
+            <span className="absolute -bottom-1.5 -right-1.5 rounded-full bg-white px-1.5 py-0.5 text-[11px] font-extrabold tabular-nums text-slate-900 shadow-md">
+              +{totalPoints}
             </span>
-            {dailyLogin
-              ? " for checking in today."
-              : items.length > 1
-                ? " from your recent activity."
-                : " added to your progress."}
-          </p>
-          {rewardsHref && (
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-300/90">
+              {dailyLogin ? "Daily streak" : "Progress unlocked"}
+            </p>
+            <p className="mt-0.5 truncate text-xl font-extrabold tracking-tight">{headline}</p>
+
+            {pips ? (
+              <div className="mt-2 flex items-center gap-1" aria-hidden="true">
+                {pips.map((lit, i) => (
+                  <span
+                    key={i}
+                    style={{ animationDelay: `${i * 45}ms` }}
+                    className={`h-1.5 rounded-full motion-safe:animate-pm-pip ${
+                      lit ? "w-4 bg-amber-400" : "w-2.5 bg-white/20"
+                    }`}
+                  />
+                ))}
+                {days > PIPS && (
+                  <span className="ml-1 text-[11px] font-semibold text-amber-300/90">+{days - PIPS}</span>
+                )}
+              </div>
+            ) : null}
+
+            <p className="mt-1.5 truncate text-xs text-white/60">{sub}</p>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleDismiss}
+            className="absolute right-2.5 top-2.5 flex h-7 w-7 items-center justify-center rounded-lg text-white/50 transition-colors hover:bg-white/10 hover:text-white"
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {rewardsHref && (
+          <div className="relative px-4 pb-4">
             <Link
               href={workspacePath(rewardsHref)}
               onClick={handleDismiss}
-              className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-brand-700 dark:text-brand-300"
+              className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3.5 py-1.5 text-xs font-bold text-white ring-1 ring-white/15 transition-colors hover:bg-white/20"
             >
-              View rewards{" "}
+              Keep going
               <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
             </Link>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={handleDismiss}
-          className="rounded-lg p-2 text-muted-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-brand-500"
-          aria-label="Dismiss reward notification"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-    </aside>
+          </div>
+        )}
+
+        {/*
+            The countdown, drawn.
+
+            It always left after 6.5s and hovering always held it; neither was
+            visible, so the card read as something to deal with rather than
+            something passing through.
+        */}
+        <span
+          aria-hidden="true"
+          className={`absolute bottom-0 left-0 h-0.5 origin-left bg-amber-400/80 ${
+            paused ? "" : "animate-pm-toast-timer"
+          }`}
+          style={paused ? { width: "100%", opacity: 0.3 } : undefined}
+        />
+      </aside>
+    </div>
   );
 }

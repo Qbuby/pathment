@@ -17,6 +17,19 @@
 const VISIBLE_MEMBERSHIP_STATUSES = ['active', 'paused'];
 
 /**
+ * The statuses that mean "this person WAS here", for reading history.
+ *
+ * Distinct from VISIBLE_MEMBERSHIP_STATUSES, which answers "do they belong here
+ * now" — the right question for access, and the wrong one for a record. A
+ * mentee who moved clans has a 'removed' row on the clan they left, and that
+ * row is the only trace that any of it happened. Nothing else in the codebase
+ * reads 'removed'; a cross-clan record is the one thing that must.
+ *
+ * 'invited' is still excluded: they never joined, so there is no history.
+ */
+const HISTORICAL_MEMBERSHIP_STATUSES = ['active', 'paused', 'removed'];
+
+/**
  * Clan roles, strongest first.
  *
  * One person can hold several in one clan — the promotion path deliberately
@@ -29,4 +42,4 @@ const CLAN_ROLE_RANK = { lead_mentor: 3, core_team: 2, co_mentor: 1, mentee: 0 }
 const strongestClanRole = (roles) =>
   [...(roles || [])].sort((a, b) => (CLAN_ROLE_RANK[b] ?? -1) - (CLAN_ROLE_RANK[a] ?? -1))[0] || null;
 
-module.exports = { VISIBLE_MEMBERSHIP_STATUSES, CLAN_ROLE_RANK, strongestClanRole };
+module.exports = { VISIBLE_MEMBERSHIP_STATUSES, HISTORICAL_MEMBERSHIP_STATUSES, CLAN_ROLE_RANK, strongestClanRole };

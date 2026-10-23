@@ -5,6 +5,7 @@ import { qk, useApiQuery } from '@/lib/query';
 import { mentorApi } from '@/lib/services/enrollment-api';
 import { usePagination } from '@/lib/hooks/shared/usePagination';
 import { useDebounce } from '@/lib/hooks/shared/useDebounce';
+import { useAdminScope } from '@/lib/context/AdminScopeContext';
 
 export interface MentorListItem {
   id: string;
@@ -54,12 +55,15 @@ export function useMentorsList(): UseMentorsListReturn {
   const [search, setSearchInput] = useState('');
   const [acceptingFilter, setAcceptingFilter] = useState<AcceptingFilter>('all');
   const debouncedSearch = useDebounce(search, 400);
+  const { query: scope } = useAdminScope();
+  const scopeKey = `${scope.programId || ''}:${scope.clanId || ''}`;
 
   const { data, loading, error, refetch } = useApiQuery<MentorPage>({
-    queryKey: [...qk.admin.mentorList(pagination.page, pagination.limit, debouncedSearch.trim()), acceptingFilter],
+    queryKey: [...qk.admin.mentorList(pagination.page, pagination.limit, debouncedSearch.trim()), acceptingFilter, scopeKey],
     queryFn: async () => {
       const response = await mentorApi.getAll({
         ...(debouncedSearch.trim() && { search: debouncedSearch.trim() }),
+        ...scope,
         page: pagination.page,
         limit: pagination.limit,
         ...(acceptingFilter !== 'all' && {
@@ -84,7 +88,7 @@ export function useMentorsList(): UseMentorsListReturn {
   useEffect(() => {
     pagination.reset();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, acceptingFilter]);
+  }, [debouncedSearch, acceptingFilter, scopeKey]);
 
   return {
     mentors,

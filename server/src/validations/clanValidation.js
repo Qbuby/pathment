@@ -25,6 +25,25 @@ module.exports = {
     id: Joi.string().uuid().required()
   }),
 
+  continuationParams: Joi.object({
+    id: Joi.string().uuid().required(),
+    menteeId: Joi.string().uuid().required(),
+  }),
+
+  continueWorkBody: Joi.object({
+    // Either category may be present as an empty array. The drawer submits two
+    // independent selection groups, so selecting only roadmaps naturally means
+    // `taskIds: []` (and vice versa).
+    roadmapIds: Joi.array().items(Joi.string().uuid()).max(20).optional(),
+    taskIds: Joi.array().items(Joi.string().uuid()).max(50).optional(),
+    dueDate: Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).optional().allow('', null),
+  }).custom((value, helpers) => {
+    if ((value.roadmapIds?.length || 0) + (value.taskIds?.length || 0) === 0) {
+      return helpers.message({ custom: 'Select at least one roadmap or custom task' });
+    }
+    return value;
+  }),
+
   // Admin only toggles permission — join window is set by the lead on generate/regenerate.
   publicJoinAccess: Joi.object({
     allowed: Joi.boolean().required()
@@ -61,5 +80,22 @@ module.exports = {
 
   publicJoinRequestBody: Joi.object({
     message: Joi.string().trim().max(2000).allow('', null).optional()
+  }),
+
+  standingMembersBody: Joi.object({
+    menteeIds: Joi.array()
+      .items(Joi.string().uuid())
+      .min(1)
+      .max(100)
+      .required()
+      .messages({
+        'array.min': 'Select between 1 and 100 mentees',
+        'array.max': 'Select between 1 and 100 mentees',
+        'any.required': 'Select between 1 and 100 mentees'
+      })
+  }),
+
+  standingActivityQuery: Joi.object({
+    period: Joi.string().valid('30d', 'quarter', 'joined').default('30d')
   })
 };

@@ -1,6 +1,7 @@
 const { catchAsync } = require('../middlewares/errorHandler');
 const { successResponse } = require('../utils/responses');
 const lockService = require('../services/cohortReviewLockService');
+const { requestedClanId } = require('../middlewares/portalScope');
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
 
@@ -10,10 +11,23 @@ const overview = catchAsync(async (req, res) => {
   res.status(200).json(successResponse('Review lock state', data));
 });
 
-/** PATCH /api/admin/review-lock { locked } → { locked } */
+/**
+ * PATCH /api/admin/review-lock { locked, scopeType?, scopeId? }
+ *
+ * No scope means the organisation, which is what this endpoint always did.
+ * `scopeType: 'program' | 'clan'` with an id locks or unlocks that one place.
+ */
 const setLock = catchAsync(async (req, res) => {
-  const locked = await lockService.setDeleteLock(Boolean(req.body?.locked), req.user.id);
-  res.status(200).json(successResponse('Review lock updated', { locked }));
+  const { locked, scopeType, scopeId } = req.body || {};
+  if (scopeType && scopeType !== 'organization') {
+    const result = await lockService.setScopeLock(
+      { scopeType, scopeId, locked: Boolean(locked) }, req.user.id,
+    );
+    res.status(200).json(successResponse('Review lock updated', result));
+    return;
+  }
+  const value = await lockService.setDeleteLock(Boolean(locked), req.user.id);
+  res.status(200).json(successResponse('Review lock updated', { locked: value }));
 });
 
 /** GET /api/admin/review-lock/requests?status=pending|all → { requests } */
@@ -24,12 +38,14 @@ const listRequests = catchAsync(async (req, res) => {
 
 /** POST /api/admin/review-lock/requests/:id/respond { approve, durationHours?, expiresAt?, note? } → { request, grant } */
 const respondToRequest = catchAsync(async (req, res) => {
-  const { approve, durationHours, expiresAt, note } = req.body || {};
+  const { approve, durationHours, expiresAt, note, scopeType, scopeId } = req.body || {};
   const result = await lockService.respondToRequest(req.params.id, req.user.id, {
     approve: Boolean(approve),
     durationHours,
     expiresAt,
     note,
+    scopeType,
+    scopeId,
   });
   res.status(200).json(successResponse('Request handled', result));
 });
@@ -56,7 +72,7 @@ const logs = catchAsync(async (req, res) => {
 
 /** GET /api/mentor/review/lock-state → { locked, hasActiveGrant, grantExpiresAt, pendingRequest } */
 const lockState = catchAsync(async (req, res) => {
-  const data = await lockService.getLockStateForMentor(req.user.id);
+  const data = await lockService.getLockStateForMentor(req.user.id, requestedClanId(req));
   res.status(200).json(successResponse('Lock state', data));
 });
 

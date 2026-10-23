@@ -16,6 +16,8 @@ export const PERMISSIONS = {
   INVITE_CREATE: 'invite.create',
   CLAN_CREATE: 'clan.create',
   CLAN_MANAGE_MEMBERS: 'clan.manage_members',
+  /** Upload / change the clan photo. Co-mentors have it by default; lead can revoke. */
+  CLAN_AVATAR: 'clan.avatar',
   MENTEE_VIEW: 'mentee.view',
   MENTEE_MANAGE: 'mentee.manage',
   MENTEE_ADD: 'mentee.add',
@@ -23,6 +25,18 @@ export const PERMISSIONS = {
   USER_MANAGE: 'user.manage',
   TASK_ASSIGN: 'task.assign',
   TASK_REVIEW: 'task.review',
+
+  /** System Pool (pre-clan selection), each checked at the pool's programme. */
+  POOL_MANAGE: 'pool.manage',
+  POOL_MEMBERS: 'pool.members',
+  POOL_ASSIGN: 'pool.assign',
+  POOL_REVIEW: 'pool.review',
+  POOL_SELECT: 'pool.select',
+
+  /** Arrange your own day. A mentee holds this at self scope. */
+  SCHEDULE_PLAN: 'schedule.plan',
+  /** Shape somebody else's day: assign a template, lock a block, push to all. */
+  SCHEDULE_ASSIGN: 'schedule.assign',
   /** Sign off the grade a mentee's certificate is issued at. */
   CERTIFICATE_VERIFY: 'certificate.verify',
   LIBRARY_MANAGE: 'library.manage',
@@ -50,7 +64,10 @@ export const CO_MENTOR_PERMISSIONS: { key: Permission; label: string; descriptio
   { key: PERMISSIONS.MENTEE_TRANSFER, label: 'Move mentees between clans', description: 'Ask another clan to take a mentee, and accept mentees moving into this clan.' },
   { key: PERMISSIONS.TASK_ASSIGN, label: 'Assign tasks', description: 'Create and assign tasks to mentees.' },
   { key: PERMISSIONS.TASK_REVIEW, label: 'Review work', description: 'Mark tasks complete and leave feedback.' },
+  { key: PERMISSIONS.SCHEDULE_PLAN, label: 'Plan a day', description: 'Put work into a mentee\'s time blocks, move it, and tick it off with them.' },
+  { key: PERMISSIONS.SCHEDULE_ASSIGN, label: 'Assign schedules', description: 'Give a mentee a day-shape, lock a block, and push one block to the whole clan.' },
   { key: PERMISSIONS.CERTIFICATE_VERIFY, label: 'Verify certificates', description: 'Confirm or change the grade a mentee\'s certificate is issued at.' },
+  { key: PERMISSIONS.CLAN_AVATAR, label: 'Change clan photo', description: 'Upload or replace the clan photo. On by default; the lead can turn this off.' },
   { key: PERMISSIONS.ROADMAP_PUBLISH_LOCAL, label: 'Publish roadmaps', description: "Build and publish the clan's roadmap." },
   { key: PERMISSIONS.LIBRARY_MANAGE, label: 'Manage library', description: 'Add and edit shared resources.' },
   { key: PERMISSIONS.ANNOUNCEMENT_POST, label: 'Post announcements', description: 'Broadcast updates to the clan.' },

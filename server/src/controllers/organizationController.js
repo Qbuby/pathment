@@ -3,7 +3,7 @@ const { successResponse } = require('../utils/responses');
 const { catchAsync } = require('../middlewares/errorHandler');
 
 const current = catchAsync(async (req, res) => {
-  const data = await organizationService.overview(req.user.id, req.organizationId);
+  const data = await organizationService.overview(req.user, req.organizationId);
   res.json(successResponse('Organization retrieved', data));
 });
 
@@ -23,13 +23,23 @@ const listPlans = catchAsync(async (_req, res) => {
 });
 
 const updateCurrent = catchAsync(async (req, res) => {
-  const organization = await organizationService.update(req.user.id, req.organizationId, req.body || {});
+  const organization = await organizationService.update(req.user, req.organizationId, req.body || {});
   res.json(successResponse('Organization updated', { organization }));
 });
 
 const requestPlan = catchAsync(async (req, res) => {
-  const subscription = await organizationService.requestPlan(req.user.id, req.organizationId, req.body?.planKey);
+  const subscription = await organizationService.requestPlan(req.user, req.organizationId, req.body?.planKey);
   res.json(successResponse('Plan change requested', { subscription }));
+});
+
+const uploadLogo = catchAsync(async (req, res) => {
+  const organization = await organizationService.setLogo(req.user, req.organizationId, req.file);
+  res.json(successResponse('Workspace logo updated', { organization }));
+});
+
+const removeLogo = catchAsync(async (req, res) => {
+  const organization = await organizationService.removeLogo(req.user, req.organizationId);
+  res.json(successResponse('Workspace logo removed', { organization }));
 });
 
 const demo = catchAsync(async (req, res) => {
@@ -61,4 +71,4 @@ const demo = catchAsync(async (req, res) => {
   }));
 });
 
-module.exports = { demo, current, listMine, create, listPlans, updateCurrent, requestPlan };
+module.exports = { demo, current, listMine, create, listPlans, updateCurrent, requestPlan, uploadLogo, removeLogo };

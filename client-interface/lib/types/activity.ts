@@ -81,3 +81,25 @@ export interface AdminActivityOverview {
   };
   menteeStats: MenteeActivityStat[];
 }
+
+/** One page in the feature-usage report, as the server counted it. */
+export interface PageUsage {
+  page: string;
+  views: number;
+  people: number;
+  lastUsed: string | null;
+}
+
+export interface FeatureUsageResponse {
+  days: number;
+  pages: PageUsage[];
+  /** People of each role who opened anything in the window. */
+  activeByRole: Record<string, number>;
+  /** Active members of each role — the denominator. */
+  eligibleByRole: Record<string, number>;
+  daily: { day: string; views: number; people: number }[];
+  /** The first page view ever recorded, so the report cannot overclaim. */
+  trackingSince: string | null;
+  /** False when the window reaches back further than the record does. */
+  coversFullWindow: boolean;
+}

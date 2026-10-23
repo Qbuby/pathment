@@ -1,4 +1,5 @@
 const { workspaceMemberStatuses } = require('./workspaceMemberStatus');
+const { VISIBLE_MEMBERSHIP_STATUSES } = require('../config/membership');
 const { models } = require('../db');
 const { Op, fn, col } = require('sequelize');
 const { catchAsync } = require('../middlewares/errorHandler');
@@ -10,7 +11,7 @@ const authzService = require('../services/authzService');
  * List all registered mentees with profile stats (admin only)
  */
 const getAllMentees = catchAsync(async (req, res) => {
-  const { search, page = 1, limit = 20 } = req.query;
+  const { search, page = 1, limit = 20, programId, clanId } = req.query;
   const pageNum = Math.max(1, parseInt(page));
   const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
   const offset = (pageNum - 1) * limitNum;
@@ -28,6 +29,40 @@ const getAllMentees = catchAsync(async (req, res) => {
     });
     const ids = [...new Set(enr.map((e) => e.menteeId).filter(Boolean))];
     where.id = ids.length ? { [Op.in]: ids } : { [Op.in]: ['00000000-0000-0000-0000-000000000000'] };
+  }
+
+  /**
+   * Narrow to one programme or one clan.
+   *
+   * The directory listed every mentee in the workspace and offered a name
+   * search, which is the only question it could answer. An admin running
+   * several programmes could not ask "who is in this one", let alone "who is
+   * in this clan" — the two questions the page exists for.
+   *
+   * SUBTRACTIVE, like every other scope in the product: this intersects with
+   * the programme scope above, so naming a programme a program_admin does not
+   * administer returns nothing rather than widening what they can see.
+   */
+  const narrowTo = async (ids) => {
+    const current = where.id?.[Op.in];
+    const next = current ? ids.filter((id) => current.includes(id)) : ids;
+    where.id = { [Op.in]: next.length ? next : ['00000000-0000-0000-0000-000000000000'] };
+  };
+
+  if (clanId) {
+    const members = await models.ClanMembership.findAll({
+      where: { clanId, role: 'mentee', status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES } },
+      attributes: ['userId'], raw: true,
+    });
+    await narrowTo([...new Set(members.map((m) => m.userId).filter(Boolean))]);
+  } else if (programId) {
+    // A programme's mentees are the people enrolled on it. Clan membership
+    // alone would miss anyone enrolled but not yet placed, who is exactly the
+    // person an admin opens this page to find.
+    const enrolled = await models.Enrollment.findAll({
+      where: { programId }, attributes: ['menteeId'], raw: true,
+    });
+    await narrowTo([...new Set(enrolled.map((e) => e.menteeId).filter(Boolean))]);
   }
 
   const searchConditions = search
@@ -154,20 +189,21 @@ const getMenteeById = catchAsync(async (req, res) => {
   // mentee's active clan(s) — the clan's lead mentor — and pull co-mentors too.
   // Mirrors getMentorById's clan-first approach. All queries are batched.
   const clanMemberships = await models.ClanMembership.findAll({
-    where: { userId: id, status: 'active', role: 'mentee' },
+    where: { userId: id, status: { [Op.in]: ['active', 'paused'] }, role: 'mentee' },
     include: [{
       model: models.Clan,
       as: 'clan',
-      attributes: ['id', 'name', 'programId', 'leadMentorId'],
+      attributes: ['id', 'name', 'programId', 'leadMentorId', 'frozenAt', 'kind'],
       include: [{ model: models.Program, as: 'program', attributes: ['id', 'name'] }],
     }],
   }).catch(() => []);
 
-  const clans = clanMemberships.map((m) => m.clan).filter(Boolean);
+  // Match mentee ClanContext: live (non-frozen) first — usually standing — then name.
+  const clans = clanMemberships.map((m) => m.clan).filter(Boolean)
+    .sort((a, b) => Number(!!a.frozenAt) - Number(!!b.frozenAt) || String(a.name || '').localeCompare(String(b.name || '')));
   const clanIds = [...new Set(clans.map((c) => c.id))];
-  // Primary (current) clan = the first active membership's clan.
   const currentClan = clans[0]
-    ? { id: clans[0].id, name: clans[0].name, programId: clans[0].programId }
+    ? { id: clans[0].id, name: clans[0].name, programId: clans[0].programId, kind: clans[0].kind, frozenAt: clans[0].frozenAt }
     : null;
 
   // Assigned mentor = the (current) clan's lead mentor. Collect lead mentors

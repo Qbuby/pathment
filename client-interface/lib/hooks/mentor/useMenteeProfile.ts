@@ -72,6 +72,20 @@ export interface MenteeProfile extends CohortMentee {
   notes: MeetingNote[];
   collaborators: ProfileCollaborator[];
   dailyLogs: { dateKey: string; tasksDone: number; note: string | null; loggedAt: string }[];
+  /**
+   * Showing up, counted from the daily log. The one progress signal that
+   * exists in a standing clan, where there is no enrollment and therefore no
+   * week number, programme length or overall percentage.
+   */
+  consistency?: {
+    currentStreakDays: number;
+    longestStreakDays: number;
+    loggedLast7: number;
+    lastLoggedOn: string | null;
+    inFlight: number;
+    taskCount: number;
+    completedCount: number;
+  };
   tasksByStatus: Record<string, Array<{
     id: string;
     title: string;

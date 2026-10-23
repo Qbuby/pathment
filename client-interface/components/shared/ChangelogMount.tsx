@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { PackageOpen, X } from 'lucide-react';
 import { type ChangelogEntry } from '@/lib/services/changelog-api';
 import { useChangelogFeed } from '@/lib/hooks/shared/useChangelogFeed';
+import { useScrollLock } from '@/lib/hooks/useScrollLock';
 
 interface ChangelogMountProps {
   role: string;
@@ -40,13 +41,13 @@ export default function ChangelogMount({ role }: ChangelogMountProps) {
     setOpen(true);
   }, [feed.majorUnseen, dismissed, open]);
 
+  useScrollLock(open);
+
   useEffect(() => {
     if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') dismiss(); };
     document.addEventListener('keydown', onKey);
-    return () => { document.body.style.overflow = prev; document.removeEventListener('keydown', onKey); };
+    return () => { document.removeEventListener('keydown', onKey); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 

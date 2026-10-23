@@ -8,6 +8,7 @@ import {
 import { Drawer } from '@/components/shared/Drawer';
 import { quizApi, type QuizReview, type QuizReviewItem } from '@/lib/services/quiz-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
+import { Avatar } from '@/components/shared/Avatar';
 
 const KIND_ICON = {
   single: ListChecks,
@@ -34,10 +35,12 @@ export function QuizReviewDrawer({
   taskId,
   onClose,
   onReviewed,
+  readOnly = false,
 }: {
   taskId: string;
   onClose: () => void;
   onReviewed?: () => void;
+  readOnly?: boolean;
 }) {
   const [loading, setLoading] = useState(true);
   const [review, setReview] = useState<QuizReview | null>(null);
@@ -67,7 +70,7 @@ export function QuizReviewDrawer({
 
   useEffect(() => { load(); }, [load]);
 
-  const canReview = !!review?.canReview;
+  const canReview = !!review?.canReview && !readOnly;
 
   const saveScore = async (it: QuizReviewItem, patch: { points?: string; note?: string }) => {
     const cur = scores[it.questionId] || { points: '', note: '' };
@@ -125,21 +128,14 @@ export function QuizReviewDrawer({
       )}
     >
       {loading || !review ? (
-        <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-slate-300" /></div>
+        <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-brand-600" /></div>
       ) : (
         <div className="space-y-5">
           {/* Mentee + score summary */}
           <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 space-y-3">
             {session?.mentee && (
               <div className="flex items-center gap-2.5">
-                {session.mentee.avatarUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={session.mentee.avatarUrl} alt={session.mentee.name} className="w-8 h-8 rounded-full object-cover" />
-                ) : (
-                  <div className="w-8 h-8 rounded-full bg-brand-100 text-brand-700 grid place-items-center text-xs font-semibold">
-                    {session.mentee.name.slice(0, 1).toUpperCase()}
-                  </div>
-                )}
+                <Avatar name={session.mentee.name} src={session.mentee.avatarUrl} size="sm" />
                 <div className="text-sm">
                   <div className="font-medium text-slate-900">{session.mentee.name}</div>
                   <div className="text-[11px] text-slate-500">

@@ -43,7 +43,7 @@ class PromotionService {
       ? await models.User.findByPk(candidate.nominatedBy, { attributes: ['firstName', 'lastName'] })
       : null;
     const clan = candidate.targetClanId
-      ? await models.Clan.findByPk(candidate.targetClanId, { attributes: ['id', 'name'] })
+      ? await models.Clan.findByPk(candidate.targetClanId, { attributes: ['id', 'name', 'programId'] })
       : null;
 
     return {
@@ -63,6 +63,14 @@ class PromotionService {
       avatar: row?.avatar || '?',
       avatarUrl: row?.profilePictureUrl || null,
       program: row?.program || null,
+      /**
+       * Which programme this nomination belongs to, for the admin filter.
+       * The clan the mentor nominated from is the better answer than the
+       * mentee's enrolment — a co-mentor seat is a seat in a clan — so it
+       * wins, and the enrolment is the fallback for a nomination made
+       * without one.
+       */
+      programId: clan?.programId || row?.programId || null,
       level: row?.level || null,
       absoluteProgress: row?.absoluteProgress ?? 0,
       onTimeRate: row?.onTimeRate ?? 0,
@@ -169,7 +177,8 @@ class PromotionService {
           actionLabel: 'Review promotions',
           relatedEntityType: entityType,
           relatedEntityId: candidate.id,
-          emailSubject: awaiting ? `Pathment: ${who} is ready for co-mentor promotion` : `Pathment: ${who} nominated for co-mentor`
+          emailSubject: awaiting ? `Pathment: ${who} is ready for co-mentor promotion` : `Pathment: ${who} nominated for co-mentor`,
+          clanId: candidate.targetClanId || null,
         },
         dedupe: { relatedEntityType: entityType, relatedEntityId: candidate.id }
       });
@@ -209,7 +218,13 @@ class PromotionService {
       where: { menteeId, stage: { [Op.ne]: 'promoted' } }
     });
     if (existing) throw new ConflictError('This mentee is already in the promotion pipeline');
-    const candidate = await models.PromotionCandidate.create({ menteeId, nominatedBy: mentorId, stage: 'nominated' });
+    const candidate = await models.PromotionCandidate.create({
+      menteeId,
+      nominatedBy: mentorId,
+      stage: 'nominated',
+      // Record the clan the mentor nominated from so promote/seat never guess.
+      targetClanId: activeClanId || null,
+    });
     await this._notifyAdmins(candidate, 'nominated');
     return this._enrich(candidate);
   }
@@ -256,7 +271,8 @@ class PromotionService {
           actionLabel: 'View promotions',
           relatedEntityType: `promotion_result_${kind}`,
           relatedEntityId: candidate.id,
-          emailSubject: promoted ? `Pathment: ${who} was promoted to co-mentor` : `Pathment: ${who}'s promotion wasn't approved`
+          emailSubject: promoted ? `Pathment: ${who} was promoted to co-mentor` : `Pathment: ${who}'s promotion wasn't approved`,
+          clanId: candidate.targetClanId || null,
         },
         dedupe: { relatedEntityType: `promotion_result_${kind}`, relatedEntityId: candidate.id }
       });
@@ -308,7 +324,8 @@ class PromotionService {
           actionLabel: 'Open Mentor view',
           relatedEntityType: 'promotion_candidate',
           relatedEntityId: candidate.id,
-          emailSubject: 'Pathment: you\'ve been promoted to co-mentor'
+          emailSubject: 'Pathment: you\'ve been promoted to co-mentor',
+          clanId: targetClan || candidate.targetClanId || null,
         },
         dedupe: { relatedEntityType: 'promotion_done', relatedEntityId: candidate.id }
       });

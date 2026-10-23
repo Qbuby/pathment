@@ -14,7 +14,7 @@ export interface OpenSlot {
 }
 
 export interface BookableMentor {
-  mentor: { id: string; name: string };
+  mentor: { id: string; name: string; profilePictureUrl?: string | null };
   slots: OpenSlot[];
 }
 

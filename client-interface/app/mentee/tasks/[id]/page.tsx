@@ -35,6 +35,8 @@ import { SubmitTaskDrawer } from "@/components/mentee/SubmitTaskDrawer";
 import { InterviewReviewDrawer } from "@/components/mentor/InterviewReviewDrawer";
 import { isMissingDescription } from "@/lib/utils/html";
 import { TalkReviewSection } from "@/components/mentee/TalkReviewSection";
+import { CourseProgressCard } from "@/components/shared/CourseProgressCard";
+import { useClan, isHistoricalCohortClan } from "@/lib/context/ClanContext";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -43,6 +45,11 @@ interface PageProps {
 export default function TaskDetailsPage({ params }: PageProps) {
   const resolvedParams = use(params);
   const router = useRouter();
+  const { menteeClans, menteeActiveClanId } = useClan();
+  const historical = isHistoricalCohortClan(
+    menteeClans.find((c) => c.id === menteeActiveClanId),
+  );
+  const HISTORICAL_TITLE = "Completed programs are read-only";
   const { task, loading, error, errorStatus, refetch } = useTaskDetail(
     resolvedParams.id,
   );
@@ -144,6 +151,8 @@ export default function TaskDetailsPage({ params }: PageProps) {
   const isQuiz = (task.roadmapTask?.type || task.type) === "quiz";
   const openQuiz = () => router.push(`/mentee/quizzes/${task.id}`);
   const isTalk = (task.roadmapTask?.type || task.type) === "talk" || (task.talks && task.talks.length > 0);
+  // Course tasks are studied on Buildment and complete themselves from its progress.
+  const isCourse = (task.roadmapTask?.type || task.type) === "course";
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -299,7 +308,9 @@ export default function TaskDetailsPage({ params }: PageProps) {
                     ? () => setInterviewResultsOpen(true)
                     : openInterview
                 }
-                className="inline-flex items-center gap-2 px-6 py-2.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-medium transition-colors"
+                disabled={historical && task.status !== "submitted"}
+                title={historical && task.status !== "submitted" ? HISTORICAL_TITLE : undefined}
+                className="inline-flex items-center gap-2 px-6 py-2.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-medium transition-colors disabled:opacity-50"
               >
                 <Mic className="w-4 h-4" />
                 {task.status === "submitted"
@@ -343,7 +354,9 @@ export default function TaskDetailsPage({ params }: PageProps) {
             <div className="flex justify-end">
               <button
                 onClick={openQuiz}
-                className="inline-flex items-center gap-2 px-6 py-2.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-medium transition-colors"
+                disabled={historical}
+                title={historical ? HISTORICAL_TITLE : undefined}
+                className="inline-flex items-center gap-2 px-6 py-2.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-medium transition-colors disabled:opacity-50"
               >
                 <ListChecks className="w-4 h-4" />
                 {task.status === "in_progress" ? "Resume quiz" : "Start quiz"}
@@ -351,12 +364,16 @@ export default function TaskDetailsPage({ params }: PageProps) {
             </div>
           )
         )
+      ) : isCourse ? (
+        <CourseProgressCard taskId={task.id} viewer="mentee" onTaskStatusChange={refetch} />
       ) : (
         canSubmit && (
           <div className="flex flex-col items-end gap-1">
             <button
               onClick={() => setSubmitOpen(true)}
-              className="px-6 py-2.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-medium transition-colors"
+              disabled={historical}
+              title={historical ? HISTORICAL_TITLE : undefined}
+              className="px-6 py-2.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-medium transition-colors disabled:opacity-50"
             >
               {task.status === "submitted"
                 ? "Update submission"
@@ -507,12 +524,16 @@ export default function TaskDetailsPage({ params }: PageProps) {
             <div className="rounded-2xl border border-border bg-card p-8 text-center">
               <FileText className="h-8 w-8 mx-auto mb-3 text-brand-600" />
               <h2 className="font-semibold">
-                {isQuiz || isInterview
+                {isCourse
+                  ? "Your course"
+                  : isQuiz || isInterview
                   ? "Your assessment"
                   : "Your work will appear here"}
               </h2>
               <p className="text-sm text-muted-foreground mt-2">
-                {isQuiz || isInterview
+                {isCourse
+                  ? "There is nothing to hand in — this task completes automatically when you finish the course on Buildment."
+                  : isQuiz || isInterview
                   ? "Use the assessment button above to open your work or view your results."
                   : "Submit your work when it’s ready. Your files and mentor’s feedback will stay together here."}
               </p>
@@ -810,18 +831,19 @@ export default function TaskDetailsPage({ params }: PageProps) {
           Interview and quiz tasks are one sitting, so there is no day three. */}
           {!["completed", "cancelled"].includes(task.status) &&
             !isInterview &&
-            !isQuiz && <TaskProgressTimeline taskId={task.id} mode="mentee" />}
+            !isQuiz && <TaskProgressTimeline taskId={task.id} mode="mentee" readOnly={historical} />}
 
           {/* What's getting in the way - log roadblock / delay / request extension */}
           {!["completed", "cancelled"].includes(task.status) && (
             <FrictionPanel
               taskId={task.id}
               hasPendingExtension={hasPendingExtension}
+              readOnly={historical}
             />
           )}
         </section>
       )}
-      {!isInterview && !isQuiz && (
+      {!isInterview && !isQuiz && !isCourse && (
         <SubmitTaskDrawer
           open={submitOpen}
           task={{
@@ -833,6 +855,7 @@ export default function TaskDetailsPage({ params }: PageProps) {
           }}
           onClose={() => setSubmitOpen(false)}
           onSubmitted={refetch}
+          readOnly={historical}
         />
       )}
 

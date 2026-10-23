@@ -1,9 +1,14 @@
 const { catchAsync } = require('../middlewares/errorHandler');
+const { requestedClanId } = require('../middlewares/portalScope');
 const { successResponse } = require('../utils/responses');
 const clanRequestsService = require('../services/clanRequestsService');
+const standingClanService = require('../services/standingClanService');
+const authzService = require('../services/authzService');
 
 const overview = catchAsync(async (req, res) => {
-  const data = await clanRequestsService.overview();
+  const data = await clanRequestsService.overview(
+    await authzService.adminProgramScope(req.user),
+  );
   res.status(200).json(successResponse('Clan requests retrieved', data));
 });
 
@@ -41,4 +46,68 @@ const respondCrossClan = catchAsync(async (req, res) => {
   res.status(200).json(successResponse('Response recorded', result));
 });
 
-module.exports = { overview, createRequest, resolveRequest, listCrossClan, createCrossClan, removeCrossClan, listMyCrossClan, respondCrossClan };
+/**
+ * GET /api/clan-requests/standing/eligible-programs
+ *
+ * Kept on its old path and shape so an older client keeps working, but it now
+ * answers per CLAN: `clanId` is what a request is keyed on, and the programme
+ * alone could not tell two clans of the same programme apart.
+ */
+const listStandingEligiblePrograms = catchAsync(async (req, res) => {
+  const clans = await standingClanService.eligibleClans(req.user);
+  res.status(200).json(successResponse('Eligible clans', clans.map((c) => ({
+    // `id`/`name` stay the programme's, so a client that has not been deployed
+    // yet still matches on programme and behaves exactly as it did.
+    id: c.program.id,
+    name: c.program.name,
+    endDate: c.program.endDate,
+    clanId: c.clanId,
+    clanName: c.clanName,
+  }))));
+});
+
+/** GET /api/clan-requests/standing */
+const listStandingRequests = catchAsync(async (req, res) => {
+  const requests = await standingClanService.list(req.user);
+  res.status(200).json(successResponse('Standing clan requests', requests));
+});
+
+/** POST /api/clan-requests/standing */
+const createStandingRequest = catchAsync(async (req, res) => {
+  // The sidebar's clan, as a fallback for `sourceClanId`. The client and the
+  // API deploy separately, so a frontend that predates that field would
+  // otherwise be asked to choose a clan its UI never offered — while the
+  // selected clan was on screen the whole time. The service only honours it
+  // when it is one of the mentor's eligible clans.
+  const request = await standingClanService.request(
+    { ...req.body, activeClanId: req.body?.sourceClanId || requestedClanId(req) },
+    req.user,
+  );
+  res.status(201).json(successResponse('Request submitted', request, 201));
+});
+
+/** POST /api/clan-requests/standing/:id/decision */
+const decideStandingRequest = catchAsync(async (req, res) => {
+  const request = await standingClanService.decide(
+    req.params.id,
+    req.body.decision,
+    req.body.note,
+    req.user
+  );
+  res.status(200).json(successResponse('Decision recorded', request));
+});
+
+module.exports = {
+  overview,
+  createRequest,
+  resolveRequest,
+  listCrossClan,
+  createCrossClan,
+  removeCrossClan,
+  listMyCrossClan,
+  respondCrossClan,
+  listStandingEligiblePrograms,
+  listStandingRequests,
+  createStandingRequest,
+  decideStandingRequest,
+};

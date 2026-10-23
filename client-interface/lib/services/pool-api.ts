@@ -1,0 +1,326 @@
+import { apiClient } from './api-client';
+
+/**
+ * System Pool — pre-clan selection. Operators and reviewers use `poolApi`
+ * (/api/pools, every call checked against the pool's programme); candidates
+ * use `candidateApi` (/api/candidate, their own work only).
+ */
+
+export type PoolStatus = 'draft' | 'open' | 'qualifying' | 'reviewing' | 'placing' | 'closed';
+export type PoolDecision = 'selected' | 'waitlisted' | 'not_selected' | 'withdrawn' | 'disqualified';
+export type ScoreSource = 'quiz' | 'task_review' | 'interview_review' | 'manual';
+export type PoolBucket =
+  | 'invite_pending' | 'not_started' | 'in_progress' | 'needs_review' | 'changes_requested'
+  | 'completed' | 'stalled' | 'withdrawn';
+
+export interface ScoreComponent {
+  key: string;
+  label: string;
+  weight: number;
+  source: ScoreSource;
+  required?: boolean;
+  max?: number;
+}
+
+export interface ReminderPolicy {
+  enabled: boolean;
+  inviteAfterDays: number;
+  inviteMaxCount: number;
+  dueSoonHours: number;
+  inactivityDays: number;
+  inactivityMaxCount: number;
+}
+
+export interface PoolSettings {
+  autoAssignOnActivation: boolean;
+  waitlistSize: number | null;
+  targetClanIds: string[];
+}
+
+export interface Pool {
+  id: string;
+  name: string;
+  description: string | null;
+  status: PoolStatus;
+  programId: string;
+  cohortId: string | null;
+  capacity: number | null;
+  selectionQuota: number;
+  opensAt: string | null;
+  closesAt: string | null;
+  qualificationDueAt: string | null;
+  scoringPolicy: { version: number; components: ScoreComponent[] };
+  reminderPolicy: ReminderPolicy;
+  settings: PoolSettings;
+  archivedAt: string | null;
+  createdAt: string;
+  program?: { id: string; name: string };
+  cohort?: { id: string; name: string } | null;
+  memberCount?: number;
+  invitedCount?: number;
+  selectedCount?: number;
+}
+
+export interface PoolAssignment {
+  id: string;
+  kind: 'task' | 'quiz' | 'interview';
+  title: string;
+  componentKey: string | null;
+  required: boolean;
+  dueAt: string | null;
+  cancelledAt: string | null;
+  roadmapTask?: { id: string; title: string; type: string } | null;
+  counts?: Record<string, number>;
+}
+
+export interface PoolMemberRow {
+  id: string;
+  email: string;
+  name: string;
+  userId: string | null;
+  source: string;
+  status: string;
+  bucket: PoolBucket;
+  decision: PoolDecision | null;
+  decisionReason: string | null;
+  totalScore: string | number | null;
+  rank: number | null;
+  placementStatus: 'pending' | 'placed' | 'failed' | null;
+  placementError: string | null;
+  placedClan: { id: string; name: string } | null;
+  targetClan: { id: string; name: string } | null;
+  manualScores: Record<string, { score: number; note: string | null }>;
+  invite: { expired: boolean; revoked: boolean; expiresAt: string } | null;
+  work: { assignmentId: string; taskId: string | null; status: string | null; dueDate: string | null; isLate: boolean }[];
+}
+
+export interface PoolDashboard {
+  pool: Pool;
+  assignments: PoolAssignment[];
+  members: PoolMemberRow[];
+  buckets: Partial<Record<PoolBucket, number>>;
+}
+
+export interface RowResult { email?: string; memberId?: string; result: string; reason?: string }
+export interface ImportResult {
+  summary: Record<string, number>;
+  results: RowResult[];
+}
+
+export interface ScoredComponent extends ScoreComponent {
+  score: number | null;
+  weighted: number;
+  status: 'scored' | 'pending_review' | 'changes_requested' | 'missing' | 'no_work';
+}
+
+export interface Blocker {
+  code: string;
+  message: string;
+  severity?: 'block' | 'warn';
+  memberIds?: string[];
+}
+
+export interface ScoreRow {
+  memberId: string;
+  name: string;
+  email: string;
+  rank: number;
+  total: number;
+  complete: boolean;
+  components: ScoredComponent[];
+  proposedOutcome: 'selected' | 'waitlisted' | 'not_selected' | null;
+}
+
+export interface Shortlist {
+  id: string;
+  version: number;
+  status: 'draft' | 'blocked' | 'confirmed' | 'superseded';
+  quota: number;
+  blockers: Blocker[];
+  createdAt: string;
+  confirmedAt: string | null;
+  entries?: {
+    id: string;
+    poolMemberId: string;
+    rank: number;
+    totalScore: string;
+    complete: boolean;
+    components: ScoredComponent[];
+    proposedOutcome: string;
+    finalOutcome: string | null;
+    overrideReason: string | null;
+    member?: { id: string; email: string; firstName: string | null; lastName: string | null; user?: { firstName: string; lastName: string } | null };
+  }[];
+}
+
+export interface ReviewQueueItem {
+  submissionId: string;
+  taskId: string;
+  version: number;
+  submittedAt: string;
+  isLate: boolean;
+  kind: 'task' | 'quiz' | 'interview';
+  title: string;
+  componentKey: string | null;
+  member: { id: string; name: string; email: string };
+}
+
+export interface PlacementPreview {
+  clans: { id: string; name: string; cap: number | null; fill: number; planned: number; room: number | null; lead: { id: string; name: string } | null; coMentorCount: number; problem: string | null }[];
+  rows: { memberId: string; name: string; email: string; proposedClanId: string | null; proposedClanName: string | null; currentClanId: string | null; placementStatus: string | null; placementError: string | null; reason: string }[];
+  unplaceable: number;
+  insufficientCapacity: boolean;
+}
+
+export interface PoolOptions {
+  programs: { id: string; name: string }[];
+  cohorts: { id: string; name: string }[];
+  clans: { id: string; name: string; maxMentees: number | null }[];
+  quizKits: { id: string; title: string }[];
+  interviewKits: { id: string; title: string }[];
+  roadmapSteps: { id: string; title: string; type: string; difficulty?: string | null; roadmap?: { name: string } }[];
+}
+
+export interface PoolHistoryEvent {
+  id: string;
+  action: string;
+  createdAt: string;
+  newValues: Record<string, unknown> | null;
+  oldValues: Record<string, unknown> | null;
+  user?: { id: string; firstName: string; lastName: string } | null;
+}
+
+export interface PoolApplication {
+  id: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  status: string;
+  inPool: boolean;
+  assessmentScore?: number | string | null;
+  createdAt?: string;
+  cohort?: { id: string; name: string; program?: { id: string; name: string } };
+}
+
+export interface ReviewVersion {
+  id: string;
+  version: number;
+  submittedAt: string;
+  submissionText: string | null;
+  submissionUrls: string[] | null;
+  files: { id: string; fileName: string; fileUrl: string; fileType?: string | null; fileSizeBytes?: number | null }[];
+  feedback: { id: string; isApproved: boolean; rating: number | string | null; feedbackText: string | null; createdAt?: string }[];
+}
+
+export interface ReviewDetail {
+  submissionId: string;
+  task: { id: string; status: string; kind: string; title: string; description?: string; deliverable?: string; acceptanceCriteria: string[]; dueDate: string | null; isLate: boolean };
+  candidate: { id: string; name: string; email: string } | null;
+  versions: ReviewVersion[];
+}
+
+export interface BatchResult { summary: Record<string, number>; results: { memberId?: string; result: string; reason?: string; code?: string }[] }
+
+/** Every endpoint answers `{ success, message, data }`; `apiClient` hands back that body. */
+type Envelope<T> = { data: T };
+
+export const poolApi = {
+  list: (params?: { status?: string; programId?: string }) =>
+    apiClient.get<Envelope<{ pools: Pool[] }>>('/pools', { params }).then((r) => r.data.pools ?? []),
+  options: (programId?: string) =>
+    apiClient.get<Envelope<PoolOptions>>('/pools/options', { params: programId ? { programId } : undefined }).then((r) => r.data),
+  create: (data: Record<string, unknown>) => apiClient.post<Envelope<{ pool: Pool }>>('/pools', data).then((r) => r.data.pool),
+  get: (id: string) => apiClient.get<Envelope<PoolDashboard>>(`/pools/${id}`).then((r) => r.data),
+  update: (id: string, data: Record<string, unknown>) => apiClient.patch<Envelope<{ pool: Pool }>>(`/pools/${id}`, data).then((r) => r.data.pool),
+  setStatus: (id: string, status: string) => apiClient.post<Envelope<{ pool: Pool }>>(`/pools/${id}/status`, { status }).then((r) => r.data.pool),
+  history: (id: string) => apiClient.get<Envelope<{ events: PoolHistoryEvent[] }>>(`/pools/${id}/history`).then((r) => r.data.events ?? []),
+
+  importMembers: (id: string, body: { csv?: string; emails?: string }) =>
+    apiClient.post<Envelope<ImportResult>>(`/pools/${id}/members/import`, body).then((r) => r.data),
+  applications: (id: string, status?: string) =>
+    apiClient.get<Envelope<{ applications: PoolApplication[] }>>(`/pools/${id}/applications`, { params: status ? { status } : undefined }).then((r) => r.data.applications ?? []),
+  addFromApplications: (id: string, applicationIds: string[]) =>
+    apiClient.post<Envelope<ImportResult>>(`/pools/${id}/members/from-applications`, { applicationIds }).then((r) => r.data),
+  resendInvite: (id: string, memberId: string) => apiClient.post(`/pools/${id}/members/${memberId}/resend-invite`, {}),
+  withdraw: (id: string, memberId: string, reason: string) => apiClient.post(`/pools/${id}/members/${memberId}/withdraw`, { reason }),
+  disqualify: (id: string, memberId: string, reason: string) => apiClient.post(`/pools/${id}/members/${memberId}/disqualify`, { reason }),
+  setManualScore: (id: string, memberId: string, body: { componentKey: string; score: number | null; note?: string }) =>
+    apiClient.put(`/pools/${id}/members/${memberId}/manual-score`, body),
+
+  assignments: (id: string) => apiClient.get<Envelope<{ assignments: PoolAssignment[] }>>(`/pools/${id}/assignments`).then((r) => r.data.assignments ?? []),
+  createAssignment: (id: string, body: Record<string, unknown>) =>
+    apiClient.post<Envelope<{ assignment: PoolAssignment; assigned: BatchResult | null }>>(`/pools/${id}/assignments`, body).then((r) => r.data),
+  assign: (id: string, assignmentId: string, memberIds?: string[]) =>
+    apiClient.post<Envelope<BatchResult>>(`/pools/${id}/assignments/${assignmentId}/assign`, memberIds ? { memberIds } : {}).then((r) => r.data),
+  cancelAssignment: (id: string, assignmentId: string, reason?: string) =>
+    apiClient.post(`/pools/${id}/assignments/${assignmentId}/cancel`, { reason }),
+
+  reviewQueue: (id: string) => apiClient.get<Envelope<{ items: ReviewQueueItem[] }>>(`/pools/${id}/review-queue`).then((r) => r.data.items ?? []),
+  submission: (id: string, submissionId: string) => apiClient.get<Envelope<ReviewDetail>>(`/pools/${id}/submissions/${submissionId}`).then((r) => r.data),
+  review: (id: string, submissionId: string, body: Record<string, unknown>) =>
+    apiClient.post<Envelope<ReviewDetail>>(`/pools/${id}/submissions/${submissionId}/review`, body).then((r) => r.data),
+
+  scores: (id: string) =>
+    apiClient.get<Envelope<{ rows: ScoreRow[]; blockers: Blocker[]; warnings: Blocker[] }>>(`/pools/${id}/scores`).then((r) => r.data),
+  shortlists: (id: string) => apiClient.get<Envelope<{ shortlists: Shortlist[] }>>(`/pools/${id}/shortlists`).then((r) => r.data.shortlists ?? []),
+  generateShortlist: (id: string) =>
+    apiClient.post<Envelope<{ shortlist: Shortlist; reused: boolean }>>(`/pools/${id}/shortlists`, {}).then((r) => r.data),
+  shortlist: (id: string, shortlistId: string) =>
+    apiClient.get<Envelope<{ shortlist: Shortlist }>>(`/pools/${id}/shortlists/${shortlistId}`).then((r) => r.data.shortlist),
+  confirm: (id: string, shortlistId: string, overrides: { memberId: string; outcome: string; reason: string }[]) =>
+    apiClient.post<Envelope<{ shortlist: Shortlist }>>(`/pools/${id}/shortlists/${shortlistId}/confirm`, { overrides }).then((r) => r.data.shortlist),
+  setDecision: (id: string, memberId: string, decision: string, reason: string) =>
+    apiClient.post(`/pools/${id}/members/${memberId}/decision`, { decision, reason }),
+
+  placementPreview: (id: string) => apiClient.get<Envelope<PlacementPreview>>(`/pools/${id}/placement/preview`).then((r) => r.data),
+  setTargets: (id: string, targets: { memberId: string; clanId: string | null }[]) =>
+    apiClient.put(`/pools/${id}/placement/targets`, { targets }),
+  place: (id: string, memberIds?: string[]) =>
+    apiClient.post<Envelope<BatchResult>>(`/pools/${id}/placement/run`, memberIds ? { memberIds } : {}).then((r) => r.data),
+};
+
+export interface CandidatePoolSummary {
+  memberId: string;
+  pool: { id: string; name: string; description: string | null; status: PoolStatus; qualificationDueAt: string | null; program?: { name: string } };
+  progress: { total: number; completed: number; submitted: number; changesRequested: number };
+  outcome: { decision: PoolDecision; placedClan: { id: string; name: string } | null } | null;
+}
+
+export interface CandidateTask {
+  id: string;
+  status: string;
+  dueDate: string | null;
+  isLate: boolean;
+  kind: 'task' | 'quiz' | 'interview';
+  required: boolean;
+  title: string;
+  type: string;
+  readOnly: boolean;
+  pool: { id: string; name: string; status: PoolStatus } | null;
+}
+
+export interface CandidateTaskDetail extends CandidateTask {
+  description: string;
+  deliverable: string;
+  acceptanceCriteria: string[];
+  resources: { id: string; title: string; url: string }[];
+  submissions: {
+    id: string;
+    version: number;
+    status: string;
+    submissionText: string | null;
+    submissionUrls: string[];
+    submittedAt: string;
+    files: { id: string; fileName: string; fileUrl: string }[];
+    feedback: { id: string; feedbackText: string | null; isApproved: boolean; decision: string | null; revisionNotes: string | null; checkedCriteria: unknown; createdAt: string }[];
+  }[];
+}
+
+export const candidateApi = {
+  pools: () => apiClient.get<Envelope<{ pools: CandidatePoolSummary[] }>>('/candidate/pools').then((r) => r.data.pools ?? []),
+  tasks: () => apiClient.get<Envelope<{ tasks: CandidateTask[] }>>('/candidate/tasks').then((r) => r.data.tasks ?? []),
+  task: (taskId: string) => apiClient.get<Envelope<{ task: CandidateTaskDetail }>>(`/candidate/tasks/${taskId}`).then((r) => r.data.task),
+  start: (taskId: string) => apiClient.post(`/candidate/tasks/${taskId}/start`, {}),
+  submit: (taskId: string, form: FormData) =>
+    apiClient.post(`/candidate/tasks/${taskId}/submit`, form, { headers: { 'Content-Type': 'multipart/form-data' } }),
+};

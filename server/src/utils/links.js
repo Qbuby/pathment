@@ -42,27 +42,33 @@ function tenantSlug(requested) {
   return 'app';
 }
 
-function through(kind, token, directPath) {
-  const slug = tenantSlug();
+function through(kind, token, directPath, requestedSlug) {
+  const slug = tenantSlug(requestedSlug);
   const host = linkHost();
   if (!host || !token) return `${clientUrl()}/w/${slug}${directPath}`;
 
   return `${host}/${kind}/${slug}/${encodeURIComponent(token)}`;
 }
 
-/** The registration invite. Single use, and the only way to create an account. */
+/** A single-use registration invite for joining an existing organization. */
 const inviteLink = (token) =>
   through('i', token, `/register?invite=${encodeURIComponent(token || '')}`);
 
 const resetLink = (token) =>
   through('r', token, `/reset-password?token=${encodeURIComponent(token || '')}`);
 
-const verifyLink = (token) =>
-  through('v', token, `/verify-email?token=${encodeURIComponent(token || '')}`);
+const verifyLink = (token, workspaceSlug) =>
+  through('v', token, `/verify-email?token=${encodeURIComponent(token || '')}`, workspaceSlug);
 
-/** A one-time sign-in link. Fifteen minutes, single use, straight into a session. */
+/**
+ * A one-time sign-in link. Fifteen minutes, single use, straight into a session.
+ *
+ * The direct path is `/login`, which is where the web app spends the token.
+ * It said `/sign-in` for a while, and the web app has never had such a route,
+ * so with no LINK_URL set every sign-in link in every email was a 404.
+ */
 const signInLink = (token) =>
-  through('m', token, `/sign-in?link=${encodeURIComponent(token || '')}`);
+  through('m', token, `/login?link=${encodeURIComponent(token || '')}`);
 
 /**
  * Where a notification points, made absolute.

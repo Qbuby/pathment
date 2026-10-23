@@ -52,7 +52,7 @@ export default function VerifyCertificatePage({
       <div className="w-full max-w-lg">
         {loading ? (
           <div className="flex flex-col items-center gap-3 py-20">
-            <Loader2 className="w-7 h-7 animate-spin text-brand-500" />
+            <Loader2 className="w-7 h-7 animate-spin text-brand-600" />
             <p className="text-sm text-muted-foreground">Checking this certificate…</p>
           </div>
         ) : result?.valid ? (

@@ -1,20 +1,16 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useRef } from "react";
-import { createPortal } from "react-dom";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Bell,
-  X,
-  Check,
-  Trash2,
-  Clock,
   ListTodo,
   MessageSquare,
   Award,
   Trophy,
   Zap,
   ChevronRight,
+  Users,
 } from "lucide-react";
 import { useAuth } from "@/lib/context/AuthContext";
 import {
@@ -28,6 +24,18 @@ import {
 } from "@/lib/hooks/shared/useNotificationFeed";
 import { useClan, ALL_CLANS } from "@/lib/context/ClanContext";
 import { logicalPathname, workspacePath } from "@/lib/services/workspace-scope";
+import { completionApi, type StandingRequest } from "@/lib/services/program-completion-api";
+import { useProgramCloseoutEnabled } from "@/lib/hooks/useProgramCloseoutEnabled";
+import {
+  StandingClanDecisionButtons,
+  StandingClanDecisionDrawer,
+  STANDING_CLAN_UPGRADE_COPY,
+  type StandingClanReview,
+} from "@/components/shared/StandingClanDecisionDrawer";
+import { NotificationCard } from "@/components/shared/NotificationCard";
+import { Drawer } from "@/components/shared/Drawer";
+import { Spinner } from '@/components/shared/LoadingSpinner';
+import { useScrollLock } from "@/lib/hooks/useScrollLock";
 
 interface Notification {
   id: string;
@@ -63,6 +71,8 @@ const TYPE_ICON: Record<string, { Icon: typeof Bell; cls: string }> = {
 const typeMeta = (t?: string) => TYPE_ICON[t || "system"] || TYPE_ICON.system;
 
 const getRoleNotificationsPath = (pathname: string): string => {
+  // The selection-pool candidate area has its own notifications page.
+  if (pathname.startsWith("/candidate")) return "/candidate/notifications";
   const role = roleFromPathname(pathname);
   if (role === "admin" || role === "mentor" || role === "mentee") {
     return `/${role}/notifications`;
@@ -74,15 +84,17 @@ export default function NotificationDrawer({
   userId,
   showLabel = false,
 }: NotificationDrawerProps) {
-  const dialogRef = useRef<HTMLElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const pathname = logicalPathname(usePathname());
   const { activeRole } = useAuth();
   const { activeClanId, menteeActiveClanId } = useClan();
+  const closeoutEnabled = useProgramCloseoutEnabled();
   const [isOpen, setIsOpen] = useState(false);
   const [filter, setFilter] = useState<"all" | "unread">("all");
   const [showAllRoles, setShowAllRoles] = useState(false);
-  const [isMounted, setIsMounted] = useState(false);
+  const [pendingStanding, setPendingStanding] = useState<StandingRequest[]>([]);
+  const [standingReview, setStandingReview] = useState<StandingClanReview | null>(null);
   // The feed itself is shared: this bell renders twice (desktop sidebar + mobile
   // header) and both are always in the DOM, so owning the state here meant two
   // of every fetch and two sockets. See useNotificationFeed.
@@ -100,6 +112,7 @@ export default function NotificationDrawer({
   // theirs (they never receive the other role's notifications).
   const role: NotificationRole | null =
     (activeRole as NotificationRole) || roleFromPathname(pathname);
+  const isAdminDrawer = role === "admin";
   const roleScoped = useMemo(
     () => notifications.filter((n) => matchesRole(n.audience, role)),
     [notifications, role],
@@ -118,16 +131,40 @@ export default function NotificationDrawer({
   const visibleNotifications = scopedNotifications.filter(
     (notification) => filter === "all" || notification.status === "unread",
   );
+  // Standing requests are shown as cards with Approve/Reject above the feed.
+  // Hide the matching feed rows so admins do not see the same request twice.
+  const pendingStandingIds = useMemo(
+    () => new Set(pendingStanding.map((row) => row.id)),
+    [pendingStanding],
+  );
+  const allFeedNotifications = visibleNotifications.filter(
+    (n) =>
+      !(
+        n.relatedEntityType === "standing_clan_request" &&
+        n.relatedEntityId &&
+        pendingStandingIds.has(n.relatedEntityId)
+      ),
+  );
+  /**
+   * The drawer is a peek, not the list.
+   *
+   * Every notification the feed held was rendered here, in the same commit
+   * that opens the panel — on a busy account that is hundreds of cards laid
+   * out before the first frame of the slide, which is most of what "not
+   * smooth" actually felt like. "View all" at the bottom goes to the page
+   * that is the list.
+   */
+  const DRAWER_PREVIEW = 20;
+  const feedNotifications = allFeedNotifications.slice(0, DRAWER_PREVIEW);
+  const olderCount = allFeedNotifications.length - feedNotifications.length;
+
   const unreadCount = useMemo(
     () => clanScoped.filter((item) => item.status === "unread").length,
     [clanScoped],
   );
   const hiddenOtherRoleCount = notifications.length - roleScoped.length;
 
-  // Ensure we only render portal on client.
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
+  // The portal guard lived here; the shared Drawer owns the portal now.
 
   // Opening the drawer asks for a fresh read; the cache serves the current list
   // meanwhile, so there is no spinner over existing data.
@@ -135,23 +172,45 @@ export default function NotificationDrawer({
     if (isOpen) reload();
   }, [isOpen, reload]);
 
-  // Lock background scroll while sheet is open.
+  // Admin only: load open standing-clan requests for the Approve/Reject cards.
+  const loadPendingStanding = useCallback(async () => {
+    if (!isAdminDrawer) {
+      setPendingStanding([]);
+      return;
+    }
+    try {
+      const rows = await completionApi.requests();
+      setPendingStanding(
+        (Array.isArray(rows) ? rows : []).filter((r) => r.status === "pending"),
+      );
+    } catch {
+      // Feed should still work if this request fails.
+      setPendingStanding([]);
+    }
+  }, [isAdminDrawer]);
+
   useEffect(() => {
-    if (!isOpen) return;
+    if (isOpen && isAdminDrawer) void loadPendingStanding();
+  }, [isOpen, isAdminDrawer, loadPendingStanding]);
 
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [isOpen]);
+  // Lock background scroll while sheet is open.
+  useScrollLock(isOpen);
 
   const handleMarkRead = (notificationId: string) => markRead(notificationId);
   const handleMarkAllRead = () => markAllRead();
   const handleDelete = (notificationId: string) => remove(notificationId);
 
   const handleNotificationClick = (notification: Notification) => {
+    // Standing requests: decide with the card buttons above, not by navigating away.
+    if (
+      isAdminDrawer &&
+      notification.relatedEntityType === "standing_clan_request" &&
+      notification.relatedEntityId
+    ) {
+      if (notification.status === "unread") handleMarkRead(notification.id);
+      return;
+    }
+    // Normal notification: open its link (if any) and mark as read.
     if (notification.actionUrl) {
       router.push(workspacePath(notification.actionUrl));
       setIsOpen(false);
@@ -177,35 +236,8 @@ export default function NotificationDrawer({
     return date.toLocaleDateString();
   };
 
-  // Keep keyboard focus inside the open sheet and return it to the bell.
-  useEffect(() => {
-    if (!isOpen) return;
-    const previous = document.activeElement as HTMLElement | null;
-    dialogRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setIsOpen(false);
-      if (event.key !== "Tab") return;
-      const controls = Array.from(
-        dialogRef.current?.querySelectorAll<HTMLElement>(
-          'button:not(:disabled), [href], [tabindex="0"]',
-        ) || [],
-      );
-      const first = controls[0],
-        last = controls.at(-1);
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last?.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first?.focus();
-      }
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      previous?.focus();
-    };
-  }, [isOpen]);
+  // Escape, the focus trap and returning focus to the bell all belong to
+  // the shared Drawer now — three near-copies of them used to live here.
 
   return (
     <>
@@ -214,77 +246,77 @@ export default function NotificationDrawer({
         onClick={() => setIsOpen(!isOpen)}
         className={`relative rounded-xl transition-colors duration-200 ${
           showLabel
-            ? "w-full flex items-center gap-3 px-3 py-2.5 text-left"
-            : "p-2"
-        } ${
-          isOpen
-            ? "bg-brand-50 text-brand-700"
-            : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+            ? // A sidebar menu item: same shape and colours as the nav links.
+              `group w-full flex items-center gap-3 px-3 py-2.5 text-left ${
+                isOpen ? "bg-brand-50 text-brand-700" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+              }`
+            : `p-2 ${isOpen ? "bg-brand-50 text-brand-700" : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"}`
         }`}
         aria-label={`Notifications ${unreadCount > 0 ? `(${unreadCount} unread)` : ""}`}
         aria-expanded={isOpen}
         aria-haspopup="dialog"
         title="Open notifications"
       >
-        <span className="relative shrink-0">
-          <Bell className={showLabel ? "w-4 h-4" : "w-5 h-5"} />
-          {unreadCount > 0 && (
-            <span className="absolute -top-2 -right-2 flex items-center justify-center min-w-5 h-5 px-1 bg-red-500 text-white text-xs font-bold rounded-full">
-              {unreadCount > 99 ? "99+" : unreadCount}
-            </span>
-          )}
-        </span>
-        {showLabel && (
-          <span className="text-sm font-medium">Notifications</span>
+        {showLabel ? (
+          <>
+            <Bell className={`w-4.5 h-4.5 shrink-0 ${isOpen ? "text-brand-700" : "text-slate-400 group-hover:text-slate-600"}`} />
+            <span className="text-sm font-medium">Notifications</span>
+            {/* The count as a pill at the end of the row, like the nav's unread badges. */}
+            {unreadCount > 0 && (
+              <span className="ml-auto inline-flex items-center justify-center min-w-5 h-5 px-1.5 bg-red-500 text-white text-[11px] font-bold rounded-full">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
+          </>
+        ) : (
+          <span className="relative shrink-0">
+            <Bell className="w-5 h-5" />
+            {unreadCount > 0 && (
+              <span className="absolute -top-2 -right-2 flex items-center justify-center min-w-5 h-5 px-1 bg-red-500 text-white text-xs font-bold rounded-full">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
+          </span>
         )}
       </button>
 
-      {isMounted &&
-        isOpen &&
-        createPortal(
-          <>
-            <div
-              className="fixed inset-0 z-70 bg-black/30 dark:bg-black/60 lg:left-64"
-              onClick={() => setIsOpen(false)}
-              aria-hidden="true"
-            />
-
-            <aside
-              ref={dialogRef}
-              className="fixed right-0 top-0 z-80 h-dvh w-full max-w-lg bg-card shadow-2xl border-l border-slate-200 dark:border-slate-700 flex flex-col"
-              role="dialog"
-              aria-labelledby="notif-title"
-              aria-modal="true"
+      {/*
+          The shared Drawer, not a second hand-rolled sheet.
+          This one had no animation at all: `isOpen && createPortal(...)` put a
+          full-height panel on screen in a single frame, while the feedback
+          drawer beside it in the same sidebar slid in over 250ms. That is the
+          whole of "notifications is not smooth" — one of them was animating
+          and one was not. Using the shared component also brings the focus
+          trap, the scroll lock, Escape and the backdrop dismiss that were
+          reimplemented here, each slightly differently.
+      */}
+      <Drawer
+        open={isOpen}
+        onClose={() => setIsOpen(false)}
+        width="md"
+        title="Notifications"
+        subtitle={`${unreadCount > 0 ? `${unreadCount} unread` : 'All caught up'}${role ? ` · ${showAllRoles ? 'all roles' : role}` : ''}`}
+        footer={
+          <div className="grid w-full grid-cols-2 gap-2">
+            <button
+              onClick={handleMarkAllRead}
+              className="px-3 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
             >
-              <div className="flex items-center justify-between px-6 py-5 border-b border-border">
-                <div>
-                  <h2
-                    id="notif-title"
-                    className="text-base font-semibold text-slate-900"
-                  >
-                    Notifications
-                  </h2>
-                  <p className="text-sm text-slate-500">
-                    {unreadCount > 0
-                      ? `${unreadCount} unread`
-                      : "All caught up"}
-                    {role && (
-                      <span className="capitalize">
-                        {" "}
-                        · {showAllRoles ? "all roles" : role}
-                      </span>
-                    )}
-                  </p>
-                </div>
-                <button
-                  onClick={() => setIsOpen(false)}
-                  className="p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
-                  aria-label="Close notifications"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
+              Mark all as read
+            </button>
+            <button
+              onClick={() => {
+                router.push(workspacePath(notificationsPath));
+                setIsOpen(false);
+              }}
+              className="px-3 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-colors"
+            >
+              View all
+            </button>
+          </div>
+        }
+      >
+        <div ref={dialogRef} className="-mx-6 -my-5 flex h-full flex-col">
               {/* Role scope toggle — only meaningful for dual-role users who actually
                 have other-role notifications to reveal. */}
               {role && (showAllRoles || hiddenOtherRoleCount > 0) && (
@@ -319,12 +351,50 @@ export default function NotificationDrawer({
                 ))}
               </div>
               <div className="flex-1 overflow-y-auto bg-muted/30 p-3">
+                {/* Same NotificationCard as the feed, but with Approve / Reject actions. */}
+                {isAdminDrawer && pendingStanding.length > 0 && (
+                  <div className="mb-3 space-y-2">
+                    <p className="px-1 text-xs font-medium uppercase tracking-wide text-slate-500">
+                      Standing clan requests
+                    </p>
+                    {pendingStanding.map((row) => (
+                      <NotificationCard
+                        key={row.id}
+                        unread
+                        title={row.name}
+                        message={
+                          row.description?.trim()
+                            || `${row.program.name} · ${row.mentor.firstName} ${row.mentor.lastName}`
+                        }
+                        meta={
+                          row.description?.trim()
+                            ? `${row.program.name} · ${row.mentor.firstName} ${row.mentor.lastName}`
+                            : undefined
+                        }
+                        icon={<Users className="w-4 h-4" />}
+                        iconClassName="bg-amber-50 text-amber-700"
+                        actions={
+                          <StandingClanDecisionButtons
+                            row={row}
+                            disabled={!closeoutEnabled}
+                            title={!closeoutEnabled ? STANDING_CLAN_UPGRADE_COPY : undefined}
+                            onReview={setStandingReview}
+                            onDecided={() => {
+                              void loadPendingStanding();
+                              reload();
+                            }}
+                          />
+                        }
+                      />
+                    ))}
+                  </div>
+                )}
                 {isLoading ? (
                   <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-2">
-                    <Clock className="w-6 h-6 animate-spin" />
+                    <Spinner size="sm" className="h-6 w-6" />
                     <span>Loading notifications...</span>
                   </div>
-                ) : visibleNotifications.length === 0 ? (
+                ) : feedNotifications.length === 0 && pendingStanding.length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-2 px-6 text-center">
                     <Bell className="w-8 h-8 text-slate-300" />
                     <span>
@@ -344,115 +414,68 @@ export default function NotificationDrawer({
                       </button>
                     )}
                   </div>
-                ) : (
+                ) : feedNotifications.length === 0 ? null : (
                   <div className="space-y-3">
-                    {visibleNotifications.map((notification) => (
-                      <div
-                        key={notification.id}
-                        className={`group rounded-2xl border border-border px-4 py-4 cursor-pointer transition-colors ${
-                          notification.status === "unread"
-                            ? "bg-brand-50 dark:bg-brand-500/10 hover:bg-brand-100 dark:hover:bg-brand-500/20"
-                            : "bg-card hover:bg-slate-50"
-                        }`}
-                        onClick={() => handleNotificationClick(notification)}
+                    {/* Normal notifications: same card, mark-read / delete instead of actions. */}
+                    {feedNotifications.map((notification) => {
+                      const { Icon, cls } = typeMeta(notification.type);
+                      return (
+                        <NotificationCard
+                          key={notification.id}
+                          unread={notification.status === "unread"}
+                          title={notification.title}
+                          message={toMessageText(notification.message)}
+                          icon={<Icon className="w-4 h-4" />}
+                          iconClassName={cls}
+                          onClick={() => handleNotificationClick(notification)}
+                          onMarkRead={
+                            notification.status === "unread"
+                              ? () => handleMarkRead(notification.id)
+                              : undefined
+                          }
+                          onDelete={() => handleDelete(notification.id)}
+                          meta={
+                            <>
+                              <span>{formatTime(notification.createdAt)}</span>
+                              {notification.actionUrl && notification.actionLabel ? (
+                                <span className="inline-flex items-center gap-0.5 text-xs font-medium text-brand-600">
+                                  · {notification.actionLabel}{" "}
+                                  <ChevronRight className="w-3 h-3" />
+                                </span>
+                              ) : null}
+                            </>
+                          }
+                        />
+                      );
+                    })}
+                    {olderCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          router.push(workspacePath(notificationsPath));
+                          setIsOpen(false);
+                        }}
+                        className="w-full rounded-xl border border-dashed border-slate-300 px-3 py-2.5 text-sm text-slate-500 hover:border-brand-300 hover:text-brand-700 dark:border-slate-700"
                       >
-                        <div className="flex items-start gap-3">
-                          {(() => {
-                            const { Icon, cls } = typeMeta(notification.type);
-                            return (
-                              <div
-                                className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${cls}`}
-                              >
-                                <Icon className="w-4 h-4" />
-                              </div>
-                            );
-                          })()}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                className="text-left text-sm font-semibold text-foreground leading-snug focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  handleNotificationClick(notification);
-                                }}
-                              >
-                                {notification.title}
-                              </button>
-                              {notification.status === "unread" && (
-                                <span className="w-2 h-2 rounded-full bg-brand-600 shrink-0" />
-                              )}
-                            </div>
-                            <p className="mt-2 text-sm text-muted-foreground line-clamp-3 leading-relaxed">
-                              {toMessageText(notification.message)}
-                            </p>
-                            <div className="mt-2 flex items-center gap-2">
-                              <p className="text-xs text-slate-400">
-                                {formatTime(notification.createdAt)}
-                              </p>
-                              {notification.actionUrl &&
-                                notification.actionLabel && (
-                                  <span className="inline-flex items-center gap-0.5 text-xs font-medium text-brand-600">
-                                    · {notification.actionLabel}{" "}
-                                    <ChevronRight className="w-3 h-3" />
-                                  </span>
-                                )}
-                            </div>
-                          </div>
-                          <div className="shrink-0 flex items-center gap-1 opacity-100">
-                            {notification.status === "unread" && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleMarkRead(notification.id);
-                                }}
-                                className="p-1.5 text-slate-400 hover:text-brand-600 hover:bg-brand-100 rounded"
-                                aria-label="Mark notification read"
-                              >
-                                <Check className="w-4 h-4" />
-                              </button>
-                            )}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDelete(notification.id);
-                              }}
-                              className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-100 rounded"
-                              aria-label="Delete notification"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                        {olderCount} older notification{olderCount === 1 ? '' : 's'} — see them all
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
 
-              <div className="p-3 border-t border-slate-200 bg-card">
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={handleMarkAllRead}
-                    className="px-3 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-                  >
-                    Mark all as read
-                  </button>
-                  <button
-                    onClick={() => {
-                      router.push(workspacePath(notificationsPath));
-                      setIsOpen(false);
-                    }}
-                    className="px-3 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-colors"
-                  >
-                    View all
-                  </button>
-                </div>
-              </div>
-            </aside>
-          </>,
-          document.body,
-        )}
+        </div>
+      </Drawer>
+
+      <StandingClanDecisionDrawer
+        review={standingReview}
+        zClass="z-[90]"
+        onClose={() => setStandingReview(null)}
+        onDecided={() => {
+          void loadPendingStanding();
+          reload();
+        }}
+      />
     </>
   );
 }

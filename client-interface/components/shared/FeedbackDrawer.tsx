@@ -13,10 +13,18 @@ const STATUS_CLS: Record<string, string> = {
   planned: 'bg-violet-100 text-violet-700', fixed: 'bg-emerald-100 text-emerald-700',
   added: 'bg-emerald-100 text-emerald-700', declined: 'bg-rose-100 text-rose-700',
 };
-const TYPES: { value: FeedbackType; label: string; icon: typeof Bug }[] = [
-  { value: 'bug', label: 'Bug', icon: Bug },
-  { value: 'suggestion', label: 'Suggestion', icon: Lightbulb },
-  { value: 'other', label: 'Other', icon: MessageSquarePlus },
+/**
+ * The three choices, and where each one goes.
+ *
+ * The type decides the lane on the server, so this is the one place a person
+ * chooses who will read their report - and it used to be three words with no
+ * hint that "Bug" reaches the people who build Pathment while "Other" reaches
+ * their own programme's admins. Said plainly here, nobody has to guess.
+ */
+const TYPES: { value: FeedbackType; label: string; icon: typeof Bug; goesTo: string }[] = [
+  { value: 'bug', label: 'Bug', icon: Bug, goesTo: 'Goes to the Pathment team' },
+  { value: 'suggestion', label: 'Suggestion', icon: Lightbulb, goesTo: 'Goes to the Pathment team' },
+  { value: 'other', label: 'My programme', icon: MessageSquarePlus, goesTo: 'Goes to your programme admins' },
 ];
 const MAX = 10 * 1024 * 1024;
 
@@ -63,7 +71,7 @@ export function FeedbackDrawer({ open, onClose }: { open: boolean; onClose: () =
   };
 
   return (
-    <Drawer open={open} onClose={onClose} width="md" title="Feedback" subtitle="Report a bug or suggest an improvement">
+    <Drawer open={open} onClose={onClose} width="md" title="Feedback" subtitle="Report a bug, suggest an improvement, or ask about your programme">
       {/* Tabs */}
       <div className="flex gap-1 p-1 bg-slate-100 rounded-xl mb-4">
         {(['send', 'mine'] as const).map((t) => (
@@ -77,7 +85,7 @@ export function FeedbackDrawer({ open, onClose }: { open: boolean; onClose: () =
       {tab === 'send' ? (
         <div className="space-y-4">
           <div>
-            <label className="block text-sm text-slate-700 mb-2">Type</label>
+            <label className="block text-sm text-slate-700 mb-2">What is this about?</label>
             <div className="grid grid-cols-3 gap-2">
               {TYPES.map(({ value, label, icon: Icon }) => (
                 <button key={value} type="button" onClick={() => setType(value)}
@@ -86,11 +94,18 @@ export function FeedbackDrawer({ open, onClose }: { open: boolean; onClose: () =
                 </button>
               ))}
             </div>
+            <p className="mt-1.5 text-xs text-slate-500">
+              {TYPES.find((entry) => entry.value === type)?.goesTo}
+            </p>
           </div>
           <div>
             <label className="block text-sm text-slate-700 mb-1">Title <span className="text-red-500">*</span></label>
             <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200}
-              placeholder={type === 'bug' ? 'e.g. Approvals page crashes on submit' : 'e.g. Add a dark mode'}
+              placeholder={
+                type === 'bug' ? 'e.g. Approvals page crashes on submit'
+                  : type === 'suggestion' ? 'e.g. Add a dark mode'
+                    : 'e.g. I think I am in the wrong clan'
+              }
               className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
           </div>
           <div>
@@ -136,7 +151,7 @@ export function FeedbackDrawer({ open, onClose }: { open: boolean; onClose: () =
       ) : (
         <div>
           {loadingMine ? (
-            <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-brand-500" /></div>
+            <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-brand-600" /></div>
           ) : mine.length === 0 ? (
             <p className="text-sm text-slate-400 text-center py-10">You haven&apos;t submitted any feedback yet.</p>
           ) : (

@@ -1,7 +1,7 @@
 'use client';
 
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
   Mic, MicOff, Loader2, ArrowRight, CheckCircle2, Video, VideoOff, Volume2,
@@ -20,6 +20,7 @@ import { useAudioLevel } from '@/lib/hooks/mentee/useAudioLevel';
 import { CodeEditor } from '@/components/shared/CodeEditor';
 import { InterviewerOrb, Waveform, RingTimer, MicCheck } from '@/components/mentee/interviewStudio';
 import { setActiveInterview, clearActiveInterview } from '@/lib/utils/activeInterview';
+import { useClan, isHistoricalCohortClan } from '@/lib/context/ClanContext';
 
 type Phase = 'loading' | 'intro' | 'lobby' | 'countdown' | 'active' | 'submitting' | 'done' | 'error';
 interface Draft { transcript: string; code: string; answerText: string; seconds: number; audioBlob: Blob | null }
@@ -30,6 +31,13 @@ const STUDIO = 'bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950';
 export default function InterviewRunnerPage({ params }: { params: Promise<{ taskId: string }> }) {
   const { taskId } = use(params);
   const router = useRouter();
+  // The same runner serves selection-pool candidates under /candidate.
+  const area = usePathname()?.includes('/candidate/') ? '/candidate' : '/mentee';
+  const { menteeClans, menteeActiveClanId } = useClan();
+  const historical = isHistoricalCohortClan(
+    menteeClans.find((c) => c.id === menteeActiveClanId),
+  );
+  const HISTORICAL_TITLE = 'Completed programs are read-only';
 
   const [phase, setPhase] = useState<Phase>('loading');
   const [errorMsg, setErrorMsg] = useState('');
@@ -500,7 +508,7 @@ export default function InterviewRunnerPage({ params }: { params: Promise<{ task
 
   // ── Renders ──────────────────────────────────────────────────────────────────
   if (phase === 'loading') {
-    return <Stage><Loader2 className="w-7 h-7 animate-spin text-slate-500" /></Stage>;
+    return <Stage><Loader2 className="w-7 h-7 animate-spin text-brand-600" /></Stage>;
   }
 
   if (phase === 'submitting') {
@@ -521,7 +529,7 @@ export default function InterviewRunnerPage({ params }: { params: Promise<{ task
         <div className="text-center max-w-sm">
           <AlertTriangle className="w-10 h-10 text-amber-400 mx-auto mb-3" />
           <p className="text-slate-100 font-medium">{errorMsg}</p>
-          <button onClick={() => router.push(`/mentee/tasks/${taskId}`)} className="mt-5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm">Back to task</button>
+          <button onClick={() => router.push(`${area}/tasks/${taskId}`)} className="mt-5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm">Back to task</button>
         </div>
       </Stage>
     );
@@ -536,7 +544,7 @@ export default function InterviewRunnerPage({ params }: { params: Promise<{ task
           </div>
           <h1 className="text-xl font-semibold text-slate-100">Interview submitted</h1>
           <p className="text-slate-400 mt-2">Nice work. {interviewerName}&apos;s done — your mentor will review your answers and share feedback on your task page.</p>
-          <button onClick={() => router.push(`/mentee/tasks/${taskId}`)} className="mt-6 px-5 py-2.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm font-medium">Back to task</button>
+          <button onClick={() => router.push(`${area}/tasks/${taskId}`)} className="mt-6 px-5 py-2.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm font-medium">Back to task</button>
         </div>
       </Stage>
     );
@@ -580,10 +588,10 @@ export default function InterviewRunnerPage({ params }: { params: Promise<{ task
             {cannot ? (
               <div className="mt-6">
                 <p className="text-sm text-slate-400">{submittedBefore ? 'You’ve already completed this interview.' : 'This interview isn’t available.'}</p>
-                <button onClick={() => router.push(`/mentee/tasks/${taskId}`)} className="mt-4 px-5 py-2.5 border border-slate-600 text-slate-200 rounded-xl text-sm">Back to task</button>
+                <button onClick={() => router.push(`${area}/tasks/${taskId}`)} className="mt-4 px-5 py-2.5 border border-slate-600 text-slate-200 rounded-xl text-sm">Back to task</button>
               </div>
             ) : (
-              <button onClick={enterLobby} className="mt-6 inline-flex items-center gap-2 px-6 py-3 bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-medium">
+              <button onClick={enterLobby} disabled={historical} title={historical ? HISTORICAL_TITLE : undefined} className="mt-6 inline-flex items-center gap-2 px-6 py-3 bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-medium disabled:opacity-50">
                 {resuming ? <><RotateCcw className="w-4 h-4" /> Resume interview</> : isRedo ? <><RotateCcw className="w-4 h-4" /> Continue to redo</> : <><Play className="w-4 h-4" /> Continue to setup</>}
               </button>
             )}

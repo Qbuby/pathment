@@ -23,6 +23,9 @@ const PERMISSIONS = {
   // Clans & people
   CLAN_CREATE: 'clan.create',
   CLAN_MANAGE_MEMBERS: 'clan.manage_members',
+  // Clan photo upload/change. Lead mentors always may; co-mentors get it by
+  // default and a lead can revoke it per person (same denied-list pattern).
+  CLAN_AVATAR: 'clan.avatar',
   MENTEE_VIEW: 'mentee.view',                // see mentees' profiles/progress
   MENTEE_MANAGE: 'mentee.manage',            // notes, insights, placement actions
   MENTEE_ADD: 'mentee.add',                  // add mentees to a clan (co-mentor toggle)
@@ -32,6 +35,33 @@ const PERMISSIONS = {
   // Work
   TASK_ASSIGN: 'task.assign',
   TASK_REVIEW: 'task.review',
+
+  // System Pool — pre-clan selection. Each is checked at the pool's PROGRAMME
+  // scope, so a pool reviewer for one programme cannot touch another's pool.
+  // Deliberately five narrow permissions rather than one "manager" role.
+  POOL_MANAGE: 'pool.manage',     // create, configure, open, close a pool
+  POOL_MEMBERS: 'pool.members',   // import, invite, withdraw, disqualify candidates
+  POOL_ASSIGN: 'pool.assign',     // give qualifying work to pool members
+  POOL_REVIEW: 'pool.review',     // review pool submissions, enter scores
+  POOL_SELECT: 'pool.select',     // confirm selection, start clan placement
+
+  // Day planning
+  /**
+   * Organise YOUR OWN day: put work into a time block, move it between blocks,
+   * tick it off, keep blocks of your own.
+   *
+   * A mentee holds this at `self` scope, which is the point of it. Until now
+   * every schedule route was gated on `authorize(['mentor','admin'])` — the
+   * legacy role array — so a mentee had exactly one endpoint and could only
+   * read. Widening that array would have handed mentees a mentor's powers; a
+   * permission is what lets them arrange their own time and nothing else.
+   */
+  SCHEDULE_PLAN: 'schedule.plan',
+  /**
+   * Shape somebody ELSE's day: assign a template, lock a block so it cannot be
+   * moved, push one block to a whole roster.
+   */
+  SCHEDULE_ASSIGN: 'schedule.assign',
 
   // Certificates
   // Signing off on the grade a mentee's certificate will be issued at. Held by
@@ -96,10 +126,21 @@ const PERMISSION_GROUPS = [
     ]
   },
   {
+    label: 'Selection pools',
+    permissions: [
+      { key: P.POOL_MANAGE, label: 'Set up and run selection pools' },
+      { key: P.POOL_MEMBERS, label: 'Add and remove pool candidates' },
+      { key: P.POOL_ASSIGN, label: 'Give pool candidates work' },
+      { key: P.POOL_REVIEW, label: 'Review pool candidates\' work' },
+      { key: P.POOL_SELECT, label: 'Select candidates and place them in clans' }
+    ]
+  },
+  {
     label: 'People and clans',
     permissions: [
       { key: P.CLAN_CREATE, label: 'Create clans' },
       { key: P.CLAN_MANAGE_MEMBERS, label: 'Change who is in a clan' },
+      { key: P.CLAN_AVATAR, label: 'Change the clan photo' },
       { key: P.MENTEE_VIEW, label: 'See mentee records' },
       { key: P.MENTEE_MANAGE, label: 'Edit mentee records' },
       { key: P.MENTEE_ADD, label: 'Add a mentee' },
@@ -111,6 +152,8 @@ const PERMISSION_GROUPS = [
     label: 'The work itself',
     permissions: [
       { key: P.TASK_ASSIGN, label: 'Set work' },
+      { key: P.SCHEDULE_PLAN, label: 'Plan your own day' },
+      { key: P.SCHEDULE_ASSIGN, label: 'Assign and lock schedules' },
       { key: P.TASK_REVIEW, label: 'Mark work' },
       { key: P.CERTIFICATE_VERIFY, label: 'Sign off certificate grades' },
       { key: P.LIBRARY_MANAGE, label: 'Manage the library' }

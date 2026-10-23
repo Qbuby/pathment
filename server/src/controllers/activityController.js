@@ -2,6 +2,9 @@ const { models, sequelize } = require('../db');
 const { Op } = require('sequelize');
 const { catchAsync } = require('../middlewares/errorHandler');
 const { successResponse } = require('../utils/responses');
+const { AuthorizationError } = require('../utils/errors/errorTypes');
+const { requestedClanId } = require('../middlewares/portalScope');
+const authzService = require('../services/authzService');
 
 const HEARTBEAT_INTERVAL_MINUTES = 5;
 const IDLE_THRESHOLD_MINUTES = 10;
@@ -166,6 +169,7 @@ const logPageView = catchAsync(async (req, res) => {
 const getMySummary = catchAsync(async (req, res) => {
   const userId = req.user.id;
   const days = Math.min(90, Math.max(1, parseInt(req.query.days) || 7));
+  const clanId = requestedClanId(req);
 
   const since = new Date();
   since.setDate(since.getDate() - days + 1);
@@ -187,11 +191,14 @@ const getMySummary = catchAsync(async (req, res) => {
       limit: 20,
       attributes: ['eventType', 'eventData', 'createdAt'],
     }),
+    // When a clan is selected, only count hours from that clan's tasks so
+    // completed-cohort work does not inflate standing-clan activity.
     models.AssignedTask.findAll({
       where: {
         menteeId: userId,
         submittedAt: { [Op.gte]: since },
         timeSpentHours: { [Op.ne]: null },
+        ...(clanId ? { clanId } : {}),
       },
       attributes: ['timeSpentHours'],
     }),
@@ -295,9 +302,43 @@ const getAdminOverview = catchAsync(async (req, res) => {
   since.setDate(since.getDate() - days + 1);
   const sinceDate = since.toISOString().split('T')[0];
 
+  /**
+   * Which programmes this read may cover.
+   *
+   * Two filters in one: the programme an admin picked on the page, and the
+   * programmes they are allowed to see at all. An admin granted one programme
+   * was being shown every mentee in the workspace here, because this endpoint
+   * listed activity for the tenant and stopped there.
+   *
+   * null means no restriction (an org-tier admin asking for everything).
+   */
+  const scope = await authzService.adminProgramScope(req.user);
+  const asked = req.query.programId || null;
+  if (asked && Array.isArray(scope) && !scope.includes(asked)) {
+    throw new AuthorizationError('That program is outside your program scope');
+  }
+  const programIds = asked ? [asked] : scope;
+
+  const where = { date: { [Op.gte]: sinceDate } };
+  if (Array.isArray(programIds)) {
+    // A mentee belongs to a programme through the clans they are in.
+    const clans = await models.Clan.findAll({
+      where: { programId: { [Op.in]: programIds } }, attributes: ['id'], raw: true,
+    });
+    const memberships = clans.length
+      ? await models.ClanMembership.findAll({
+        where: { clanId: { [Op.in]: clans.map((c) => c.id) }, role: 'mentee', status: 'active' },
+        attributes: ['userId'], raw: true,
+      })
+      : [];
+    const menteeIds = [...new Set(memberships.map((m) => m.userId))];
+    // Empty list → no rows, rather than silently falling back to everybody.
+    where.userId = { [Op.in]: menteeIds };
+  }
+
   // Get all mentee sessions in range
   const sessions = await models.ActivitySession.findAll({
-    where: { date: { [Op.gte]: sinceDate } },
+    where,
     include: [
       {
         model: models.User,

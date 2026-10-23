@@ -45,9 +45,25 @@ export default function MentorTopPerformersPage() {
       setLoading(true);
       const [rank, nominations] = await Promise.all([
         topPerformersApi.ranking({ clanId }),
-        topPerformersApi.list(),
+        // Scoped to the clan in the sidebar. This used to ask for everything
+        // the caller could see, which for a mentor who also administers the
+        // workspace was every nomination in the organisation.
+        topPerformersApi.list({ clanId }),
       ]);
-      setBoard(rank.data ?? { ranked: [], notRanked: [], rankedCount: 0 });
+      /**
+       * `??` only catches null and undefined, and the shape that actually
+       * arrived for a clan with nobody to rank was `[]` — not nullish, so it
+       * went straight through, and `board.ranked.length` threw on the next
+       * render. The server now always sends the object; this makes the page
+       * survive the old shape too, since a deployed client meets whichever
+       * API version is live.
+       */
+      const payload = rank.data;
+      setBoard(
+        payload && !Array.isArray(payload) && Array.isArray(payload.ranked)
+          ? payload
+          : { ranked: [], notRanked: [], rankedCount: 0 },
+      );
       setMine(nominations.data ?? []);
     } catch (err) {
       toast.error(extractApiErrorMessage(err, 'Could not load the ranking'));
@@ -108,7 +124,7 @@ export default function MentorTopPerformersPage() {
 
       {loading ? (
         <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-6 h-6 animate-spin text-brand-500" />
+          <Loader2 className="w-6 h-6 animate-spin text-brand-600" />
         </div>
       ) : board.ranked.length + board.notRanked.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border bg-card p-10 text-center">
@@ -161,7 +177,14 @@ export default function MentorTopPerformersPage() {
 
       {mine.length > 0 && (
         <section className="space-y-3">
-          <h2 className="text-slate-900">Your nominations</h2>
+          {/* Not "Your nominations": it lists every nomination made in THIS
+              clan, including a co-mentor's. That is deliberate — the chip on
+              the roster above warns you somebody has already been put forward,
+              and it can only do that if another mentor's nomination is here.
+              The heading now says what the list is. */}
+          <h2 className="text-slate-900">
+            Nominations in {clan?.name ? `${clan.name}` : 'this clan'}
+          </h2>
           {mine.map((n) => (
             <div key={n.id} className="rounded-2xl border border-border bg-card p-4 space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">

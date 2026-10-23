@@ -19,7 +19,7 @@
  */
 
 const gamificationService = require('../../src/services/gamificationService');
-const dailyLogService = require('../../src/services/dailyLogService');
+const { resolveMenteeClanId } = require('../../src/services/menteeClanScope');
 const { models } = require('../../src/db');
 const { shiftDayKey, STREAK_BONUSES } = require('../../src/services/streak');
 const { cleanDb, createMentee } = require('../helpers/seed');
@@ -27,12 +27,22 @@ const { todayInZone } = require('../../src/utils/timezone');
 
 const TODAY = () => todayInZone('UTC');
 
+/**
+ * Seed past days straight into the log.
+ *
+ * Not through `dailyLogService.upsert` any more: that writes today, and only
+ * today, on purpose — a mentee could otherwise POST last Tuesday and have the
+ * streak count it. Building a historical run is a fixture job, so it says so
+ * here rather than leaning on a hole in the write path.
+ */
 async function logDays(menteeId, count, endingOn = TODAY()) {
+  const clanId = await resolveMenteeClanId(menteeId, null);
   for (let index = count - 1; index >= 0; index -= 1) {
-    await dailyLogService.upsert(menteeId, {
-      dateKey: shiftDayKey(endingOn, -index),
-      tasksDone: [], slotsDone: [], note: 'Worked on it',
+    await models.DailyLogEntry.findOrCreate({
+      where: { menteeId, dateKey: shiftDayKey(endingOn, -index), clanId: clanId || null },
+      defaults: { tasksDone: [], slotsDone: [], note: 'Worked on it' },
     });
+    await gamificationService.updateStreak(menteeId);
   }
 }
 
@@ -127,11 +137,11 @@ describe('an unranked mentee is not given a rank', () => {
     expect(stats.leaderboardRank).toBeNull();
   });
 
-  it('reports a rank once points are earned', async () => {
+  it('does not invent a progress rank from points alone', async () => {
     await gamificationService.awardPoints(mentee.id, 20, 'task_completed', null, 'a task');
 
     const stats = await gamificationService.getUserGamificationStats(mentee.id);
     expect(stats.totalPoints).toBe(20);
-    expect(stats.leaderboardRank).toBe(1);
+    expect(stats.leaderboardRank).toBeNull();
   });
 });

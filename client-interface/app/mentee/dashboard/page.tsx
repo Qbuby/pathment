@@ -26,7 +26,15 @@ import { ProgressBar, StatusBadge } from "@/components/admin/ui";
 import { MentorFeedbackDrawer } from "@/components/mentee/MentorFeedbackDrawer";
 import { ActivityCard } from "@/components/shared/ActivityCard";
 import { RecurringRitualsCard } from "@/components/mentee/RecurringRitualsCard";
+import { PlanStripCard } from "@/components/mentor/PlanStripCard";
 import { AnnouncementsCard } from "@/components/shared/AnnouncementsCard";
+import { ClanWorkspaceNotice } from "@/components/shared/ClanWorkspaceNotice";
+import { TaskDrawer } from "@/components/mentee/TaskDrawer";
+import {
+  SubmitTaskDrawer,
+  type SubmitTaskTarget,
+} from "@/components/mentee/SubmitTaskDrawer";
+import { useClan, isHistoricalCohortClan } from "@/lib/context/ClanContext";
 
 function WhatsAppGroupCard({
   enrollment,
@@ -127,6 +135,25 @@ function WhatsAppGroupCard({
 function MenteeDashboardInner() {
   const { user } = useAuth();
   const searchParams = useSearchParams();
+  const { menteeClans, menteeActiveClanId } = useClan();
+  const historical = isHistoricalCohortClan(
+    menteeClans.find((c) => c.id === menteeActiveClanId),
+  );
+  /**
+   * The task being read, in a drawer over this page.
+   *
+   * Every other mentee surface opens a task this way — the list, the day
+   * planner — and this one sent you to a full page instead, so clicking the
+   * same task from two places did two different things. `/mentee/tasks/:id`
+   * is still the address and still what notifications link to; this is the
+   * shortcut from here, as it is everywhere else.
+   */
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [submitTarget, setSubmitTarget] = useState<SubmitTaskTarget | null>(null);
+  // Standing has no program enrollment — hide cohort enrollment chrome so
+  // completed-clan history never appears while this clan is selected.
+  const standing =
+    menteeClans.find((c) => c.id === menteeActiveClanId)?.kind === "standing";
   const {
     enrollments,
     loading,
@@ -145,13 +172,14 @@ function MenteeDashboardInner() {
 
   // Deep link from the "Leave feedback" notification: ?review=<enrollmentId>
   useEffect(() => {
+    if (standing) return;
     const reviewId = searchParams.get("review");
     if (!reviewId || loading) return;
     const target = enrollments.find((e) => e.id === reviewId);
     if (target && target.status === "program_completed") {
       openFeedback(reviewId, target.program?.name || "your program");
     }
-  }, [searchParams, enrollments, loading, openFeedback]);
+  }, [standing, searchParams, enrollments, loading, openFeedback]);
 
   const {
     summary: actSummary,
@@ -163,7 +191,40 @@ function MenteeDashboardInner() {
     refetch: refetchActivity,
   } = useMyActivity();
 
-  const { tasks: allTasks, loading: tasksLoading } = useMenteeTasks();
+  const {
+    tasks: allTasks,
+    loading: tasksLoading,
+    handleStartTask,
+    fetchTasks,
+  } = useMenteeTasks();
+
+  /** Hand a dashboard row to the submit drawer in the shape it expects. */
+  const askToSubmit = (task: {
+    id: string;
+    title?: string;
+    status?: string;
+    roadmapTask?: {
+      title?: string;
+      deliverable?: string | null;
+      acceptanceCriteria?: string[];
+    };
+  }) => setSubmitTarget({
+    id: task.id,
+    title: task.roadmapTask?.title || task.title || "Task",
+    status: task.status,
+    deliverable: task.roadmapTask?.deliverable,
+    acceptanceCriteria: task.roadmapTask?.acceptanceCriteria || [],
+  });
+
+  /**
+   * Still an anchor, so ⌘-click and "open in new tab" reach the real page; a
+   * plain click opens the drawer instead of navigating.
+   */
+  const openInDrawer = (taskId: string) => (e: React.MouseEvent) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    setOpenTaskId(taskId);
+  };
 
   // This Week: surface the single most important next action.
   const now = Date.now();
@@ -204,18 +265,20 @@ function MenteeDashboardInner() {
           </p>
         </div>
 
-        {/* WhatsApp Group links at the top corner */}
-        <div className="w-full md:w-auto flex flex-col gap-2 shrink-0 md:max-w-md">
-          {currentProgramEnrollments
-            .filter((e) => e.clan?.whatsappGroupLink)
-            .map((enrollment) => (
-              <WhatsAppGroupCard
-                key={enrollment.id}
-                enrollment={enrollment}
-                compact
-              />
-            ))}
-        </div>
+        {/* WhatsApp Group links — cohort enrollment only (standing has no enrollment) */}
+        {!standing && (
+          <div className="w-full md:w-auto flex flex-col gap-2 shrink-0 md:max-w-md">
+            {currentProgramEnrollments
+              .filter((e) => e.clan?.whatsappGroupLink)
+              .map((enrollment) => (
+                <WhatsAppGroupCard
+                  key={enrollment.id}
+                  enrollment={enrollment}
+                  compact
+                />
+              ))}
+          </div>
+        )}
       </div>
 
       <div
@@ -276,6 +339,7 @@ function MenteeDashboardInner() {
         {heroTask && (
           <Link
             href={`/mentee/tasks/${heroTask.id}`}
+            onClick={openInDrawer(heroTask.id)}
             className="mentee-next-task block transition-colors"
           >
             <div className="flex items-center gap-2 mb-2">
@@ -330,43 +394,27 @@ function MenteeDashboardInner() {
             </Link>
           </div>
         )}
-        <section className="rounded-3xl border border-border bg-card p-6 space-y-2">
-          <h2 className="font-semibold mb-3">Your support, one click away</h2>
-          {[
-            {
-              href: "/mentee/daily-log",
-              title: "Log today’s progress",
-              detail: "Capture what you learned.",
-              icon: ListTodo,
-            },
-            {
-              href: "/mentee/meetings",
-              title: "Meet your mentor",
-              detail: "Find a time to talk it through.",
-              icon: MessageSquareHeart,
-            },
-            {
-              href: "/mentee/blockers",
-              title: "Get unstuck",
-              detail: "Share what is slowing you down.",
-              icon: Flag,
-            },
-          ].map(({ href, title, detail, icon: Icon }) => (
-            <Link
-              key={href}
-              href={href}
-              className="flex gap-3 items-center rounded-xl p-3 hover:bg-muted transition-colors"
-            >
-              <Icon className="h-5 w-5 text-brand-600 shrink-0" />
-              <span className="flex-1">
-                <span className="block text-sm font-medium">{title}</span>
-                <span className="text-xs text-muted-foreground">{detail}</span>
-              </span>
-              <ArrowRight className="h-4 w-4 text-muted-foreground" />
-            </Link>
-          ))}
-        </section>
+
       </div>
+
+      {/*
+          Today as a line, with the planner one click behind it.
+
+          The whole DayPlanner was rendered inline here — the blocks, the
+          "work to plan" tray with a row and two controls per task, the drag
+          targets — so on a mentee with five unplanned items the dashboard was
+          mostly the planner, and the work queue underneath it was below the
+          fold. Planning a day is a thing you sit down to do; a dashboard
+          should say whether it is done.
+
+          `PlanStripCard` is the mentor's existing strip-plus-drawer: one row
+          saying what today looks like, the full planner in a drawer when you
+          open it. Same component, same behaviour, one screen lighter.
+      */}
+      <section aria-label="Your plan for today" className="mt-6">
+        <PlanStripCard menteeId="me" clanId={menteeActiveClanId || null} compact own />
+      </section>
+
       {/* Recurring rituals (from your schedule) */}
       <RecurringRitualsCard />
 
@@ -387,6 +435,7 @@ function MenteeDashboardInner() {
               <Link
                 key={t.id}
                 href={`/mentee/tasks/${t.id}`}
+                onClick={openInDrawer(t.id)}
                 className="flex items-center gap-3 px-6 py-3.5 hover:bg-slate-50 transition-colors"
               >
                 {t.status === "revision_needed" ? (
@@ -422,6 +471,46 @@ function MenteeDashboardInner() {
         </summary>
         <div className="mt-5">
           {" "}
+      {/* Reference, not today's work.
+          These three links were directly under the hero, above the day and
+          above the queue — three things a mentee might do, in front of the
+          two they came to do. Below them now. */}
+      <section className="rounded-3xl border border-border bg-card p-6 space-y-2">
+        <h2 className="font-semibold mb-3">Your support, one click away</h2>
+        {[
+          {
+            href: "/mentee/daily-log",
+            title: "Log today’s progress",
+            detail: "Capture what you learned.",
+            icon: ListTodo,
+          },
+          {
+            href: "/mentee/meetings",
+            title: "Meet your mentor",
+            detail: "Find a time to talk it through.",
+            icon: MessageSquareHeart,
+          },
+          {
+            href: "/mentee/blockers",
+            title: "Get unstuck",
+            detail: "Share what is slowing you down.",
+            icon: Flag,
+          },
+        ].map(({ href, title, detail, icon: Icon }) => (
+          <Link
+            key={href}
+            href={href}
+            className="flex gap-3 items-center rounded-xl p-3 hover:bg-muted transition-colors"
+          >
+            <Icon className="h-5 w-5 text-brand-600 shrink-0" />
+            <span className="flex-1">
+              <span className="block text-sm font-medium">{title}</span>
+              <span className="text-xs text-muted-foreground">{detail}</span>
+            </span>
+            <ArrowRight className="h-4 w-4 text-muted-foreground" />
+          </Link>
+        ))}
+      </section>
           {/* Activity self-view */}
           <ActivityCard
             summary={actSummary}
@@ -441,8 +530,9 @@ function MenteeDashboardInner() {
         </div>
       ) : (
         <>
-          {/* No enrollment yet - placement is admin/invite-driven now */}
-          {enrollments.length === 0 && (
+          {/* No enrollment yet - placement is admin/invite-driven now.
+              Standing clans skip this: the mentee is already placed by clan. */}
+          {!standing && enrollments.length === 0 && (
             <div className="bg-linear-to-br from-brand-50 dark:from-brand-500/10 to-brand-50 dark:to-transparent border border-brand-200 rounded-2xl p-8 text-center">
               <div className="w-16 h-16 bg-brand-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
                 <BookOpen className="w-8 h-8 text-white" />
@@ -459,7 +549,7 @@ function MenteeDashboardInner() {
           )}
 
           {/* Pending Completion - Awaiting Mentor Approval */}
-          {pendingCompletionEnrollments.length > 0 && (
+          {!standing && pendingCompletionEnrollments.length > 0 && (
             <div className="bg-orange-50 border border-orange-200 rounded-2xl p-6">
               <div className="flex items-start gap-4">
                 <div className="w-10 h-10 bg-orange-100 rounded-xl flex items-center justify-center shrink-0">
@@ -491,7 +581,7 @@ function MenteeDashboardInner() {
           )}
 
           {/* Level Completed - Auto-promoted to pending_match */}
-          {levelCompletedEnrollments.length > 0 && (
+          {!standing && levelCompletedEnrollments.length > 0 && (
             <div className="bg-green-50 border border-green-200 rounded-2xl p-6">
               <div className="flex items-start gap-4">
                 <div className="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center shrink-0">
@@ -516,7 +606,7 @@ function MenteeDashboardInner() {
           )}
 
           {/* Pending Approvals Alert */}
-          {pendingEnrollments.length > 0 && (
+          {!standing && pendingEnrollments.length > 0 && (
             <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6">
               <div className="flex items-start gap-4">
                 <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center shrink-0">
@@ -544,7 +634,7 @@ function MenteeDashboardInner() {
           )}
 
           {/* Approved but not matched Alert */}
-          {approvedEnrollments.length > 0 && (
+          {!standing && approvedEnrollments.length > 0 && (
             <div className="bg-blue-50 border border-blue-200 rounded-2xl p-6">
               <div className="flex items-start gap-4">
                 <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center shrink-0">
@@ -574,7 +664,7 @@ function MenteeDashboardInner() {
           )}
 
           {/* Active Programs - one card per in-progress enrollment */}
-          {currentProgramEnrollments.length > 0 && (
+          {!standing && currentProgramEnrollments.length > 0 && (
             <div>
               <h2 className="text-slate-900 mb-4">
                 Active Program{currentProgramEnrollments.length > 1 ? "s" : ""}
@@ -653,7 +743,7 @@ function MenteeDashboardInner() {
           )}
 
           {/* Completed Programs - Rate Your Mentor prompt */}
-          {completedEnrollments.length > 0 && (
+          {!standing && completedEnrollments.length > 0 && (
             <div>
               <h2 className="text-slate-900 mb-4">Completed Programs 🎓</h2>
               <div className="grid gap-4 lg:grid-cols-2">
@@ -707,7 +797,7 @@ function MenteeDashboardInner() {
           )}
 
           {/* All Enrollments */}
-          {enrollments.length > 0 && (
+          {!standing && enrollments.length > 0 && (
             <details className="bg-card rounded-2xl border border-slate-200 p-6">
               <summary className="cursor-pointer font-medium mb-4">
                 Enrollment history · {enrollments.length}
@@ -767,6 +857,28 @@ function MenteeDashboardInner() {
         </>
       )}
 
+      <TaskDrawer
+        taskId={openTaskId}
+        open={!!openTaskId}
+        onClose={() => setOpenTaskId(null)}
+        readOnly={historical}
+        onStart={async (id) => { await handleStartTask(id); }}
+        onSubmit={(task) => {
+          // One drawer at a time: hand off to the submit form rather than
+          // stacking a second panel on top of this one.
+          setOpenTaskId(null);
+          askToSubmit(task);
+        }}
+      />
+
+      <SubmitTaskDrawer
+        open={!!submitTarget}
+        task={submitTarget}
+        onClose={() => setSubmitTarget(null)}
+        onSubmitted={fetchTasks}
+        readOnly={historical}
+      />
+
       {/* Anonymous mentor feedback drawer */}
       <MentorFeedbackDrawer
         open={Boolean(feedbackTarget)}
@@ -780,15 +892,21 @@ function MenteeDashboardInner() {
 }
 
 export default function MenteeDashboard() {
+  // Standing and cohort clans share the same mentee home — clan scope (X-Active-Clan)
+  // and useMenteeTasks already isolate standing work from completed-cohort enrollments.
+  // Frozen-clan notice only on This Week (not every mentee tab).
   return (
-    <Suspense
-      fallback={
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-8 h-8 animate-spin text-brand-600" />
-        </div>
-      }
-    >
-      <MenteeDashboardInner />
-    </Suspense>
+    <>
+      <ClanWorkspaceNotice role="mentee" />
+      <Suspense
+        fallback={
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="w-8 h-8 animate-spin text-brand-600" />
+          </div>
+        }
+      >
+        <MenteeDashboardInner />
+      </Suspense>
+    </>
   );
 }

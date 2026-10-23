@@ -43,7 +43,7 @@ export default function AdminTopPerformersPage() {
     if (!programId) return;
     try {
       setLoading(true);
-      const res = await topPerformersApi.list(programId);
+      const res = await topPerformersApi.list({ programId });
       setRows(res.data ?? []);
     } catch (err) {
       toast.error(extractApiErrorMessage(err, 'Could not load nominations'));
@@ -94,7 +94,7 @@ export default function AdminTopPerformersPage() {
 
       {loading ? (
         <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-6 h-6 animate-spin text-brand-500" />
+          <Loader2 className="w-6 h-6 animate-spin text-brand-600" />
         </div>
       ) : rows.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border bg-card p-10 text-center">

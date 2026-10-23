@@ -67,4 +67,7 @@ router.get('/mentee/:id/summary', requireMenteeAccess('id'), getMenteeSummary);
 // Admin-only aggregate overview
 router.get('/admin/overview', requirePermissionMinScope(PERMISSIONS.ANALYTICS_VIEW), getAdminOverview);
 
+// Which screens are actually being opened, by role. Same permission as the
+// rest of Insights: this is reporting, not a change to anybody's access.
+
 module.exports = router;

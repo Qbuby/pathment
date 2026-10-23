@@ -34,6 +34,7 @@ Every feature file follows the same template so things are easy to find and reme
 | Feature | What it covers |
 | --- | --- |
 | [Intake & Assessments](./intake-and-assessments.md) | Public program catalog, shareable cohort apply links, applications, magic-link, admin-built assessments, accept → invite → register → placement, carry-forward. |
+| [System Pool](./system-pool.md) | Pre-clan selection: candidates qualify on existing work, are reviewed and scored, shortlisted, decided by a person, then placed into clans. |
 | [Programs, Cohorts & Clans](./programs-cohorts-clans.md) | The org structure: programs, intake cohorts, mentor-led clans, memberships, clan change requests, cross-clan help. |
 | [Public Clan Joining Link](./clan-public-join.md) | Shareable multi-use clan URLs: admin permission, Lead Mentor link + approve/reject, visitor register/login → join request. |
 | [Matching & Placement](./matching-and-placement.md) | Clan-based placement + AI mentor-match suggestions. |
@@ -70,6 +71,7 @@ Every feature file follows the same template so things are easy to find and reme
 ### Cross-cutting / platform
 | Topic | What it covers |
 | --- | --- |
+| [Platform console](./platform-console.md) | The OPERATOR surface at `/platform`: platform-admin tiers, workspace provisioning with owner activation links, plan assignment + invoice activation, per-workspace overrides, lifecycle, account-level support, lead inbox, queue/job health, append-only platform audit. |
 | [Error handling & observability](../ARCHITECTURE.md#error-handling--observability) | One error envelope (`message` + `code` + `errors[]` + `requestId`), typed errors, request-id correlation, no-leak prod, structured (aggregator-ready) logging, and the client error boundaries. *(Documented in ARCHITECTURE — it's cross-cutting.)* |
 
 ---

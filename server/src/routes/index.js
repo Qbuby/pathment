@@ -83,6 +83,11 @@ router.use('/auto-reply', autoReplyRoutes);
 router.use('/mentors', mentorRoutes);
 router.use('/mentees', menteeRoutes);
 
+// System Pool (pre-clan selection): operators/reviewers, and candidates' own work
+const poolRoutes = require('./pools');
+router.use('/pools', poolRoutes.pools);
+router.use('/candidate', poolRoutes.candidate);
+
 // Task routes
 router.use('/tasks', taskRoutes);
 router.use('/interviews', interviewRoutes);
@@ -157,11 +162,23 @@ router.use('/assessments', assessmentRoutes);
 // Public, unauthenticated intake - program catalog + apply + applicant status
 router.use('/public', publicRoutes);
 
+// Reference geography - countries, regions, cities, and a country's timezones
+router.use('/geo', require('./geo'));
+
 // IAM - scoped role grants + effective-permission lookup
 router.use('/access', accessRoutes);
 
 // AI connections - admin BYO provider keys + feature routing
 router.use('/ai-connections', aiConnectionRoutes);
+
+// Platform console - operator surface spanning every workspace
+router.use('/platform', require('./platform'));
+
+// External apps - platform catalog + per-workspace connections
+router.use('/apps', require('./externalApps'));
+
+// External courses (Buildment) - assignable catalog + per-task enrollment/progress
+router.use('/courses', require('./courses'));
 
 // Program reviews - anonymous mentee→mentor feedback at completion
 router.use('/program-reviews', programReviewRoutes);

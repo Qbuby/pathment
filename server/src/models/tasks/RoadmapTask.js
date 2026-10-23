@@ -28,7 +28,8 @@ module.exports = (sequelize, DataTypes) => {
         // 'assignment' added to match the new-design TaskType
         // (assignment/project/quiz/reading/video/discussion). 'interview' =
         // structured voice/code/text interview backed by an InterviewKit.
-        isIn: [['reading', 'video', 'exercise', 'project', 'quiz', 'discussion', 'practical', 'assessment', 'custom', 'assignment', 'interview', 'open_source', 'talk']]
+        // 'course' = an external course (Buildment) backed by a CourseEnrollment.
+        isIn: [['reading', 'video', 'exercise', 'project', 'quiz', 'discussion', 'practical', 'assessment', 'custom', 'assignment', 'interview', 'open_source', 'course', 'talk']]
       }
     },
     difficulty: {
@@ -86,11 +87,6 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.ARRAY(DataTypes.UUID),
       defaultValue: [],
       field: 'open_source_org_ids'
-    },
-    talkIds: {
-      type: DataTypes.ARRAY(DataTypes.UUID),
-      defaultValue: [],
-      field: 'talk_ids'
     }
   }, {
     tableName: 'roadmap_tasks',

@@ -1,9 +1,12 @@
 // Explicit ownership inventory. Account identity/authentication and public
 // product catalogs remain global; all learning and workspace operations do not.
 const WORKSPACE_MODELS = {
+  StandingClanRequest: 'standing_clan_requests',
   Skill: 'skills',
   OpenSourceOrg: 'open_source_orgs',
-  ProductUpdate: 'product_updates',
+  // ProductUpdate deliberately absent: "What's New" entries describe the
+  // PRODUCT and are authored from the platform console for every workspace
+  // (migration 135 relaxed the NOT NULL the 114 stamp required).
   ActivitySession: 'activity_sessions',
   AdaptiveRecommendation: 'adaptive_recommendations',
   AnalyticsEvent: 'analytics_events',
@@ -40,6 +43,10 @@ const WORKSPACE_MODELS = {
   QuizKit: 'quiz_kits',
   QuizQuestion: 'quiz_questions',
   QuizSession: 'quiz_sessions',
+  CourseEnrollment: 'course_enrollments',
+  // The System Pool (migration 140).
+  CandidatePool: 'candidate_pools',
+  PoolMember: 'candidate_pool_members',
   AdminMeeting: 'admin_meetings',
   AvailabilityRule: 'availability_rules',
   AvailabilitySlot: 'availability_slots',
@@ -87,7 +94,7 @@ const WORKSPACE_MODELS = {
 };
 
 const GLOBAL_MODELS = new Set([
-  'User', 'Organization', 'Plan',
+  'User', 'Organization', 'Plan', 'ExternalApp',
   'SuppressedEmail', 'DeviceToken', 'UserSettings', 'UserSession', 'RefreshToken',
   'SignInLinkToken', 'PasswordResetToken', 'EmailVerificationToken', 'TwoFactorAuth',
 ]);

@@ -21,6 +21,10 @@ router.get('/', authenticate, validateQuery(clanSchemas.listQuery), clanControll
 
 // Org-wide clan-health snapshot + insights (analytics consumers).
 router.get('/follow-ups', authenticate, requirePermissionMinScope(PERMISSIONS.ANALYTICS_VIEW), validateQuery(clanSchemas.followUpQuery), clanController.clanFollowUps);
+// Reading the queue is an analytics permission; messaging the people in it is
+// not — sending to thirty mentees at once needs the permission that edits
+// mentee records, not the one that views a chart.
+router.post('/follow-ups/nudge', authenticate, requirePermissionMinScope(PERMISSIONS.MENTEE_MANAGE), clanController.nudgeFollowUps);
 router.get('/health', authenticate, requirePermissionMinScope(PERMISSIONS.ANALYTICS_VIEW), clanController.clanHealth);
 router.get('/insights', authenticate, requirePermissionMinScope(PERMISSIONS.ANALYTICS_VIEW), clanController.clanInsights);
 
@@ -29,11 +33,95 @@ const avatarService = require('../services/clanAvatarService');
 const upload = require('../middlewares/upload');
 const { catchAsync } = require('../middlewares/errorHandler');
 const { successResponse } = require('../utils/responses');
+
+/**
+ * Standing clan mentee roster + activity (after formal program close)
+ */
+router.post(
+  '/:id/standing-members',
+  authenticate,
+  validateParams(clanSchemas.idParams),
+  validateBody(clanSchemas.standingMembersBody),
+  clanController.addStandingMembers
+);
+
+router.get(
+  '/:id/activity',
+  authenticate,
+  validateParams(clanSchemas.idParams),
+  validateQuery(clanSchemas.standingActivityQuery),
+  clanController.getStandingActivity
+);
+
+/**
+ * What a mentee did before this clan, and the unfinished work a mentor may
+ * choose to carry forward. Carrying forward creates NEW assignments here; the
+ * originals stay in the completed programme untouched.
+ */
+router.get(
+  '/:id/prior-record',
+  authenticate,
+  validateParams(clanSchemas.idParams),
+  clanController.getStandingPriorRecord
+);
+
+router.get(
+  '/:id/mentees/:menteeId/unfinished-prior-work',
+  authenticate,
+  clanController.getUnfinishedPriorWork
+);
+
+router.post(
+  '/:id/mentees/:menteeId/carry-forward',
+  authenticate,
+  clanController.carryForwardWork
+);
+
+router.get(
+  '/:id/mentees/:menteeId/continuation-preview',
+  authenticate,
+  validateParams(clanSchemas.continuationParams),
+  clanController.getContinuationPreview
+);
+
+router.post(
+  '/:id/mentees/:menteeId/continue-work',
+  authenticate,
+  validateParams(clanSchemas.continuationParams),
+  validateBody(clanSchemas.continueWorkBody),
+  clanController.continueWork
+);
+
 const canEditAvatar = catchAsync(async (req, res, next) => { await avatarService.editableClan(req.params.id, req.user); next(); });
-router.post('/:id/avatar', authenticate, validateParams(clanSchemas.idParams), canEditAvatar, upload.singleSafe('file'), catchAsync(async (req, res) => {
-  res.json(successResponse('Clan photo updated', await avatarService.setAvatar(req.params.id, req.user, req.file)));
-}));
-router.delete('/:id/avatar', authenticate, validateParams(clanSchemas.idParams), catchAsync(async (req, res) => {
+
+// Crop → upload file → receive URL → save URL (add and change).
+router.post(
+  '/:id/avatar/upload',
+  authenticate,
+  validateParams(clanSchemas.idParams),
+  canEditAvatar,
+  upload.singleSafe('file'),
+  catchAsync(async (req, res) => {
+    res.status(201).json(
+      successResponse('File uploaded', await avatarService.uploadAvatarFile(req.params.id, req.user, req.file), 201)
+    );
+  })
+);
+router.put(
+  '/:id/avatar',
+  authenticate,
+  validateParams(clanSchemas.idParams),
+  canEditAvatar,
+  catchAsync(async (req, res) => {
+    res.json(
+      successResponse(
+        'Clan photo updated',
+        await avatarService.setAvatarUrl(req.params.id, req.user, req.body?.avatarUrl)
+      )
+    );
+  })
+);
+router.delete('/:id/avatar', authenticate, validateParams(clanSchemas.idParams), canEditAvatar, catchAsync(async (req, res) => {
   res.json(successResponse('Clan photo removed', await avatarService.removeAvatar(req.params.id, req.user)));
 }));
 

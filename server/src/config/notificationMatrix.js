@@ -30,6 +30,8 @@ EXTENSION_HANDLED: 'extension_handled',
   NEW_MENTEE_IN_CLAN: 'new_mentee_in_clan',
   CLAN_JOIN_REQUEST_RECEIVED: 'clan_join_request_received',
   CLAN_JOIN_REQUEST_DECIDED: 'clan_join_request_decided',
+  STANDING_CLAN_REQUEST_CREATED: 'standing_clan_request_created',
+  STANDING_CLAN_REQUEST_DECIDED: 'standing_clan_request_decided',
   MENTEE_TRANSFER_REQUESTED: 'mentee_transfer_requested',
   MENTEE_TRANSFER_DECIDED: 'mentee_transfer_decided',
   PROMOTION_NOMINATED: 'promotion_nominated',
@@ -60,7 +62,16 @@ EXTENSION_HANDLED: 'extension_handled',
   CERTIFICATE_VERIFICATION_REQUESTED: 'certificate_verification_requested',
   CERTIFICATE_VERIFICATION_COMPLETED: 'certificate_verification_completed',
   // The admin has released a clan: its mentors may now send.
-  CERTIFICATE_CLAN_APPROVED: 'certificate_clan_approved'
+  CERTIFICATE_CLAN_APPROVED: 'certificate_clan_approved',
+  // System Pool (pre-clan selection). Candidate-facing events are audience
+  // 'any': a candidate is in no portal of the three, and their bell must show
+  // them. Operator/reviewer events land in the admin area (Selection pools).
+  POOL_WORK_ASSIGNED: 'pool_work_assigned',
+  POOL_REMINDER: 'pool_reminder',
+  POOL_WORK_SUBMITTED: 'pool_work_submitted',
+  POOL_WORK_REVIEWED: 'pool_work_reviewed',
+  POOL_ATTENTION: 'pool_attention',
+  POOL_OUTCOME: 'pool_outcome'
 };
 
 // Which role's "hat" a notification concerns, so the bell + list can scope to the
@@ -265,6 +276,52 @@ const NOTIFICATION_MATRIX = {
     preferenceKey: 'certificate_clan_approved',
     channels: { inApp: true, email: true, chat: false }
   },
+  // ── System Pool ────────────────────────────────────────────────────────────
+  // Candidate: qualifying work was given to them. Same preference as any task.
+  [NOTIFICATION_EVENTS.POOL_WORK_ASSIGNED]: {
+    type: 'task',
+    audience: 'any',
+    preferenceKey: 'task_assigned',
+    channels: { inApp: true, email: true, chat: false }
+  },
+  // Candidate: invitation not accepted / work due soon / gone quiet.
+  [NOTIFICATION_EVENTS.POOL_REMINDER]: {
+    type: 'task',
+    audience: 'any',
+    preferenceKey: 'deadline_approaching',
+    channels: { inApp: true, email: true, chat: false }
+  },
+  // Pool reviewers: work is waiting. In-app only — a pool of hundreds would
+  // otherwise mail every reviewer hundreds of times.
+  [NOTIFICATION_EVENTS.POOL_WORK_SUBMITTED]: {
+    type: 'task',
+    audience: 'admin',
+    preferenceKey: 'pool_work_submitted',
+    channels: { inApp: true, email: false, chat: false }
+  },
+  // Candidate: their qualifying work was approved or needs changes.
+  [NOTIFICATION_EVENTS.POOL_WORK_REVIEWED]: {
+    type: 'feedback',
+    audience: 'any',
+    preferenceKey: 'submission_reviewed',
+    channels: { inApp: true, email: true, chat: false }
+  },
+  // Pool operators: something needs a human — shortlist ready, a tie at the
+  // cutoff, reviews outstanding, a placement that failed.
+  [NOTIFICATION_EVENTS.POOL_ATTENTION]: {
+    type: 'system',
+    audience: 'admin',
+    preferenceKey: 'pool_attention',
+    channels: { inApp: true, email: true, chat: false }
+  },
+  // Candidate: the final outcome (selected and placed / waitlisted / not
+  // selected). Always worth an email; it is the answer they are waiting for.
+  [NOTIFICATION_EVENTS.POOL_OUTCOME]: {
+    type: 'milestone',
+    audience: 'any',
+    preferenceKey: 'pool_outcome',
+    channels: { inApp: true, email: true, chat: false }
+  },
   // "That clan has signed off." Tells the admin a clan is clear to issue.
   [NOTIFICATION_EVENTS.CERTIFICATE_VERIFICATION_COMPLETED]: {
     type: 'milestone',
@@ -318,6 +375,20 @@ const NOTIFICATION_MATRIX = {
     type: 'system',
     audience: 'mentee',
     preferenceKey: 'clan_join_request_decided',
+    channels: { inApp: true, email: true, chat: false }
+  },
+  // Mentor asked for a fresh standing clan after program close — admins decide
+  // in the notification drawer (Approve / Reject).
+  [NOTIFICATION_EVENTS.STANDING_CLAN_REQUEST_CREATED]: {
+    type: 'system',
+    audience: 'admin',
+    preferenceKey: 'standing_clan_request_created',
+    channels: { inApp: true, email: true, chat: false }
+  },
+  [NOTIFICATION_EVENTS.STANDING_CLAN_REQUEST_DECIDED]: {
+    type: 'system',
+    audience: 'mentor',
+    preferenceKey: 'standing_clan_request_decided',
     channels: { inApp: true, email: true, chat: false }
   },
   // Another mentor asks THIS clan to take one of their mentees. Always in-app;
@@ -483,13 +554,16 @@ const EMAIL_PREFERENCE_CATEGORIES = [
   { group: 'Program', key: 'cross_clan_assigned', label: 'I\'m asked to cover or help another clan' },
   { group: 'Program', key: 'new_mentee_in_clan', label: 'A new mentee joins my clan' },
   { group: 'Program', key: 'promotion_nominated', label: 'A mentee is nominated for promotion (admins)' },
+  { group: 'Program', key: 'standing_clan_request_created', label: 'A mentor requests a standing clan (admins)' },
   { group: 'Milestones', key: 'completion_ready_for_signoff', label: 'Completion is ready for sign-off' },
   { group: 'Milestones', key: 'program_completed', label: 'A program is completed' },
   { group: 'Milestones', key: 'certificate_awarded', label: 'A certificate is awarded to me' },
   { group: 'Digests', key: 'weekly_progress_report', label: 'Weekly progress report' },
   { group: 'Program', key: 'mentee_returned', label: 'A paused mentee returns to my clan' },
   { group: 'Program', key: 'mentee_reengage', label: 'Reminders to come back when I\'m paused' },
-  { group: 'Program', key: 'feedback_status_updated', label: 'Updates on my feedback / bug reports' }
+  { group: 'Program', key: 'feedback_status_updated', label: 'Updates on my feedback / bug reports' },
+  { group: 'Selection pools', key: 'pool_attention', label: 'A selection pool needs my decision (pool operators)' },
+  { group: 'Selection pools', key: 'pool_outcome', label: 'The outcome of a selection pool I am in' }
 ];
 
 module.exports = {

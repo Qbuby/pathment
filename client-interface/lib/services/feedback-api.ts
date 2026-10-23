@@ -4,9 +4,21 @@ import { apiClient } from './api-client';
 export type FeedbackType = 'bug' | 'suggestion' | 'other';
 export type FeedbackStatus = 'open' | 'in_review' | 'planned' | 'fixed' | 'added' | 'declined';
 
+/**
+ * Who owns the report. 'product' is a Pathment bug or suggestion and belongs to
+ * the Pathment team; 'workspace' is a question about this organisation's
+ * programme, mentor or clan and belongs to its admins. Derived on the server
+ * from the type, so it is read here and never sent.
+ */
+export type FeedbackLane = 'product' | 'workspace';
+
 export interface FeedbackReport {
   id: string;
   type: FeedbackType; typeLabel: string;
+  lane: FeedbackLane;
+  /** Only the platform inbox sets this: it spans workspaces. */
+  organization: { id: string; name: string; slug: string } | null;
+  handledBy: string | null;
   title: string; description: string | null;
   status: FeedbackStatus; statusLabel: string;
   priority: 'low' | 'normal' | 'high';
@@ -40,7 +52,7 @@ export const feedbackApi = {
   /** The current user's own reports + status. */
   listMine: () => apiClient.get<{ data: { reports: FeedbackReport[] } }>('/feedback/mine'),
   /** Admin triage list. */
-  listAll: (params?: { status?: string; type?: string; page?: number; limit?: number }) =>
+  listAll: (params?: { status?: string; type?: string; lane?: FeedbackLane; page?: number; limit?: number }) =>
     apiClient.get<{ data: { reports: FeedbackReport[]; total: number; page: number; limit: number; openCount: number } }>('/feedback', { params }),
   /** Admin: update status / reply. */
   update: (id: string, data: { status?: FeedbackStatus; resolutionNote?: string; priority?: string }) =>

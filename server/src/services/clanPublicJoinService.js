@@ -594,7 +594,8 @@ class ClanPublicJoinService {
 
   _buildJoinUrl(slug) {
     const base = require('../utils/applicationUrl')();
-    return `${base}/clan/join/${slug}`;
+    const workspace = require('../utils/links').tenantSlug();
+    return `${base}/w/${workspace}/clan/join/${slug}`;
   }
 
   async _mintUniqueSlug() {
@@ -744,6 +745,8 @@ class ClanPublicJoinService {
       transaction
     });
     if (!clan) throw new NotFoundError('Clan not found');
+    // Standing clans use the same public-join flow as cohorts; membership is
+    // still created via clanService.addMember (enrollmentId stays null).
     return clan;
   }
 

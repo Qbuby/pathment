@@ -17,6 +17,8 @@ export interface MentorProfileData {
   bio: string;
   city: string;
   country: string;
+  countryCode: string;
+  region: string;
   languages: string[];
   timezone: string;
   autoReplyEnabled?: boolean;
@@ -69,6 +71,8 @@ export function useMentorSettings(): UseMentorSettingsReturn {
     bio: '',
     city: '',
     country: '',
+    countryCode: '',
+    region: '',
     languages: [],
     timezone: '',
   });
@@ -103,6 +107,8 @@ export function useMentorSettings(): UseMentorSettingsReturn {
         bio: data.bio || '',
         city: data.city || '',
         country: data.country || '',
+        countryCode: data.countryCode || '',
+        region: data.region || '',
         languages: Array.isArray(data.languages) ? data.languages : [],
         timezone: data.settings?.timezone || '',
         autoReplyEnabled: data.styleProfile?.autoReplyEnabled ?? false,

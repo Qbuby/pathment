@@ -1,8 +1,20 @@
 const { Op } = require('sequelize');
 const { models } = require('../db');
 const { NotFoundError, ValidationError, ForbiddenError } = require('../utils/errors/errorTypes');
+const authzService = require('./authzService');
+const { VISIBLE_MEMBERSHIP_STATUSES } = require('../config/membership');
 
 const AUDIENCE_TYPES = ['all', 'mentors', 'mentees', 'program', 'clan'];
+/** Clan roles that mean "I mentor this clan" — mirrors the client's picker. */
+const MENTOR_CLAN_ROLES = ['lead_mentor', 'co_mentor', 'core_team'];
+
+/**
+ * Enrolment statuses that mean this person's run of the programme is over, so
+ * the window on its announcements closes. 'program_completed' is in here: an
+ * alumnus keeps what they could already read and stops receiving what is
+ * posted after they finished.
+ */
+const ENDED_ENROLMENT_STATUSES = ['rejected', 'dropped', 'program_completed'];
 
 /**
  * Announcements with audience targeting + per-viewer visibility.
@@ -12,32 +24,197 @@ const AUDIENCE_TYPES = ['all', 'mentors', 'mentees', 'program', 'clan'];
  * program/clan they belong to (admins see everything for oversight).
  */
 class AnnouncementService {
-  _caps(user) {
-    return Array.isArray(user?.capabilities) && user.capabilities.length ? user.capabilities : [user?.role].filter(Boolean);
+  /**
+   * What this person can actually do, derived now.
+   *
+   * This read `user.capabilities` and fell back to `user.role` — both legacy,
+   * and `authzService.getAssignments` says so in as many words: elevated access
+   * comes from RoleAssignments and memberships, "NOT the stored `capabilities`
+   * array, which is legacy and no longer authoritative".
+   *
+   * The cost was real. A workspace owner whose account signed up as a mentor
+   * resolved to ['mentor'], so composing an announcement took the mentor branch
+   * and was refused with "Mentors can only announce to a clan they lead" — on
+   * their own workspace, from the admin portal, with the audience picker in
+   * front of them offering All mentors.
+   *
+   * `getCapabilities` adds 'admin' through `hasAdminAccess`, which reads the
+   * org membership and the role assignments, so it covers both a base-role
+   * admin and a workspace owner or admin of any account type.
+   */
+  async _caps(user) {
+    if (!user) return [];
+    return authzService.getCapabilities(user);
   }
 
-  /** Clans + programs the viewer belongs to (for visibility filtering). */
-  async _scope(user) {
-    const caps = this._caps(user);
-    const memberships = await models.ClanMembership.findAll({
-      where: { userId: user.id, status: 'active' },
-      include: [{ model: models.Clan, as: 'clan', attributes: ['programId'] }]
-    });
-    const clanIds = memberships.map((m) => m.clanId);
-    const programIds = new Set(memberships.map((m) => m.clan?.programId).filter(Boolean));
+  /**
+   * The roles that count while the caller is wearing a particular hat.
+   *
+   * Somebody can be an admin, a mentor of two clans and a mentee of a third.
+   * In the mentor portal only the mentor memberships are part of the question;
+   * in the mentee portal only the mentee ones. Without this, switching the tab
+   * changed nothing about what came back.
+   */
+  _membershipRolesFor(portalRole) {
+    if (portalRole === 'mentee') return ['mentee'];
+    if (portalRole === 'mentor') return MENTOR_CLAN_ROLES;
+    return null; // no portal stated: every membership counts, as before
+  }
 
-    if (caps.includes('mentee')) {
-      const enrollments = await models.Enrollment.findAll({ where: { menteeId: user.id }, attributes: ['programId'] });
-      enrollments.forEach((e) => programIds.add(e.programId));
+  /**
+   * Clans + programmes the viewer belongs to, and WHEN they joined each.
+   *
+   * The dates are the point of this. Visibility used to be pure set membership
+   * - "are you in programme X right now?" - so somebody who enrolled this
+   * morning opened Announcements onto eight months of another cohort's
+   * logistics, "Demo Day is complete, well done everyone" included. The same
+   * query had no status filter at all, so a mentee who dropped out kept
+   * receiving new posts for ever.
+   *
+   * A programme's anchor is the EARLIEST moment this person was connected to
+   * it. A clan reads on its programme's anchor, never on the clan join date: a
+   * mentee moved into a standing clan gets a fresh clan_memberships row, so
+   * anchoring on the clan would hide months of their own clan's history on the
+   * day an admin approves the move.
+   */
+  async _scope(user, portalRole = null) {
+    const caps = await this._caps(user);
+    const roles = this._membershipRolesFor(portalRole);
+    const memberships = await models.ClanMembership.findAll({
+      // A PAUSED member still belongs to the clan - the whole point of a pause
+      // is that somebody brings them back - so they keep reading its posts.
+      where: {
+        userId: user.id,
+        status: { [Op.in]: VISIBLE_MEMBERSHIP_STATUSES },
+        ...(roles ? { role: { [Op.in]: roles } } : {}),
+      },
+      include: [{ model: models.Clan, as: 'clan', attributes: ['id', 'programId'] }]
+    });
+
+    const programFrom = new Map();
+    const programTo = new Map();
+    const clanFrom = new Map();
+    const clanJoinedAt = new Map();
+    const programIds = new Set();
+    // Which clans, kept separate from WHEN they joined each. A membership row
+    // with no join date on record still puts them in the clan - folding the
+    // two together dropped those clans out of the result entirely.
+    const clanIds = new Set();
+    const earliest = (map, key, at) => {
+      if (!key || !at) return;
+      const when = new Date(at);
+      const prev = map.get(key);
+      if (!prev || when < prev) map.set(key, when);
+    };
+
+    for (const m of memberships) {
+      if (m.clanId) clanIds.add(m.clanId);
+      earliest(clanJoinedAt, m.clanId, m.joinedAt || m.createdAt);
+      if (m.clan?.programId) {
+        programIds.add(m.clan.programId);
+        earliest(programFrom, m.clan.programId, m.joinedAt || m.createdAt);
+      }
     }
-    if (caps.includes('mentor')) {
+
+    if (caps.includes('mentee') && portalRole !== 'mentor') {
+      const enrollments = await models.Enrollment.findAll({
+        where: { menteeId: user.id },
+        attributes: ['programId', 'status', 'enrolledAt', 'completedAt', 'droppedAt', 'createdAt', 'updatedAt']
+      });
+      const byProgram = new Map();
+      for (const e of enrollments) {
+        if (!e.programId) continue;
+        if (!byProgram.has(e.programId)) byProgram.set(e.programId, []);
+        byProgram.get(e.programId).push(e);
+      }
+      for (const [programId, rows] of byProgram) {
+        programIds.add(programId);
+        rows.forEach((r) => earliest(programFrom, programId, r.enrolledAt || r.createdAt));
+        /**
+         * A ceiling, and only when EVERY enrolment in the programme has ended.
+         * One live enrolment means they are current, whatever the older rows
+         * say: somebody who dropped a cohort and joined the next one is not an
+         * alumnus.
+         *
+         * Their CLAN posts are deliberately unaffected. A standing clan is
+         * where alumni live, and membership of it is a live relationship that
+         * has nothing to do with an enrolment's status.
+         */
+        if (!rows.some((r) => !ENDED_ENROLMENT_STATUSES.includes(r.status))) {
+          const ends = rows
+            .map((r) => r.droppedAt || r.completedAt || r.updatedAt)
+            .filter(Boolean)
+            .map((d) => new Date(d).getTime());
+          if (ends.length) programTo.set(programId, new Date(Math.max(...ends)));
+        }
+      }
+    }
+
+    if (caps.includes('mentor') && portalRole !== 'mentee') {
       const matches = await models.MentorMenteeMatch.findAll({
         where: { mentorId: user.id, status: 'active' },
         include: [{ model: models.Enrollment, as: 'enrollment', attributes: ['programId'] }]
       });
-      matches.forEach((m) => m.enrollment?.programId && programIds.add(m.enrollment.programId));
+      matches.forEach((m) => {
+        const programId = m.enrollment?.programId;
+        if (!programId) return;
+        programIds.add(programId);
+        earliest(programFrom, programId, m.createdAt);
+      });
     }
-    return { caps, clanIds, programIds: [...programIds] };
+
+    for (const m of memberships) {
+      const viaProgram = m.clan?.programId ? programFrom.get(m.clan.programId) : null;
+      clanFrom.set(m.clanId, viaProgram || clanJoinedAt.get(m.clanId) || null);
+    }
+
+    return {
+      caps,
+      clanIds: [...clanIds],
+      programIds: [...programIds],
+      programFrom,
+      programTo,
+      clanFrom,
+      orgFrom: await this._orgJoinedAt(user),
+    };
+  }
+
+  /**
+   * When this person joined the workspace: the floor for the org-wide
+   * audiences. An announcement to "Everyone" from last March is no more
+   * relevant to somebody who signed up in October than a programme one is.
+   *
+   * Null when neither date is on record, which leaves the org-wide audiences
+   * unbounded - the behaviour before any of this, and the safe way to fail.
+   */
+  async _orgJoinedAt(user) {
+    const membership = await models.OrganizationMembership.findOne({
+      where: { userId: user.id },
+      attributes: ['joinedAt']
+    });
+    const at = membership?.joinedAt || user.createdAt || null;
+    return at ? new Date(at) : null;
+  }
+
+  /**
+   * One audience branch, bounded to the viewer's own window on that audience.
+   *
+   * `pinned` escapes the floor, and that is the whole design. The pin already
+   * exists, already sorts first and already means "this outlives the moment",
+   * so it is what carries the handbook posts - code of conduct, how to submit
+   * work, office hours are on Thursdays - to everybody who joins later, while
+   * the perishable ones stay with the cohort they were written for. No new
+   * field, no new column, and nothing new for an admin to learn.
+   *
+   * The ceiling is not escapable: somebody whose run of the programme has ended
+   * should not receive what was posted afterwards, pinned or not.
+   */
+  _within(match, from, to) {
+    const and = [];
+    if (from) and.push({ [Op.or]: [{ pinned: true }, { createdAt: { [Op.gte]: from } }] });
+    if (to) and.push({ createdAt: { [Op.lte]: to } });
+    if (!and.length) return match;
+    return { ...match, [Op.and]: and };
   }
 
   /**
@@ -48,22 +225,81 @@ class AnnouncementService {
    * full reactions array — to then discard most of it. Expressed as SQL, the
    * database returns only what this person may see, and LIMIT actually limits.
    *
-   * Returns undefined for admins, who see everything for oversight.
+   * Returns undefined in the ADMIN portal, where everything is visible for
+   * oversight.
+   *
+   * Every non-admin branch is also bounded in TIME, by the viewer's own join
+   * date for that audience - see `_scope` and `_within`. Membership alone was
+   * the wrong question: it handed a mentee who enrolled this morning every
+   * announcement the programme has ever had.
+   *
+   * It used to return undefined for anyone who merely *held* admin, whatever
+   * screen they were on. A mentor who also administers the workspace therefore
+   * opened their own announcements page and got every clan in the organisation
+   * — switching to the mentor or mentee tab changed nothing, because the tab
+   * was never part of the query. `actsAsAdmin` is the portal-aware form of the
+   * same question and already exists for exactly this: it answers false while
+   * the caller is in the mentor or mentee portal, so the hat they are wearing
+   * decides the scope while their abilities stay intact.
    */
-  async _visibilityWhere(user) {
-    const caps = this._caps(user);
-    if (caps.includes('admin')) return undefined;
+  async _visibilityWhere(user, { portalRole = null, clanId = null } = {}) {
+    if (await authzService.actsAsAdmin(user)) {
+      /**
+       * An admin saw everything, full stop — `undefined` is no WHERE clause.
+       * That is right for an org-tier admin and wrong for a programme one:
+       * somebody granted a single fellowship was shown every clan broadcast
+       * in the workspace, other programmes' mentors and clans named in them.
+       *
+       * Org-wide posts stay visible deliberately. "Everyone", "all mentors"
+       * and "all mentees" reached this programme's people too, so hiding
+       * them would misreport what their own members have been told.
+       */
+      const scope = await authzService.programScopeFor(user, 'admin');
+      if (scope.unrestricted) return undefined;
+      /**
+       * No join-date window for an admin, on purpose. A mentee reads
+       * announcements to know what is happening; an admin reads them to know
+       * what their programme's people have been told, and that is a record,
+       * which means all of it.
+       */
+      return {
+        [Op.or]: [
+          { authorId: user.id },
+          { audience: { [Op.in]: ['all', 'mentors', 'mentees'] } },
+          { audience: 'program', audienceId: { [Op.in]: scope.programIds } },
+          { audience: 'clan', audienceId: { [Op.in]: scope.clanIds } },
+        ],
+      };
+    }
 
-    const { clanIds, programIds } = await this._scope(user);
+    const { caps, clanIds, programIds, programFrom, programTo, clanFrom, orgFrom } =
+      await this._scope(user, portalRole);
 
-    const or = [
-      { authorId: user.id },      // you always see your own
-      { audience: 'all' }
-    ];
-    if (caps.includes('mentor')) or.push({ audience: 'mentors' });
-    if (caps.includes('mentee')) or.push({ audience: 'mentees' });
-    if (programIds.length) or.push({ audience: 'program', audienceId: { [Op.in]: programIds } });
-    if (clanIds.length) or.push({ audience: 'clan', audienceId: { [Op.in]: clanIds } });
+    // A clan selected in the sidebar narrows the clan-targeted announcements to
+    // that clan. It can only ever subtract: a clan they are not in cannot widen
+    // this, because the intersection with their own memberships is empty.
+    const visibleClanIds = clanId ? clanIds.filter((id) => id === clanId) : clanIds;
+
+    // One branch per audience this person can see, each carrying its own
+    // window, rather than one list of audiences with no sense of time.
+    const or = [{ authorId: user.id }]; // you always see your own, whenever it was
+    or.push(this._within({ audience: 'all' }, orgFrom, null));
+    if (caps.includes('mentor') && portalRole !== 'mentee') {
+      or.push(this._within({ audience: 'mentors' }, orgFrom, null));
+    }
+    if (caps.includes('mentee') && portalRole !== 'mentor') {
+      or.push(this._within({ audience: 'mentees' }, orgFrom, null));
+    }
+    for (const programId of programIds) {
+      or.push(this._within(
+        { audience: 'program', audienceId: programId },
+        programFrom.get(programId) || null,
+        programTo.get(programId) || null
+      ));
+    }
+    for (const id of visibleClanIds) {
+      or.push(this._within({ audience: 'clan', audienceId: id }, clanFrom.get(id) || null, null));
+    }
 
     return { [Op.or]: or };
   }
@@ -73,17 +309,19 @@ class AnnouncementService {
    * @param {Object} [options]
    * @param {number} [options.limit=30]  capped at 100
    * @param {number} [options.offset=0]
+   * @param {'admin'|'mentor'|'mentee'|null} [options.portalRole]  which hat the caller is wearing
+   * @param {string|null} [options.clanId]  the sidebar clan selection, when one is made
    */
-  async list(user, { limit = 30, offset = 0 } = {}) {
+  async list(user, { limit = 30, offset = 0, portalRole = null, clanId = null } = {}) {
     const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 30, 1), 100);
     const safeOffset = Math.max(parseInt(offset, 10) || 0, 0);
 
-    const where = await this._visibilityWhere(user);
+    const where = await this._visibilityWhere(user, { portalRole, clanId });
 
     const { rows: visible, count: totalItems } = await models.Announcement.findAndCountAll({
       where,
       include: [
-        { model: models.User, as: 'author', attributes: ['firstName', 'lastName', 'role'] },
+        { model: models.User, as: 'author', attributes: ['firstName', 'lastName', 'role', 'profilePictureUrl'] },
         { model: models.AnnouncementReaction, as: 'reactions', attributes: ['userId', 'type'] }
       ],
       order: [['pinned', 'DESC'], ['created_at', 'DESC']],
@@ -130,7 +368,11 @@ class AnnouncementService {
         audienceLabel: label(a),
         pinned: a.pinned,
         at: a.createdAt,
-        author: a.author ? { name: `${a.author.firstName} ${a.author.lastName}`.trim(), role: a.author.role } : null,
+        author: a.author ? {
+          name: `${a.author.firstName} ${a.author.lastName}`.trim(),
+          role: a.author.role,
+          avatarUrl: a.author.profilePictureUrl || null,
+        } : null,
         mine: a.authorId === user.id,
         reactions: { acknowledged: count('acknowledged'), helpful: count('helpful') },
         myReactions: mine
@@ -160,7 +402,7 @@ class AnnouncementService {
   async create({ title, body, audience, audienceId }, author) {
     if (!title || !title.trim() || !body || !body.trim()) throw new ValidationError('title and body are required');
     if (!AUDIENCE_TYPES.includes(audience)) throw new ValidationError('Invalid audience');
-    const caps = this._caps(author);
+    const caps = await this._caps(author);
 
     if (caps.includes('admin')) {
       if ((audience === 'program' || audience === 'clan') && !audienceId) {
@@ -188,7 +430,7 @@ class AnnouncementService {
   async _assertCanManage(id, user) {
     const a = await models.Announcement.findByPk(id);
     if (!a) throw new NotFoundError('Announcement not found');
-    const caps = this._caps(user);
+    const caps = await this._caps(user);
     if (!caps.includes('admin') && a.authorId !== user.id) {
       throw new ForbiddenError('You can only manage your own announcements');
     }

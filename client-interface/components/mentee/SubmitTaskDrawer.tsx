@@ -9,6 +9,13 @@ import RichTextEditor from '@/components/shared/RichTextEditor';
 import { submissionService } from '@/lib/services/submissionService';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { cleanHtml, isBlankHtml } from '@/lib/utils/html';
+import {
+  SUBMISSION_FILE_ACCEPT,
+  SUBMISSION_FILE_HINT,
+  SUBMISSION_MAX_FILE_SIZE,
+  SUBMISSION_MAX_FILES,
+  getSubmissionFileRejectReason,
+} from '@/lib/utils/submission-files';
 
 // Helper to format file size
 const formatFileSize = (bytes: number): string => {
@@ -37,11 +44,13 @@ export function SubmitTaskDrawer({
   task,
   onClose,
   onSubmitted,
+  readOnly = false,
 }: {
   open: boolean;
   task: SubmitTaskTarget | null;
   onClose: () => void;
   onSubmitted?: () => void;
+  readOnly?: boolean;
 }) {
   const [description, setDescription] = useState('');
   const [links, setLinks] = useState<string[]>(['']);
@@ -61,7 +70,7 @@ export function SubmitTaskDrawer({
   const isResubmit = task?.status === 'revision_needed';
 
   const submit = async () => {
-    if (!task) return;
+    if (!task || readOnly) return;
     if (!canSubmit) { toast.error('Add a note, a link, or a file before submitting'); return; }
     try {
       setSaving(true);
@@ -95,7 +104,7 @@ export function SubmitTaskDrawer({
       footer={
         <>
           <button onClick={onClose} className="px-4 py-2 border border-slate-200 text-slate-700 rounded-xl text-sm hover:bg-slate-50">Cancel</button>
-          <button onClick={submit} disabled={saving || !canSubmit} className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm font-medium inline-flex items-center gap-2 disabled:opacity-50">
+          <button onClick={submit} disabled={saving || !canSubmit || readOnly} title={readOnly ? 'Completed programs are read-only' : undefined} className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm font-medium inline-flex items-center gap-2 disabled:opacity-50">
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}{isResubmit ? 'Re-submit' : 'Submit'}
           </button>
         </>
@@ -153,15 +162,23 @@ export function SubmitTaskDrawer({
           <FileDragDrop
             onFilesSelected={(newFiles) => {
               setFiles((p) => {
-                const remainingSlots = 5 - p.length;
-                const filesToAdd = newFiles.slice(0, remainingSlots);
-                return [...p, ...filesToAdd];
+                const remainingSlots = SUBMISSION_MAX_FILES - p.length;
+                if (remainingSlots <= 0) return p;
+                if (newFiles.length > remainingSlots) {
+                  toast.error(`You can attach up to ${SUBMISSION_MAX_FILES} files.`);
+                }
+                return [...p, ...newFiles.slice(0, remainingSlots)];
               });
             }}
             multiple={true}
-            maxSize={10 * 1024 * 1024}
+            accept={SUBMISSION_FILE_ACCEPT}
+            maxSize={SUBMISSION_MAX_FILE_SIZE}
+            unsupportedTypeMessage={(file) =>
+              getSubmissionFileRejectReason(file, SUBMISSION_MAX_FILE_SIZE) ||
+              `File "${file.name}" is not supported.`
+            }
             enablePaste={true}
-            disabled={files.length >= 5}
+            disabled={files.length >= SUBMISSION_MAX_FILES}
           >
             {({ isDragging, openFilePicker }) => (
               <div className="space-y-4">
@@ -170,7 +187,7 @@ export function SubmitTaskDrawer({
                   className={`
                     border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors
                     ${isDragging ? 'border-brand-500 bg-brand-50' : 'border-slate-300 hover:border-slate-400'}
-                    ${files.length >= 5 ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''}
+                    ${files.length >= SUBMISSION_MAX_FILES ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''}
                   `}
                 >
                   <Upload className={`w-12 h-12 mx-auto mb-4 ${isDragging ? 'text-brand-500' : 'text-slate-400'}`} />
@@ -178,7 +195,7 @@ export function SubmitTaskDrawer({
                     {isDragging ? 'Drop files here...' : 'Drag & drop files here, or click to select'}
                   </p>
                   <p className="text-sm text-slate-500">
-                    Max 5 files, up to 10MB each
+                    {SUBMISSION_FILE_HINT}
                   </p>
                 </div>
 

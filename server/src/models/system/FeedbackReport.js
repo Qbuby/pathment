@@ -12,6 +12,33 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING(20), allowNull: false, defaultValue: 'bug',
       validate: { isIn: [['bug', 'suggestion', 'other']] },
     },
+    /**
+     * Who OWNS this report, as opposed to who reported it.
+     *
+     *   'product'   a Pathment bug or suggestion. The platform console owns the
+     *               status; a workspace admin can read it and nothing more.
+     *   'workspace' about this organisation's programme, mentor or clan. The
+     *               workspace admin owns it, exactly as before.
+     *
+     * Everything else on this model is a PRODUCT bug report: platform,
+     * appVersion, device, pageUrl, userAgent, a screenshot - and the statuses
+     * are `planned`, `fixed`, `added`, `declined`. A workspace admin cannot set
+     * a bug to fixed, and for as long as the reports landed in their inbox the
+     * only thing they could do was reply and close it, so the reporter was
+     * emailed a resolution that resolved nothing and whoever could actually fix
+     * it never saw the report at all.
+     *
+     * "What's New" already went the other way for exactly this reason: see the
+     * ProductUpdate note in config/tenantOwnership.js. This is the return path
+     * on the same channel.
+     *
+     * Derived from `type` on the server (LANE_BY_TYPE in the service), never
+     * taken from a client.
+     */
+    lane: {
+      type: DataTypes.STRING(12), allowNull: false, defaultValue: 'product',
+      validate: { isIn: [['product', 'workspace']] },
+    },
     title: { type: DataTypes.STRING(200), allowNull: false },
     description: { type: DataTypes.TEXT, allowNull: true },
     status: {
@@ -48,12 +75,30 @@ module.exports = (sequelize, DataTypes) => {
     indexes: [
       { fields: ['status'] }, { fields: ['reporter_id'] },
       { fields: ['type'] }, { fields: ['platform'] },
+      // The platform inbox reads across every workspace, filtered to the
+      // product lane and usually to what is still open.
+      { fields: ['lane', 'status'] },
     ],
   });
 
   FeedbackReport.associate = (models) => {
     FeedbackReport.belongsTo(models.User, { foreignKey: 'reporter_id', as: 'reporter' });
     FeedbackReport.belongsTo(models.User, { foreignKey: 'handled_by', as: 'handler' });
+    /**
+     * Deliberately NO belongsTo(Organization).
+     *
+     * `organization_id` is not declared here - it is injected for every
+     * workspace-owned model by the beforeDefine hook in
+     * db/workspaceModelAttributes.js. Declaring an association on it makes
+     * Sequelize add the column itself, which is invisible at runtime (the hook
+     * adds it anyway) and wrong everywhere the hook is absent: migration 114
+     * builds the pre-114 schema by loading the model factories WITHOUT that
+     * hook, and refused to run because feedback_reports already carried the
+     * column it exists to add.
+     *
+     * The platform inbox resolves workspace names with one explicit lookup
+     * instead.
+     */
   };
 
   return FeedbackReport;

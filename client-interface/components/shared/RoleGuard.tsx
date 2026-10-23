@@ -19,7 +19,7 @@ interface RoleGuardProps {
 
 export function RoleGuard({ children, allowedRoles, redirectTo = '/login', permitAdminArea = false }: RoleGuardProps) {
   const { user, isLoading, availableRoles, activeRole, setActiveRole, refreshUser } = useAuth();
-  const { canAccessAdmin, loading: permsLoading } = usePermissions();
+  const { canAccessAdmin, canAccessPools, loading: permsLoading } = usePermissions();
   const router = useRouter();
   // Whether we've already re-checked capabilities with the server this mount.
   const [recheckedCaps, setRecheckedCaps] = useState(false);
@@ -29,7 +29,9 @@ export function RoleGuard({ children, allowedRoles, redirectTo = '/login', permi
   // what lets an admin who is also a mentee open the mentee section), OR - for
   // the admin section - if scoped RBAC grants them org/program admin access.
   const roleMatch = !!user && allowedRoles.some((r) => availableRoles.includes(r));
-  const adminAllowed = !!user && permitAdminArea && canAccessAdmin;
+  // Pool reviewers/operators enter too; the nav and section gate then show them
+  // Selection pools and nothing else.
+  const adminAllowed = !!user && permitAdminArea && (canAccessAdmin || canAccessPools);
   const permitted = roleMatch || adminAllowed;
   const sectionRole = allowedRoles[0];
   // For admin-area entry we must wait for the permission fetch before deciding.
@@ -61,7 +63,7 @@ export function RoleGuard({ children, allowedRoles, redirectTo = '/login', permi
   if (isLoading || verifying || awaitingPerms) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <Loader2 className="h-8 w-8 animate-spin text-brand-600" />
       </div>
     );
   }

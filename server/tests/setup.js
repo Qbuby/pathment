@@ -13,16 +13,27 @@ jest.mock('../src/services/notificationOrchestrator', () => {
   const stub = jest.fn().mockResolvedValue({ delivered: 0, skipped: 0 });
   return {
     dispatch: stub,
+    // The push half, used by paths that write their own notification row (a
+    // direct message). Stubbed here too, or every send in every suite would
+    // reach for a method that is not on the mock.
+    pushOnly: jest.fn().mockResolvedValue({ sent: 0 }),
     sendWelcomeEmail: jest.fn().mockResolvedValue({ sent: true }),
     sendRegistrationInviteEmail: jest.fn().mockResolvedValue({ sent: true }),
     sendPasswordResetEmail: jest.fn().mockResolvedValue({ sent: true }),
     sendEmailVerificationEmail: jest.fn().mockResolvedValue({ sent: true }),
     sendSignInLinkEmail: jest.fn().mockResolvedValue({ sent: true }),
+    sendWorkspaceOwnerActivationEmail: jest.fn().mockResolvedValue({ sent: true }),
+    sendWorkspaceReadyEmail: jest.fn().mockResolvedValue({ sent: true }),
   };
 });
 
 // ─── Mock email service ───────────────────────────────────────────────────────
 jest.mock('../src/services/emailService', () => ({
+  // The queue is how everything is mailed now (a Postgres-backed queue with
+  // retries and a dead letter), so a suite that exercises any notifying path
+  // reaches for `enqueue`. Without it on the mock the call throws, and every
+  // caller wraps mail in a non-fatal try/catch, so it threw unnoticed.
+  enqueue: jest.fn().mockResolvedValue({ queued: true, id: 'mock-queued-id' }),
   sendEmail: jest.fn().mockResolvedValue({ id: 'mock-email-id' }),
   sendVerificationEmail: jest.fn().mockResolvedValue({ id: 'mock-email-id' }),
   sendPasswordResetEmail: jest.fn().mockResolvedValue({ id: 'mock-email-id' }),

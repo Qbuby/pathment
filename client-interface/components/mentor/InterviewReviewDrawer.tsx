@@ -41,10 +41,12 @@ export function InterviewReviewDrawer({
   taskId,
   onClose,
   onFinalized,
+  readOnly = false,
 }: {
   taskId: string;
   onClose: () => void;
   onFinalized?: () => void;
+  readOnly?: boolean;
 }) {
   const confirm = useConfirm();
   const [loading, setLoading] = useState(true);
@@ -98,7 +100,7 @@ export function InterviewReviewDrawer({
     return () => window.removeEventListener('keydown', onKey);
   }, [zoom, review]);
 
-  const canReview = !!review?.canReview;
+  const canReview = !!review?.canReview && !readOnly;
 
   const saveScore = async (it: ReviewItem, patch: { points?: string; note?: string }) => {
     const cur = scores[it.questionId] || { points: '', note: '' };
@@ -279,7 +281,7 @@ export function InterviewReviewDrawer({
       )}
     >
       {loading || !review ? (
-        <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-slate-300" /></div>
+        <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-brand-600" /></div>
       ) : (
         <div className="space-y-5">
           {/* Score summary */}

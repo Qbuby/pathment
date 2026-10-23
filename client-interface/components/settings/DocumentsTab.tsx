@@ -107,7 +107,7 @@ export function DocumentsTab(props: DocumentsTabProps = {}) {
               className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out flex items-center justify-center ${autoReplyEnabled ? 'translate-x-5' : 'translate-x-0'
                 }`}
             >
-              {toggling && <Loader2 className="w-3 h-3 animate-spin text-slate-400" />}
+              {toggling && <Loader2 className="w-3 h-3 animate-spin text-brand-600" />}
             </span>
           </button>
         </div>

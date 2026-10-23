@@ -65,11 +65,33 @@ async function cleanDb() {
     'ai_connections',
     'users',
   ];
-  for (const table of tableOrder) {
-    try {
-      await sequelize.query(`TRUNCATE TABLE "${table}" CASCADE`);
-    } catch (_) {
-      // Table may not exist in a partial schema; ignore
+  /*
+   * Truncate the fixture tables in one statement. PostgreSQL must make every
+   * TRUNCATE durable, so issuing one statement per table turns a test reset
+   * into dozens of disk flushes. That was slow enough on the development
+   * volume for certificate suites to hit Jest's 30 second timeout before their
+   * first assertion. Discovering the present tables keeps the helper usable
+   * with partial schemas without swallowing real truncate failures.
+   */
+  const existing = new Set(await sequelize.getQueryInterface().showAllTables());
+  const presentTables = tableOrder.filter((table) => existing.has(table));
+  if (presentTables.length > 0) {
+    const quoted = presentTables.map((table) => `"${table.replace(/"/g, '""')}"`).join(', ');
+    const sql = `TRUNCATE TABLE ${quoted} CASCADE`;
+    // A login response can finish while its non-critical gamification side
+    // effect is still releasing locks. The next suite must not fail before its
+    // first assertion because PostgreSQL chose that cleanup statement as the
+    // deadlock victim. Retry only transient concurrency codes, and keep every
+    // schema/data error visible.
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        await sequelize.query(sql);
+        break;
+      } catch (error) {
+        const code = error?.original?.code || error?.parent?.code;
+        if (!['40P01', '40001', '55P03'].includes(code) || attempt === 3) throw error;
+        await new Promise((resolve) => setTimeout(resolve, attempt * 25));
+      }
     }
   }
   // The AI feature routing lives in system_settings, which is NOT truncated:
@@ -242,8 +264,8 @@ async function createProgram({ createdBy, name = 'Test Program', status = 'publi
 // first assertion. They are gone rather than stubbed — a helper for a concept
 // the product no longer has would only invite the next test to depend on it.
 
-async function createRoadmap({ programId, createdBy } = {}) {
-  return models.Roadmap.create({ programId, createdBy, name: 'Test Roadmap', description: 'Test roadmap' });
+async function createRoadmap({ programId, createdBy, name = 'Test Roadmap' } = {}) {
+  return models.Roadmap.create({ programId, createdBy, name, description: 'Test roadmap' });
 }
 
 async function createRoadmapTask({ roadmapId, title = 'Build REST API', estimatedHours = 5, taskOrder = 1 } = {}) {

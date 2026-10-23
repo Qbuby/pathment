@@ -75,10 +75,16 @@ export const topPerformersApi = {
     );
   },
 
-  list: (programId?: string | null, status?: string | null) => {
+  /**
+   * Nominations the caller may read. `clanId` narrows to one clan — the mentor
+   * portal passes the clan its sidebar is on, because a nomination made in
+   * another clan is not part of the decision being made here.
+   */
+  list: (opts: { programId?: string | null; status?: string | null; clanId?: string | null } = {}) => {
     const qs = new URLSearchParams();
-    if (programId) qs.set('programId', programId);
-    if (status) qs.set('status', status);
+    if (opts.programId) qs.set('programId', opts.programId);
+    if (opts.status) qs.set('status', opts.status);
+    if (opts.clanId) qs.set('clanId', opts.clanId);
     const suffix = qs.toString() ? `?${qs.toString()}` : '';
     return apiClient.get<{ success: boolean; data: PerformanceNomination[] }>(`/top-performers${suffix}`);
   },

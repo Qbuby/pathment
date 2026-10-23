@@ -30,14 +30,39 @@ import {
   SubmitTaskDrawer,
   type SubmitTaskTarget,
 } from "@/components/mentee/SubmitTaskDrawer";
+import { TaskDrawer } from "@/components/mentee/TaskDrawer";
 import { stripHtml } from "@/lib/utils/html";
+import { useClan, isHistoricalCohortClan } from "@/lib/context/ClanContext";
 
 function MenteeTasksContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { menteeClans, menteeActiveClanId } = useClan();
+  const activeClan = menteeClans.find((c) => c.id === menteeActiveClanId);
+  const standing = activeClan?.kind === "standing";
+  const historical = isHistoricalCohortClan(activeClan);
+  const HISTORICAL_TITLE = "Completed programs are read-only";
   const [submitTarget, setSubmitTarget] = useState<SubmitTaskTarget | null>(
     null,
   );
+  /**
+   * The task being read, in a drawer over the list.
+   *
+   * Reading a brief is the commonest thing a mentee does here and it used to
+   * cost a full page load and a trip back. `/mentee/tasks/:id` still exists and
+   * is still what every notification links to — this is the shortcut from the
+   * list, not a replacement for the address.
+   */
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+
+  /** Hand a list row to the submit drawer in the shape it expects. */
+  const askToSubmit = (task: any) => setSubmitTarget({ // eslint-disable-line @typescript-eslint/no-explicit-any
+    id: task.id,
+    title: task.roadmapTask?.title || task.title || "Task",
+    status: task.status,
+    deliverable: task.roadmapTask?.deliverable,
+    acceptanceCriteria: task.roadmapTask?.acceptanceCriteria || [],
+  });
   const {
     filteredTasks,
     stats,
@@ -141,14 +166,16 @@ function MenteeTasksContent() {
       <div className="mentee-page-heading">
         <h1 className="text-slate-900 mb-2">My tasks</h1>
         <p className="text-slate-600">
-          {enrollments.length === 1
-            ? enrollments[0].program?.name
-            : "Track your learning progress and submit your work"}
+          {standing
+            ? activeClan?.name || "Standing clan"
+            : enrollments.length === 1
+              ? enrollments[0].program?.name
+              : "Track your learning progress and submit your work"}
         </p>
       </div>
 
-      {/* Program Selector */}
-      {enrollments.length > 1 && (
+      {/* Program Selector — cohort only; standing work is clan-scoped, not enrollment-scoped */}
+      {!standing && enrollments.length > 1 && (
         <div className="bg-card rounded-2xl border border-slate-200 p-4">
           <div className="flex items-center gap-2 mb-3">
             <GraduationCap className="w-4 h-4 text-slate-500" />
@@ -371,6 +398,8 @@ function MenteeTasksContent() {
                     const interviewHref = `/mentee/interviews/${task.id}`;
                     const isQuiz = taskType === "quiz";
                     const quizHref = `/mentee/quizzes/${task.id}`;
+                    // Course tasks are studied on Buildment; the task page shows progress.
+                    const isCourse = taskType === "course";
 
                     return (
                       <div
@@ -381,8 +410,16 @@ function MenteeTasksContent() {
                           <div className="flex-1 min-w-0">
                             <div className="flex flex-wrap items-center gap-2 mb-2">
                               <h3 className="text-slate-900 break-words min-w-0 flex-1">
+                                {/* Still an anchor, so ⌘-click and "open in
+                                    new tab" reach the real page; a plain click
+                                    opens the drawer instead of navigating. */}
                                 <Link
                                   href={`/mentee/tasks/${task.id}`}
+                                  onClick={(e) => {
+                                    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                                    e.preventDefault();
+                                    setOpenTaskId(task.id);
+                                  }}
                                   className="hover:text-brand-600 hover:underline underline-offset-4"
                                 >
                                   {task.roadmapTask?.title}
@@ -480,24 +517,37 @@ function MenteeTasksContent() {
                             </div>
 
                             {task.status === "assigned" &&
-                              (isInterview ? (
+                              (isCourse ? (
+                                <button
+                                  onClick={() => router.push(`/mentee/tasks/${task.id}`)}
+                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words"
+                                >
+                                  View course
+                                </button>
+                              ) : isInterview ? (
                                 <button
                                   onClick={() => router.push(interviewHref)}
-                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words"
+                                  disabled={historical}
+                                  title={historical ? HISTORICAL_TITLE : undefined}
+                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words disabled:opacity-50"
                                 >
                                   Start interview
                                 </button>
                               ) : isQuiz ? (
                                 <button
                                   onClick={() => router.push(quizHref)}
-                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words"
+                                  disabled={historical}
+                                  title={historical ? HISTORICAL_TITLE : undefined}
+                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words disabled:opacity-50"
                                 >
                                   Start quiz
                                 </button>
                               ) : (
                                 <button
                                   onClick={() => handleStartTask(task.id)}
-                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words"
+                                  disabled={historical}
+                                  title={historical ? HISTORICAL_TITLE : undefined}
+                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words disabled:opacity-50"
                                 >
                                   Start Task
                                 </button>
@@ -505,10 +555,19 @@ function MenteeTasksContent() {
 
                             {(task.status === "in_progress" ||
                               task.status === "revision_needed") &&
-                              (isInterview ? (
+                              (isCourse ? (
+                                <button
+                                  onClick={() => router.push(`/mentee/tasks/${task.id}`)}
+                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words"
+                                >
+                                  Continue course
+                                </button>
+                              ) : isInterview ? (
                                 <button
                                   onClick={() => router.push(interviewHref)}
-                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words"
+                                  disabled={historical}
+                                  title={historical ? HISTORICAL_TITLE : undefined}
+                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words disabled:opacity-50"
                                 >
                                   {task.status === "revision_needed"
                                     ? "Redo questions"
@@ -517,25 +576,18 @@ function MenteeTasksContent() {
                               ) : isQuiz ? (
                                 <button
                                   onClick={() => router.push(quizHref)}
-                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words"
+                                  disabled={historical}
+                                  title={historical ? HISTORICAL_TITLE : undefined}
+                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words disabled:opacity-50"
                                 >
                                   Resume quiz
                                 </button>
                               ) : (
                                 <button
-                                  onClick={() =>
-                                    setSubmitTarget({
-                                      id: task.id,
-                                      title: task.roadmapTask?.title || "Task",
-                                      status: task.status,
-                                      deliverable:
-                                        task.roadmapTask?.deliverable,
-                                      acceptanceCriteria:
-                                        task.roadmapTask?.acceptanceCriteria ||
-                                        [],
-                                    })
-                                  }
-                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words"
+                                  onClick={() => askToSubmit(task)}
+                                  disabled={historical}
+                                  title={historical ? HISTORICAL_TITLE : undefined}
+                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words disabled:opacity-50"
                                 >
                                   Submit Work
                                 </button>
@@ -578,9 +630,7 @@ function MenteeTasksContent() {
 
                             {/* Always show a way to view task details */}
                             <button
-                              onClick={() =>
-                                router.push(`/mentee/tasks/${task.id}`)
-                              }
+                              onClick={() => setOpenTaskId(task.id)}
                               className="text-slate-600 hover:text-brand-600 text-sm transition-colors cursor-pointer shrink-0"
                             >
                               View Details
@@ -610,11 +660,26 @@ function MenteeTasksContent() {
         )}
       </div>
 
+      <TaskDrawer
+        taskId={openTaskId}
+        open={!!openTaskId}
+        onClose={() => setOpenTaskId(null)}
+        readOnly={historical}
+        onStart={async (id) => { await handleStartTask(id); }}
+        onSubmit={(task) => {
+          // One drawer at a time: hand off to the submit form rather than
+          // stacking a second panel on top of this one.
+          setOpenTaskId(null);
+          askToSubmit(task);
+        }}
+      />
+
       <SubmitTaskDrawer
         open={!!submitTarget}
         task={submitTarget}
         onClose={() => setSubmitTarget(null)}
         onSubmitted={fetchTasks}
+        readOnly={historical}
       />
     </div>
   );
