@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useClan, ALL_CLANS, isHistoricalCohortClan } from '@/lib/context/ClanContext';
-import { Check, ChevronDown, ChevronUp, Crown, HeartHandshake, Inbox, Link2, Loader2, Search, Shield, SlidersHorizontal, Trash2, UserPlus, Users2, X, Copy, RefreshCw, History } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, Crown, HandHeart, HeartHandshake, Inbox, Link2, Loader2, Search, Shield, SlidersHorizontal, Trash2, UserPlus, Users2, X, Copy, RefreshCw, History } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { apiClient } from '@/lib/services/api-client';
@@ -19,6 +19,7 @@ import { ClanAvatarEditor } from '@/components/shared/ClanAvatarEditor';
 import { CoMentorPermissionsDrawer } from '@/components/shared/CoMentorPermissionsDrawer';
 import { SelectMenu } from '@/components/shared/SelectMenu';
 import { IncomingTransfers, OutgoingTransfers } from '@/components/mentor/IncomingTransfers';
+import { PushToPoolDrawer } from '@/components/shared/pool/PushToPoolDrawer';
 import { useConfirm } from '@/lib/context/ConfirmContext';
 import { publicJoinBlockedMessage, publicJoinRequestLabel, publicJoinRequesterLocation, useClanPublicJoin } from '@/lib/hooks/mentor';
 import { todayInZone } from '@/lib/utils/datetime';
@@ -215,6 +216,9 @@ function ClanTeamCard({ clanId, myRole }: { clanId: string; myRole: string }) {
 
   // Scoped to the role of the row you clicked: someone who is both a mentee and a
   // co-mentor here keeps the other role.
+  // Offering this whole clan to the pool - the closing-cohort case.
+  const [handingOverClan, setHandingOverClan] = useState(false);
+
   const remove = async (m: Member) => {
     const label = name(m.user);
     const asRole = ROLE_LABEL[m.role];
@@ -312,6 +316,17 @@ function ClanTeamCard({ clanId, myRole }: { clanId: string; myRole: string }) {
             <button onClick={() => setAdding(true)} disabled={historical} title={historical ? HISTORICAL_TITLE : undefined} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
               <UserPlus className="w-4 h-4" /> Add to team
             </button>
+            {/*
+              * Deliberately NOT disabled when the clan is historical. This is
+              * the action a mentor needs most once a programme has closed and
+              * they are not continuing, and it writes nothing to the clan -
+              * the mentees stay in it until somebody takes them.
+              */}
+            {menteeCount > 0 && (
+              <button onClick={() => setHandingOverClan(true)} title="Offer these mentees to another clan" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-card px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                <HandHeart className="w-4 h-4" /> Hand over clan
+              </button>
+            )}
           </div>
         ) : canAddMentees ? (
           <button onClick={() => setAddingMentees(true)} disabled={historical} title={historical ? HISTORICAL_TITLE : undefined} className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 dark:bg-brand-500/15 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-100 shrink-0 disabled:opacity-50">
@@ -321,6 +336,14 @@ function ClanTeamCard({ clanId, myRole }: { clanId: string; myRole: string }) {
           <span className="text-xs text-slate-400 shrink-0">View only (co-mentor)</span>
         )}
       </div>
+
+      <PushToPoolDrawer
+        open={handingOverClan}
+        onClose={() => setHandingOverClan(false)}
+        clanId={clan.id}
+        clanName={clan.name}
+        menteeCount={menteeCount}
+      />
 
       {canEditAvatar && !historical && (
         <div className="mt-4">

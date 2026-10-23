@@ -3,6 +3,7 @@ export const mentorWorkspaces = [
   { label: 'My mentees', tabs: [
     { href: '/mentor/mentees', label: 'My mentees' },
     { href: '/mentor/clan-team', label: 'Clan team' },
+    { href: '/mentor/pool', label: 'Handover pool' },
   ] },
   { label: 'Curriculum', tabs: [
     { href: '/mentor/roadmaps', label: 'Roadmaps' },

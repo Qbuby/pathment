@@ -1,11 +1,19 @@
 /**
- * Copy a mentee's earlier clan work into a standing clan.
+ * Copy a mentee's earlier clan work into the clan they have just joined.
  *
- * A standing clan is a cohort carrying on past its programme. The people move
- * across; without this their work does not, and every clan-scoped read
- * filters on `assigned_tasks.clan_id` — for a standing clan, exactly, with no
- * fallback. So a mentee lands in an empty clan and the work they were in the
- * middle of becomes unreachable from both sides.
+ * Written for standing clans — a cohort carrying on past its programme. The
+ * people move across; without this their work does not, and every clan-scoped
+ * read filters on `assigned_tasks.clan_id` exactly, with no fallback. So a
+ * mentee lands in an empty clan and the work they were in the middle of
+ * becomes unreachable from both sides.
+ *
+ * The handover pool has the same problem for the same reason, so it uses the
+ * same mirror into an ordinary cohort clan. The target's KIND was never what
+ * made this correct — the same organisation, the same programme, a different
+ * clan, and the idempotency key are — so the only thing a cohort target needs
+ * extra is `enrollmentId`, because cohort work must hang off an enrolment
+ * (taskService refuses to create it otherwise, and the enrolment carries the
+ * task stats). Standing clans have no enrolment and pass nothing.
  *
  * COPIES, never moves. Re-pointing `clan_id` would empty the finished
  * programme's record and change what the certificates issued on it read. The
@@ -64,7 +72,6 @@ const pendingSql = `
      AND t.clan_id IS NOT NULL
      AND t.pool_member_id IS NULL
      AND t.clan_id <> sc.id
-     AND sc.kind = 'standing'
      AND src.organization_id = sc.organization_id
      AND src.program_id IS NOT DISTINCT FROM sc.program_id
      AND COALESCE(t.type_override, rt.type, '') NOT IN ${ATTEMPT_BACKED}
@@ -95,13 +102,13 @@ const MENTOR_FOR_COPY = `
   END`;
 
 /** Copy one source task, with its submissions, feedback and progress log. */
-async function mirrorOne(sequelize, { clanId, sourceId, transaction }) {
+async function mirrorOne(sequelize, { clanId, sourceId, enrollmentId = null, transaction }) {
   const cols = CARRIED.join(', ');
   const [[copy]] = await sequelize.query(`
     INSERT INTO assigned_tasks (id, clan_id, enrollment_id, continued_from_task_id, mentor_id, ${cols}, created_at, updated_at)
-    SELECT gen_random_uuid(), :clanId, NULL, src.id, ${MENTOR_FOR_COPY}, ${CARRIED.map((c) => `src.${c}`).join(', ')}, NOW(), NOW()
+    SELECT gen_random_uuid(), :clanId, :enrollmentId, src.id, ${MENTOR_FOR_COPY}, ${CARRIED.map((c) => `src.${c}`).join(', ')}, NOW(), NOW()
       FROM assigned_tasks src WHERE src.id = :sourceId
-    RETURNING id`, { replacements: { clanId, sourceId }, transaction });
+    RETURNING id`, { replacements: { clanId, sourceId, enrollmentId }, transaction });
   if (!copy) return { tasks: 0, submissions: 0, feedback: 0, progress: 0 };
 
   // Versions are preserved: the review screens read "latest" as version DESC.
@@ -149,14 +156,14 @@ async function mirrorOne(sequelize, { clanId, sourceId, transaction }) {
  * cost the rest their copy. Pass a transaction to make the whole mentee
  * all-or-nothing instead.
  */
-async function mirrorPriorWork(sequelize, { clanId, menteeId, transaction = null }) {
+async function mirrorPriorWork(sequelize, { clanId, menteeId, enrollmentId = null, transaction = null }) {
   const totals = { tasks: 0, submissions: 0, feedback: 0, progress: 0, failed: 0 };
   const [pending] = await sequelize.query(pendingSql, {
     replacements: { clanId, menteeId }, transaction,
   });
   for (const { id: sourceId } of pending) {
     try {
-      const run = (t) => mirrorOne(sequelize, { clanId, sourceId, transaction: t });
+      const run = (t) => mirrorOne(sequelize, { clanId, sourceId, enrollmentId, transaction: t });
       const result = transaction ? await run(transaction) : await sequelize.transaction(run);
       totals.tasks += result.tasks;
       totals.submissions += result.submissions;

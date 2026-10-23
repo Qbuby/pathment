@@ -63,6 +63,11 @@ export const adminWorkspaces: { label: string; tabs: AdminWorkspaceTab[] }[] = [
         label: "Clan requests",
         permission: "mentee.manage",
       },
+      {
+        href: "/admin/pool",
+        label: "Handover pool",
+        permission: "mentee.transfer",
+      },
     ],
   },
   {

@@ -32,6 +32,7 @@ import {
   ChevronLeft,
   Trash2,
   Lock,
+  HandHeart,
 } from 'lucide-react';
 import {
   useMenteeDetailPage,
@@ -45,6 +46,7 @@ import { useConfirm } from '@/lib/context/ConfirmContext';
 import { useMenteeActivity } from '@/lib/hooks/mentor/useMenteeActivity';
 import { frictionApi } from '@/lib/services/friction-api';
 import { mentorApi } from '@/lib/services/mentor-api';
+import { PushToPoolDrawer } from '@/components/shared/pool/PushToPoolDrawer';
 import { ActivityCard } from '@/components/shared/ActivityCard';
 import { DualProgress } from '@/components/mentor/DualProgress';
 import { AISummaryPanel } from '@/components/mentor/AISummaryPanel';
@@ -315,6 +317,8 @@ export default function MenteeDetail() {
     | { paused?: boolean }
     | undefined; // eslint-disable-line @typescript-eslint/no-explicit-any
   const [pauseBusy, setPauseBusy] = useState(false);
+  // Handing this mentee on to whoever can take them (the handover pool).
+  const [showHandover, setShowHandover] = useState(false);
   const togglePause = async () => {
     setPauseBusy(true);
     const clanId = activeClanId !== ALL_CLANS ? activeClanId : undefined;
@@ -618,6 +622,21 @@ export default function MenteeDetail() {
               >
                 <CheckCircle2 className="w-4 h-4" />
                 Complete level
+              </button>
+            )}
+            {/*
+              * Not gated on `historical`. A closed programme is the commonest
+              * reason to hand somebody on, and the push itself writes nothing
+              * to the old clan - the mentee stays in it until another mentor
+              * actually takes them.
+              */}
+            {activeClanId !== ALL_CLANS && (
+              <button
+                onClick={() => setShowHandover(true)}
+                className="px-4 py-2 bg-card hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl transition-colors flex items-center gap-2"
+              >
+                <HandHeart className="w-4 h-4" />
+                Hand over
               </button>
             )}
           </div>
@@ -1275,6 +1294,15 @@ export default function MenteeDetail() {
 
       {/* ── Tracks (personal lanes) ──────────────────────────────────── */}
       {section === 'work' && <TracksPanel menteeId={menteeId} />}
+
+      {/* ── Hand this mentee over to another clan ───────────────────── */}
+      <PushToPoolDrawer
+        open={showHandover}
+        onClose={() => setShowHandover(false)}
+        clanId={activeClanId !== ALL_CLANS ? activeClanId : ''}
+        clanName={mentee?.clanName || undefined}
+        mentee={mentee ? { id: menteeId, name: `${mentee.firstName || ''} ${mentee.lastName || ''}`.trim() } : null}
+      />
 
       {/* ── Complete level confirmation modal ────────────────────────── */}
       {showCompleteConfirm && (

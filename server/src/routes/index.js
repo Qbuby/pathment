@@ -19,6 +19,7 @@ const gamificationRoutes = require('./gamification');
 const activityRoutes = require('./activity');
 const clanRoutes = require('./clans');
 const mentorAreaRoutes = require('./mentor');
+const handoverPoolRoutes = require('./handoverPool');
 const menteeAreaRoutes = require('./mentee');
 const frictionRoutes = require('./friction');
 const meetingRoutes = require('./meetings');
@@ -113,6 +114,11 @@ router.use('/mentor', mentorAreaRoutes);
 
 // Mentee-area routes (logged-in mentee's own progress, etc.)
 router.use('/mentee', menteeAreaRoutes);
+
+// The handover pool: mentees offered out of one clan and taken into another.
+// Named apart from /pools (the candidate selection pools) on purpose — they are
+// different features and the two paths must not read as the same one.
+router.use('/handover-pool', handoverPoolRoutes);
 
 // Blockers & delay events (friction / fairness inputs)
 router.use('/', frictionRoutes);

@@ -45,6 +45,11 @@ EXTENSION_HANDLED: 'extension_handled',
   MENTEE_PAUSED: 'mentee_paused',
   MENTEE_REENGAGE: 'mentee_reengage',
   MENTEE_RETURNED: 'mentee_returned',
+  // A mentee was offered to the handover pool; the programme's other mentors
+  // are the people who can give them a clan.
+  HANDOVER_POOL_PUSHED: 'handover_pool_pushed',
+  // Somebody took them. The mentee hears, and so does whoever pushed them.
+  HANDOVER_POOL_CLAIMED: 'handover_pool_claimed',
   FEEDBACK_SUBMITTED: 'feedback_submitted',
   FEEDBACK_STATUS_UPDATED: 'feedback_status_updated',
   // Admissions intake (admin-facing)
@@ -457,6 +462,27 @@ const NOTIFICATION_MATRIX = {
     type: 'system',
     audience: 'mentor',
     preferenceKey: 'mentee_returned',
+    channels: { inApp: true, email: true, chat: false }
+  },
+  /*
+   * Somebody in the handover pool needs a clan. Goes to every mentor in the
+   * programme, which is the point - the pool only works if the people who
+   * could take them find out without being asked one by one. In-app only: it
+   * is an opportunity, not an obligation, and a cohort closing would otherwise
+   * email every mentor once per mentee.
+   */
+  [NOTIFICATION_EVENTS.HANDOVER_POOL_PUSHED]: {
+    type: 'system',
+    audience: 'mentor',
+    preferenceKey: 'handover_pool_pushed',
+    channels: { inApp: true, email: false, chat: false }
+  },
+  // They have actually moved now, so this one does reach them by email: it
+  // changes who their mentor is and where their work lives.
+  [NOTIFICATION_EVENTS.HANDOVER_POOL_CLAIMED]: {
+    type: 'system',
+    audience: 'mentee',
+    preferenceKey: 'handover_pool_claimed',
     channels: { inApp: true, email: true, chat: false }
   },
   // A new feedback/bug report was submitted (to admins, in-app only).

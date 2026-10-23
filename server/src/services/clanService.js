@@ -8,6 +8,7 @@ const { VISIBLE_MEMBERSHIP_STATUSES, strongestClanRole } = require('../config/me
 const { ensureMenteeProfile } = require('./menteeProfile');
 const standingClanService = require('./standingClanService');
 const clanLifecycleService = require('./clanLifecycleService');
+const { mirrorPriorWork } = require('./standingWorkMirror');
 const avatarService = require('./clanAvatarService');
 const gamificationService = require('./gamificationService');
 
@@ -710,10 +711,20 @@ class ClanService {
   /**
    * Reassign a mentee to a different clan (fix an accidental placement). Removes
    * their current mentee membership(s) and places them in `toClanId`.
-   *   - Same program → keep the enrollment (and its tasks): just move the group.
+   *   - Same program → keep the enrollment, and MIRROR the work across so the
+   *     new clan is not empty (see below).
    *   - Different program → WIPE the old enrollment, its assigned tasks and
    *     matches (a clean transfer — "remove all prev links"), then create a
    *     fresh enrollment in the new clan's program.
+   *
+   * On a same-programme move the enrolment was kept and the tasks with it, which
+   * reads like the work moves too. It does not: every clan-scoped query filters
+   * `assigned_tasks.clan_id`, and that still named the clan they just left. So
+   * the mentee arrived in an empty clan, the new mentor had nothing to review,
+   * and the history was reachable from neither side — the same hole standing
+   * clans had, with the same cause. It is closed the same way, with the same
+   * mirror: the work is COPIED, so the old clan's record stays exactly as it
+   * was and the certificates issued on it still read true.
    */
   async reassignMentee(menteeId, toClanId, actorId = null) {
     const { Op } = require('sequelize');
@@ -765,12 +776,39 @@ class ClanService {
     // Place them in the new clan (creates/activates the enrollment in its program).
     await this.addMember(toClanId, { userId: menteeId, role: 'mentee' });
 
+    /*
+     * Bring the work across for a same-programme move. Nothing to bring when
+     * the programme changed: the old enrolment and its tasks were just wiped
+     * above, deliberately, because a different programme's roadmap would make
+     * the copies meaningless.
+     *
+     * Idempotent on `continued_from_task_id`, so a mentee moved back and forth
+     * accumulates one copy per clan rather than one per move. Not fatal if it
+     * fails: the placement itself has already succeeded, and a mentee in the
+     * right clan with no history is recoverable, whereas unwinding the move is
+     * not.
+     */
+    const movedWithinProgram = oldMemberships.some((m) => m.clan && m.clan.programId === toClan.programId);
+    let carried = null;
+    if (movedWithinProgram) {
+      try {
+        const seat = await models.ClanMembership.findOne({
+          where: { clanId: toClanId, userId: menteeId, role: 'mentee' }, attributes: ['enrollmentId'],
+        });
+        carried = await mirrorPriorWork(sequelize, {
+          clanId: toClanId, menteeId, enrollmentId: seat?.enrollmentId || null,
+        });
+      } catch (error) {
+        console.error('[reassignMentee] work mirror failed (the move stands):', error.message);
+      }
+    }
+
     await createAuditLog({
       userId: actorId, action: 'MENTEE_REASSIGNED', entityType: 'ClanMembership', entityId: toClanId,
-      newValues: { menteeId, toClanId, fromClanIds: oldMemberships.map((m) => m.clanId), wipedEnrollments: wiped }
+      newValues: { menteeId, toClanId, fromClanIds: oldMemberships.map((m) => m.clanId), wipedEnrollments: wiped, carried }
     }).catch(() => {});
 
-    return { reassigned: true, toClanId, movedFrom: oldMemberships.map((m) => m.clanId), wipedEnrollments: wiped };
+    return { reassigned: true, toClanId, movedFrom: oldMemberships.map((m) => m.clanId), wipedEnrollments: wiped, carried };
   }
 
   /**

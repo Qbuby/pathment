@@ -93,6 +93,14 @@ export const qk = {
     planStrip: (menteeId: string, clanId?: string | null) => ['mentee', 'plan-strip', menteeId, clanId ?? ''] as const,
   },
 
+  /** The handover pool: mentees offered out of one clan and taken into another. */
+  handoverPool: {
+    all: ['handover-pool'] as const,
+    list: (status: string) => ['handover-pool', 'list', status] as const,
+    overview: (programId?: string | null) => ['handover-pool', 'overview', programId ?? ''] as const,
+    claimableClans: ['handover-pool', 'claimable-clans'] as const,
+  },
+
   me: {
     activity: (days: number) => ['me', 'activity', days] as const,
     programs: ['me', 'programs'] as const,
