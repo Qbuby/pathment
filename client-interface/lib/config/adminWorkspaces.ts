@@ -166,6 +166,14 @@ export const adminWorkspaces: { label: string; tabs: AdminWorkspaceTab[] }[] = [
         label: "Follow-ups",
         permission: "analytics.view",
       },
+      {
+        // Gated on mentee.view rather than analytics.view: this shows one
+        // person's work by name, which is a different thing from seeing the
+        // numbers in aggregate.
+        href: "/admin/reports",
+        label: "Reports",
+        permission: "mentee.view",
+      },
     ],
   },
   {

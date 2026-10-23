@@ -13,6 +13,7 @@ import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { useAuth } from '@/lib/context/AuthContext';
 import { useClan, resolveActiveMentorClan, ALL_CLANS } from '@/lib/context/ClanContext';
 import { Avatar as SharedAvatar } from '@/components/shared/Avatar';
+import { MenteeReportPanel } from '@/components/shared/reports/MenteeReportPanel';
 
 interface PeriodActivity {
   period: 'week' | 'month';
@@ -570,6 +571,18 @@ export default function MentorReports() {
       )}
 
       {/* Print isolation: only the report region prints, at full width. */}
+      {/*
+        * The cohort read above answers "how is the group doing". This answers
+        * "how is each person doing, over a period I choose, and can I send it
+        * to somebody" - which is the question a funder asks and the one this
+        * page could not answer before.
+        */}
+      <MenteeReportPanel
+        clanId={scoreClanId}
+        title="Per-mentee reports"
+        description="Any period, defaulting to this month. Download them, or email them to somebody without a Pathment account."
+      />
+
       <style dangerouslySetInnerHTML={{ __html: `
         @media print {
           body * { visibility: hidden !important; }
