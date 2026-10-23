@@ -905,6 +905,23 @@ export default function MenteeDashboard() {
    * about things that only exist once they are placed. Their round is the
    * same workspace with the scope switched, so the home switches with it.
    */
+  /*
+   * Which home this is depends on the scope, so it waits for the scope.
+   *
+   * Rendering the clan home first and swapping it out looks cheap and is not:
+   * it mounts a page's worth of requests about an enrollment, a mentor and a
+   * roadmap that a candidate does not have, and a learner in more than one
+   * clan has no clan header to send while the scope is a round, so the first
+   * of those requests comes back 400 and the error boundary keeps the page in
+   * its failed state long after the scope has settled.
+   */
+  if (scope.loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="w-8 h-8 animate-spin text-brand-600" />
+      </div>
+    );
+  }
   if (scope.inPool) return <PoolQualification poolId={scope.pool?.id} />;
 
   return (

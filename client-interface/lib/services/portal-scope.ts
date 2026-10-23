@@ -1,5 +1,6 @@
 import { roleFromPathname, type NotificationRole } from '@/lib/utils/notification-audience';
 import { readClanChoice } from '@/lib/services/clan-choice';
+import { poolIdOf } from '@/lib/utils/clan-selection';
 import { getUser } from '@/lib/services/token-store';
 
 /**
@@ -56,7 +57,18 @@ function currentClanId(): string | null {
   if (!userId) return null;
 
   const saved = readClanChoice(role === 'mentee' ? 'mentee' : 'mentor', userId);
-  return saved && saved !== ALL_CLANS ? saved : null;
+  if (!saved || saved === ALL_CLANS) return null;
+
+  /**
+   * The learner's picker holds a clan OR a selection pool under one key, and a
+   * pool is not a clan. Sent as one it is simply malformed: the server drops
+   * anything that is not a uuid and then answers as though no clan had been
+   * chosen — which, for a learner who is in more than one clan, is a 400 and a
+   * dead page rather than an answer. A round's work is read through
+   * `/api/candidate`, which is scoped by the pool membership and needs no clan.
+   */
+  if (poolIdOf(saved)) return null;
+  return saved;
 }
 
 /** Headers describing the current portal. Empty on the server or a neutral page. */

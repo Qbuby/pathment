@@ -132,6 +132,28 @@ describe('mentee multi-clan', () => {
       expect(bAfter.schedule[0].kind).toBe(b.schedule[0].kind);
       expect(aAfter.schedule[0].kind).toBe('empty');
     });
+
+    /**
+     * The clan reaches the server on the caller's scope picker, and a request
+     * can arrive without one - storage blocked in private browsing, or a
+     * learner whose scope is a selection round, which has no clan. That used to
+     * be a 400 that took the whole "This Week" page down over the rituals card.
+     * A read says "no schedule"; a write still refuses to guess.
+     */
+    it('reads no schedule rather than failing when the clan is ambiguous', async () => {
+      await scheduleTemplateService.assignToMentees(template.id, [mentee.id], lead.id, clanA.id);
+      await expect(scheduleTemplateService.getMenteeSchedule(mentee.id, null, mentee.id))
+        .resolves.toBeNull();
+      await expect(scheduleTemplateService.getMenteeSchedule(mentee.id, clanA.id, mentee.id))
+        .resolves.toMatchObject({ templateId: template.id });
+    });
+
+    it('still refuses to write to an ambiguous clan', async () => {
+      await scheduleTemplateService.assignToMentees(template.id, [mentee.id], lead.id, clanA.id);
+      const ms = await models.MenteeSchedule.findOne({ where: { menteeId: mentee.id, clanId: clanA.id } });
+      await expect(scheduleTemplateService.updateSlot(mentee.id, ms.schedule[0].id, { kind: 'empty' }, mentee.id, null))
+        .rejects.toThrow(/clanId is required/);
+    });
   });
 
   describe('invites', () => {

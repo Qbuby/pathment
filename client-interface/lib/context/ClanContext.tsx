@@ -88,13 +88,31 @@ interface ClanContextValue {
   /** Selection pools they are a candidate in. */
   menteePools: PoolLite[];
   /**
-   * The learner workspace's scope: a clan id, or `pool:<id>`. Never 'all'.
-   * Empty string while unknown.
+   * The learner workspace's scope as the picker holds it: a clan id, or
+   * `pool:<id>`. Never 'all'. Empty string while unknown.
+   */
+  menteeScope: string;
+  setMenteeScope: (value: string) => void;
+  /**
+   * The learner's clan — and only ever a clan. Empty string in pool scope.
+   *
+   * This is deliberately NOT the picker's value. Two dozen call sites pass it
+   * to the server as a clan id or match it against `clan.id`, and a selection
+   * pool is neither: sending `pool:<id>` where a clan is expected made the
+   * server discard it as malformed and answer as though no clan had been
+   * chosen, which for a learner who is in more than one clan is a 400 rather
+   * than an answer. Pool scope has no clan, and says so.
    */
   menteeActiveClanId: string;
-  setMenteeActiveClanId: (id: string) => void;
   /** The chosen pool, when the scope is one. Null in a clan. */
   activePool: PoolLite | null;
+  /**
+   * The memberships AND, for a candidate, the pools have both been answered,
+   * so the scope is the real one rather than a guess. Anything that renders a
+   * different screen per scope has to wait for this or it will mount the clan
+   * home for a candidate and then swap it out.
+   */
+  scopeReady: boolean;
   loading: boolean;
 }
 
@@ -247,17 +265,22 @@ export function ClanProvider({ children }: { children: ReactNode }) {
     [mentorChoice, clans, clansKnown],
   );
   const poolIds = useMemo(() => menteePools.map((p) => p.id), [menteePools]);
-  const menteeActiveClanId = useMemo(
+  /** True once we know both which clans they are in and which rounds, if any. */
+  const scopeReady = clansKnown && !(isCandidate && loadedPools === undefined);
+  const menteeScope = useMemo(
     // A candidate's pools are not loaded yet while `isCandidate` is unknown,
     // so "unsettled" covers them too — otherwise a stored pool choice would be
     // discarded on the first render and replaced with a clan.
-    () => resolveMenteeClan(menteeChoice, menteeClans, !clansKnown || (isCandidate && loadedPools === undefined), poolIds),
-    [menteeChoice, menteeClans, clansKnown, isCandidate, loadedPools, poolIds],
+    () => resolveMenteeClan(menteeChoice, menteeClans, !scopeReady, poolIds),
+    [menteeChoice, menteeClans, scopeReady, poolIds],
   );
   const activePool = useMemo(() => {
-    const id = poolIdOf(menteeActiveClanId);
+    const id = poolIdOf(menteeScope);
     return id ? menteePools.find((p) => p.id === id) ?? null : null;
-  }, [menteeActiveClanId, menteePools]);
+  }, [menteeScope, menteePools]);
+  // A pool is not a clan. Everything downstream that means "the clan" gets
+  // nothing here rather than a scope string it would pass off as a clan id.
+  const menteeActiveClanId = poolIdOf(menteeScope) ? '' : menteeScope;
 
   /**
    * Keep storage agreeing with the picker.
@@ -276,27 +299,27 @@ export function ClanProvider({ children }: { children: ReactNode }) {
   }, [activeClanId, mentorChoice, clansKnown, userId]);
 
   useEffect(() => {
-    if (!userId || menteeChoice === null || !clansKnown) return;
-    if (menteeActiveClanId && menteeActiveClanId !== readClanChoice('mentee', userId)) {
-      writeClanChoice('mentee', userId, menteeActiveClanId);
+    if (!userId || menteeChoice === null || !scopeReady) return;
+    if (menteeScope && menteeScope !== readClanChoice('mentee', userId)) {
+      writeClanChoice('mentee', userId, menteeScope);
     }
-  }, [menteeActiveClanId, menteeChoice, clansKnown, userId]);
+  }, [menteeScope, menteeChoice, scopeReady, userId]);
 
   const setActiveClanId = useCallback((id: string) => {
     setMentorChoice(id);
     writeClanChoice('mentor', userId, id);
   }, [userId]);
 
-  const setMenteeActiveClanId = useCallback((id: string) => {
-    setMenteeChoice(id);
-    writeClanChoice('mentee', userId, id);
+  const setMenteeScope = useCallback((value: string) => {
+    setMenteeChoice(value);
+    writeClanChoice('mentee', userId, value);
   }, [userId]);
 
   return (
     <ClanContext.Provider value={{
       clans, activeClanId, setActiveClanId,
-      menteeClans, menteePools, menteeActiveClanId, setMenteeActiveClanId, activePool,
-      loading,
+      menteeClans, menteePools, menteeScope, setMenteeScope, menteeActiveClanId, activePool,
+      scopeReady, loading,
     }}>
       {children}
     </ClanContext.Provider>
@@ -309,9 +332,9 @@ export function useClan(): ClanContextValue {
   if (!ctx) {
     return {
       clans: [], activeClanId: ALL_CLANS, setActiveClanId: () => {},
-      menteeClans: [], menteePools: [], menteeActiveClanId: '', setMenteeActiveClanId: () => {},
-      activePool: null,
-      loading: false,
+      menteeClans: [], menteePools: [], menteeScope: '', setMenteeScope: () => {},
+      menteeActiveClanId: '', activePool: null,
+      scopeReady: true, loading: false,
     };
   }
   return ctx;

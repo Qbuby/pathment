@@ -684,7 +684,10 @@ function MenteeTasksContent() {
 export default function MenteeTasks() {
   const scope = useMenteeScope();
   // In a selection round, "my tasks" means the qualifying work — which lives
-  // outside every clan query by design (the AssignedTask pool fence).
+  // outside every clan query by design (the AssignedTask pool fence). Wait for
+  // the scope before choosing: the clan list is clan-scoped on the server, and
+  // asking it without a clan is an error rather than an empty list.
+  if (scope.loading) return <p role="status">Loading tasks…</p>;
   if (scope.inPool) return <PoolWorkList poolId={scope.pool?.id} />;
   return (
     <Suspense fallback={<p role="status">Loading tasks…</p>}>

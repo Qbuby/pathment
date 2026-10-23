@@ -121,6 +121,13 @@ candidate earned for a project could not be read off the project. Older pools ke
   (`candidate` is not a portal role), and `OnboardingGuard` does not walk a pool-only candidate
   through the learner onboarding.
 
+  The scope lives in one place (`ClanContext.menteeScope`, a clan id or `pool:<id>`), but a pool is
+  never passed off as a clan: `menteeActiveClanId` is empty in pool scope and the `X-Active-Clan`
+  header is omitted, because the server drops a non-uuid and then answers as if no clan had been
+  chosen, which for a learner in more than one clan is a 400. For the same reason the learner home
+  waits for `useMenteeScope().loading` before choosing which screen to render, rather than opening
+  the clan home and swapping it out.
+
   `/candidate/*` remains as redirects, because notifications sent before the move carry those URLs
   in `action_url` for as long as the account lives.
 

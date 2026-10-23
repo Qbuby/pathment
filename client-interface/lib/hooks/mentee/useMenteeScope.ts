@@ -2,6 +2,7 @@
 
 import { useAuth } from '@/lib/context/AuthContext';
 import { useClan, type ClanLite, type PoolLite } from '@/lib/context/ClanContext';
+import { poolIdOf } from '@/lib/utils/clan-selection';
 
 /**
  * Which place the learner workspace is about: a clan, or a selection pool.
@@ -35,23 +36,40 @@ export interface MenteeScope {
    * what a mentee has and they do not.
    */
   poolOnly: boolean;
+  /**
+   * The scope is still being worked out — the memberships, or a candidate's
+   * rounds, have not come back yet.
+   *
+   * Anything that renders a DIFFERENT screen per scope has to wait for this.
+   * The clan home and the round are not two views of one thing: mounting the
+   * clan home for a candidate fires a handful of requests about an enrollment
+   * they do not have, and the first of those to fail takes the page down with
+   * it — which is exactly how "This Week" broke for somebody who was in two
+   * clans and a round at once.
+   */
   loading: boolean;
 }
 
 export function useMenteeScope(): MenteeScope {
   const { user } = useAuth();
-  const { menteeClans, menteePools, menteeActiveClanId, activePool, loading } = useClan();
+  const { menteeClans, menteePools, menteeScope, menteeActiveClanId, activePool, scopeReady } = useClan();
   const isCandidate = Boolean(user?.capabilities?.includes('candidate'));
-  const clan = activePool ? null : menteeClans.find((c) => c.id === menteeActiveClanId) ?? null;
+  /*
+   * The SCOPE decides, not the pool object. `activePool` only resolves once
+   * the rounds have been fetched, so reading it alone left a window where
+   * somebody whose stored scope was a round, and who also has clans, looked
+   * like an ordinary mentee with no clan selected — long enough for the clan
+   * home to mount and start asking the server clan questions.
+   */
+  const poolId = poolIdOf(menteeScope);
+  const clan = poolId ? null : menteeClans.find((c) => c.id === menteeActiveClanId) ?? null;
 
   /*
-   * `ClanContext` resolves the scope, so `activePool` is the answer once the
-   * memberships and the pools have both arrived. The second clause is the
-   * window before they have: somebody with no clan and a round is in the
-   * round, and showing them a clan home for a beat first is the flicker this
-   * avoids.
+   * The second clause covers somebody who has never picked anything: no clan
+   * anywhere and a round open means they are in the round, so the workspace
+   * opens there rather than on a clan home with nothing in it.
    */
-  const inPool = Boolean(activePool) || (!clan && !menteeClans.length && menteePools.length > 0);
+  const inPool = Boolean(poolId) || (!clan && !menteeClans.length && menteePools.length > 0);
   const kind: MenteeScope['kind'] = inPool ? 'pool' : (clan || menteeClans.length) ? 'clan' : 'none';
 
   return {
@@ -63,6 +81,6 @@ export function useMenteeScope(): MenteeScope {
     clan,
     isCandidate,
     poolOnly: isCandidate && menteeClans.length === 0,
-    loading,
+    loading: !scopeReady,
   };
 }

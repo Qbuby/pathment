@@ -127,8 +127,27 @@ class ScheduleTemplateService {
     });
   }
 
-  async _findSchedule(menteeId, requestedClanId, actorId) {
-    const clanId = await resolveMenteeClanId(menteeId, requestedClanId, { actorId });
+  /**
+   * The schedule row for a mentee in one clan.
+   *
+   * `soft` is for READS only. The clan normally rides in on the caller's scope
+   * picker, but a request can legitimately arrive without one - storage is
+   * blocked in private browsing, or the learner's scope is a selection round,
+   * which has no clan at all. For somebody in a single clan that resolves
+   * regardless; for somebody in several it is ambiguous, and a hard error there
+   * took the whole "This Week" page down over a card that only shows repeating
+   * habits. A read that cannot tell which clan is being asked about has nothing
+   * to show and says so. It must never guess: the wrong week is worse than no
+   * week. Writes stay strict, where silence would be the wrong answer.
+   */
+  async _findSchedule(menteeId, requestedClanId, actorId, { soft = false } = {}) {
+    let clanId;
+    try {
+      clanId = await resolveMenteeClanId(menteeId, requestedClanId, { actorId });
+    } catch (err) {
+      if (!soft || !(err instanceof ValidationError)) throw err;
+      return { ms: null, clanId: null };
+    }
     const memberships = await listMenteeClans(menteeId);
     const where = clanScopedWhere({ menteeId }, clanId, memberships.length);
     const ms = await models.MenteeSchedule.findOne({
@@ -190,7 +209,7 @@ class ScheduleTemplateService {
   }
 
   async getMenteeSchedule(menteeId, clanId = null, actorId = null) {
-    const { ms } = await this._findSchedule(menteeId, clanId, actorId);
+    const { ms } = await this._findSchedule(menteeId, clanId, actorId, { soft: true });
     if (!ms) return null;
 
     let rawSchedule = Array.isArray(ms.schedule) ? ms.schedule : [];

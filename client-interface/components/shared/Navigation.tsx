@@ -58,7 +58,7 @@ export default function Navigation({ role }: NavigationProps) {
   const pathname = logicalPathname(usePathname());
   const router = useRouter();
   const { logout, user, availableRoles, setActiveRole } = useAuth();
-  const { clans, activeClanId, setActiveClanId, menteeClans, menteePools, menteeActiveClanId, setMenteeActiveClanId } = useClan();
+  const { clans, activeClanId, setActiveClanId, menteeClans, menteePools, menteeScope, setMenteeScope, menteeActiveClanId } = useClan();
   const scope = useMenteeScope();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
@@ -337,8 +337,8 @@ export default function Navigation({ role }: NavigationProps) {
       if (!options.length) return null;
       return (
         <SelectMenu
-          value={menteeActiveClanId || options[0].value}
-          onChange={setMenteeActiveClanId}
+          value={menteeScope || options[0].value}
+          onChange={setMenteeScope}
           options={options}
           ariaLabel={menteePools.length ? 'Switch clan or selection pool' : 'Switch clan'}
           className="w-full"
