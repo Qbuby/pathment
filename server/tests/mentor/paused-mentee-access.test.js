@@ -341,5 +341,59 @@ describe('paused mentee remains visible to their mentor', () => {
 
       expect(paused.map((p) => p.menteeId)).toEqual([mentee.id]);
     });
+
+    /**
+     * The other half of the same question, and the bug that was reported: the
+     * list above hands the mentor a Resume button, so the resume has to resolve
+     * against the same clans the list does. It did not — it used the narrower
+     * "still running" scope — so everybody paused in a finished cohort was
+     * shown with an action that could only ever answer "You do not mentor this
+     * clan". Listing something you cannot act on is worse than hiding it.
+     */
+    it('can be RESUMED there, because that is what the list offers', async () => {
+      await mentorshipPauseService.pause(lead, mentee.id, clan.id, 'exams', 'mentor');
+      await freeze();
+
+      await expect(mentorshipPauseService.resume(lead, mentee.id, clan.id)).resolves.toMatchObject({
+        status: 'active',
+      });
+
+      const m = await models.ClanMembership.findOne({ where: { clanId: clan.id, userId: mentee.id } });
+      expect(m.status).toBe('active');
+      expect(m.pausedAt).toBeNull();
+    });
+
+    it('resolves the clan on its own when the mentee is paused in only one', async () => {
+      await mentorshipPauseService.pause(lead, mentee.id, clan.id, 'exams', 'mentor');
+      await freeze();
+
+      await expect(mentorshipPauseService.resume(lead, mentee.id, null)).resolves.toMatchObject({
+        clanId: clan.id, status: 'active',
+      });
+    });
+
+    /** Widening the resume scope must not widen WHOSE pauses it can undo. */
+    it('still refuses to resume in a clan the mentor does not run', async () => {
+      const program = await createProgram({ createdBy: outsider.id });
+      const theirs = await models.Clan.create({
+        programId: program.id, name: 'Not mine', leadMentorId: outsider.id, createdBy: outsider.id,
+      });
+      await clanService.addMember(theirs.id, { userId: outsider.id, role: 'lead_mentor' });
+      await clanService.addMember(theirs.id, { userId: mentee.id, role: 'mentee' });
+      await mentorshipPauseService.pause(outsider, mentee.id, theirs.id, 'exams', 'mentor');
+      await models.Clan.update({ frozenAt: new Date() }, { where: { id: theirs.id } });
+
+      await expect(mentorshipPauseService.resume(lead, mentee.id, theirs.id)).rejects.toThrow(/do not mentor/i);
+    });
+
+    /**
+     * Pause keeps the narrow scope on purpose: there is nothing left to miss in
+     * a cohort that has ended, so starting a win-back cadence there is noise.
+     */
+    it('does not let a NEW pause be started in a finished clan', async () => {
+      await freeze();
+      await expect(mentorshipPauseService.pause(lead, mentee.id, clan.id, 'exams', 'mentor'))
+        .rejects.toThrow(/do not mentor/i);
+    });
   });
 });

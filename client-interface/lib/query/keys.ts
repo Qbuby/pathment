@@ -107,6 +107,8 @@ export const qk = {
     bookable: ['me', 'bookable'] as const,
     enrollments: (menteeId: string) => ['me', 'enrollments', menteeId] as const,
     publicPrograms: ['me', 'public-programs'] as const,
+    /** Which clans the signed-in mentee is paused in. Read on every mentee page. */
+    pauseState: ['me', 'pause-state'] as const,
     program: (programId: string) => ['me', 'program', programId] as const,
     programEnrollment: (programId: string, menteeId: string) =>
       ['me', 'program-enrollment', programId, menteeId] as const,

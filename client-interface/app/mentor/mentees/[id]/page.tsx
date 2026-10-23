@@ -583,10 +583,17 @@ export default function MenteeDetail() {
               <CalendarCheck className="w-4 h-4" />
               Attendance
             </button>
+            {/*
+              * Read-only stops a NEW pause, not the undo of an old one. The
+              * read-only rule exists so a finished programme is not edited
+              * after the fact; a pause left behind in one is a loose end from
+              * before it closed, and the person it is attached to is the one
+              * who most needs it untied.
+              */}
             <button
               onClick={togglePause}
-              disabled={pauseBusy || historical}
-              title={historical ? 'Completed programs are read-only' : undefined}
+              disabled={pauseBusy || (historical && !pauseState?.paused)}
+              title={historical && !pauseState?.paused ? 'Completed programs are read-only' : undefined}
               className={`px-4 py-2 rounded-xl transition-colors flex items-center gap-2 border disabled:opacity-50 ${pauseState?.paused ? 'bg-brand-50 border-brand-200 text-brand-700 hover:bg-brand-100' : 'bg-card border-slate-200 text-slate-700 hover:bg-slate-50'}`}
             >
               {pauseState?.paused ? (

@@ -82,9 +82,17 @@ class MentorshipPauseService {
    * Resolve which clan to act on. If clanId is given it must be one the mentor
    * runs. When omitted, only auto-pick if the mentee shares exactly one clan
    * with the mentor — never an arbitrary first row (standing vs cohort).
+   *
+   * `includeFinished` picks which of the two scopes above applies. Pausing is
+   * an act on a running clan, so it uses the narrow one. Resuming is an act on
+   * an existing pause, and pauses outlive their programme: `listPaused` shows
+   * them deliberately, so the undo has to reach the same rows. When it did not,
+   * every mentee paused in a finished clan was listed with a Resume button that
+   * answered 'You do not mentor this clan' — read and write disagreeing about
+   * the same clan.
    */
-  async _resolveClanId(user, menteeId, clanId) {
-    const { clanIds } = await this._scopeClans(user);
+  async _resolveClanId(user, menteeId, clanId, { includeFinished = false } = {}) {
+    const { clanIds } = includeFinished ? await this._overseenClans(user) : await this._scopeClans(user);
     if (!clanIds.length) throw new ForbiddenError('You do not mentor any clan');
     if (clanId) {
       if (!clanIds.includes(clanId)) throw new ForbiddenError('You do not mentor this clan');
@@ -184,9 +192,14 @@ class MentorshipPauseService {
     return { paused: true, clans: out };
   }
 
-  /** Resume a paused mentee back to active and clear the win-back state. */
+  /**
+   * Resume a paused mentee back to active and clear the win-back state.
+   *
+   * Resolved against every clan the caller oversees, finished ones included —
+   * see `_resolveClanId`. A pause is a state to be undone wherever it was left.
+   */
   async resume(user, menteeId, clanId) {
-    clanId = await this._resolveClanId(user, menteeId, clanId);
+    clanId = await this._resolveClanId(user, menteeId, clanId, { includeFinished: true });
     const m = await models.ClanMembership.findOne({ where: { clanId, userId: menteeId, role: 'mentee' } });
     if (!m) throw new NotFoundError('Mentee not found in this clan');
     await m.update({
