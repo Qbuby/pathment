@@ -269,6 +269,20 @@ describe('the candidate sees only their own work', () => {
     const text = JSON.stringify(pools);
     expect(text).not.toMatch(/totalScore|"rank"|b@test\.com/);
   });
+
+  /**
+   * The list row carries what a clan task row carries, so one component renders
+   * both - but `points` is what the work is WORTH, never what was earned on it.
+   */
+  it('gives the work list the same facts a clan task has', async () => {
+    const a = await registerCandidate('rows@test.com');
+    await projectWork();
+    const [row] = await poolCandidateService.myTasks(a.user.id);
+    expect(row).toMatchObject({ difficulty: 'hard', points: 20, required: true });
+    expect(typeof row.description).toBe('string');
+    expect(row).not.toHaveProperty('pointsAwarded');
+    expect(JSON.stringify(row)).not.toMatch(/rating|totalScore/);
+  });
 });
 
 describe('scoring, shortlist and the human decision', () => {

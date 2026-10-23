@@ -119,7 +119,7 @@ interface ClanContextValue {
 const ClanContext = createContext<ClanContextValue | undefined>(undefined);
 
 const EMPTY_MEMBERSHIPS = { mentor: [] as ClanLite[], mentee: [] as ClanLite[] };
-const EMPTY_POOLS: PoolLite[] = [];
+const EMPTY_POOLS_RAW: CandidatePoolSummary[] = [];
 
 export function ClanProvider({ children }: { children: ReactNode }) {
   const { user, availableRoles } = useAuth();
@@ -194,23 +194,34 @@ export function ClanProvider({ children }: { children: ReactNode }) {
    * — asking for it on every mentee's behalf would be a request per page load
    * that answers "none" for everybody who is simply in a clan.
    */
-  const { data: loadedPools } = useApiQuery<PoolLite[]>({
+  /*
+   * The SERVER's shape, cached under the server's key, and narrowed here.
+   *
+   * This used to fetch under `qk.candidate.pools` with a queryFn that returned
+   * the picker rows instead. The candidate's own round screen reads the same
+   * key expecting what the endpoint actually returns, and a query key is one
+   * cache entry: whichever of the two mounted first decided what the other
+   * one got. This provider is in the layout, so it always won, and the round
+   * screen read picker rows, found no `pool` on them and took the page down.
+   * One key, one shape - the narrowing happens after the cache, not inside it.
+   */
+  const { data: loadedPools } = useApiQuery<CandidatePoolSummary[]>({
     queryKey: qk.candidate.pools,
-    queryFn: async () => {
-      const rows = await candidateApi.pools();
-      return rows.map((r) => ({
-        id: r.pool.id,
-        name: r.pool.name,
-        avatarUrl: r.pool.avatarUrl ?? null,
-        programName: r.pool.program?.name ?? null,
-        status: r.pool.status,
-        decided: Boolean(r.outcome),
-      }));
-    },
+    queryFn: candidateApi.pools,
     enabled: !!user?.id && isCandidate,
     staleTime: STALE.long,
   });
-  const menteePools = loadedPools ?? EMPTY_POOLS;
+  const menteePools = useMemo<PoolLite[]>(
+    () => (loadedPools ?? EMPTY_POOLS_RAW).map((r) => ({
+      id: r.pool.id,
+      name: r.pool.name,
+      avatarUrl: r.pool.avatarUrl ?? null,
+      programName: r.pool.program?.name ?? null,
+      status: r.pool.status,
+      decided: Boolean(r.outcome),
+    })),
+    [loadedPools],
+  );
 
   /**
    * Has the server actually told us which clans this person is in?

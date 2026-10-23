@@ -1,12 +1,17 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight, CalendarClock, CheckCircle2, ChevronRight, Clock, Coins, Flag, ListTodo, Loader2, PartyPopper } from 'lucide-react';
-import { qk, useApiQuery } from '@/lib/query';
+import { ArrowRight, CalendarClock, CheckCircle2, ChevronRight, Clock, Flag, ListTodo, Loader2, PartyPopper } from 'lucide-react';
+import { qk, useApiQuery, useInvalidate } from '@/lib/query';
 import { useAuth } from '@/lib/context/AuthContext';
 import { LearningStat } from '@/components/mentee/LearningStat';
-import { StatusBadge } from '@/components/admin/ui';
+import { SearchAndFilterBar, StatusBadge } from '@/components/admin/ui';
 import { ClanAvatar } from '@/components/shared/ClanAvatar';
+import { TaskDrawer } from '@/components/mentee/TaskDrawer';
+import { SubmitTaskDrawer, type SubmitTaskTarget } from '@/components/mentee/SubmitTaskDrawer';
+import { MenteeTaskRow, type MenteeTaskView } from '@/components/mentee/tasks/MenteeTaskRow';
+import { MenteeTaskEmpty, MenteeTaskStats, MenteeTaskViewToggle } from '@/components/mentee/tasks/MenteeTaskChrome';
 import { candidateApi, type CandidatePoolSummary, type CandidateTask } from '@/lib/services/pool-api';
 import { OPEN_STATUSES, POOL_WORK_STATUS, fmtPoolDate, poolTaskHref } from './poolUi';
 
@@ -120,7 +125,9 @@ export function PoolQualification({ poolId }: { poolId?: string | null }) {
 
   // The picker chooses which round is on screen; without a choice (one round,
   // never switched) all of them are, which is also what the old page showed.
-  const shown = (pools.data || []).filter((p) => !poolId || p.pool.id === poolId);
+  // `p.pool?.id`, like the line below it: one malformed row should narrow what
+  // this shows, never take a learner's whole page down.
+  const shown = (pools.data || []).filter((p) => p.pool && (!poolId || p.pool.id === poolId));
   const mine = (tasks.data || []).filter((t) => !poolId || t.pool?.id === poolId);
   const count = (statuses: string[]) => (loading ? '—' : mine.filter((t) => statuses.includes(t.status)).length);
   // The single most useful next step: the open piece of work due soonest.
@@ -183,26 +190,80 @@ export function PoolQualification({ poolId }: { poolId?: string | null }) {
 /**
  * Just the work, for `/mentee/tasks` in pool scope.
  *
- * The tasks page is where somebody goes to see everything they owe, so it
- * leads with what is still open rather than with the round's heading, which
- * the dashboard already carries.
+ * The same screen a clan learner gets, with the round's wording: the four
+ * counts, the Active/Approved switch, search and a status filter, and the
+ * shared task row with its drawer. It used to be three flat lists of titles,
+ * which meant the same person saw a visibly poorer product on the days they
+ * were in a round than on the days they were in a clan - for no better reason
+ * than that the work is fetched from somewhere else.
+ *
+ * What stays different is only what is actually different: approval rather
+ * than completion, a reviewer rather than a mentor, no score and no rank.
  */
+const POOL_FILTERS = [
+  { value: 'all', label: 'All work' },
+  { value: 'assigned', label: 'To do' },
+  { value: 'in_progress', label: 'In progress' },
+  { value: 'submitted', label: 'Awaiting review' },
+  { value: 'revision_needed', label: 'Changes requested' },
+];
+
+/** A round's work in the shape the shared row reads. */
+function toRow(t: CandidateTask): MenteeTaskView {
+  return {
+    id: t.id,
+    title: t.title,
+    description: t.description ?? null,
+    // `kind` is how a round says "this is a quiz"; `type` is the template's.
+    type: t.kind === 'task' ? t.type : t.kind,
+    difficulty: t.difficulty ?? null,
+    dueDate: t.dueDate,
+    estimatedHours: t.estimatedHours ?? null,
+    points: t.points ?? null,
+    status: t.status,
+    optional: !t.required,
+  };
+}
+
 export function PoolWorkList({ poolId }: { poolId?: string | null }) {
+  const invalidate = useInvalidate();
   const { data, loading, error } = useApiQuery({
     queryKey: qk.candidate.tasks,
     queryFn: candidateApi.tasks,
     errorMessage: 'Could not load your work',
   });
+
+  const [view, setView] = useState<'active' | 'completed'>('active');
+  const [status, setStatus] = useState('all');
+  const [search, setSearch] = useState('');
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [submitTarget, setSubmitTarget] = useState<SubmitTaskTarget | null>(null);
+
   const mine = (data || []).filter((t) => !poolId || t.pool?.id === poolId);
-  const open = mine.filter((t) => OPEN_STATUSES.includes(t.status));
-  const waiting = mine.filter((t) => t.status === 'submitted');
+  const byId = (id: string) => mine.find((t) => t.id === id) ?? null;
+  const active = mine.filter((t) => t.status !== 'completed');
   const done = mine.filter((t) => t.status === 'completed');
 
-  const groups = [
-    { key: 'open', title: 'Still to hand in', rows: open, empty: 'Nothing open. Everything is handed in or approved.' },
-    { key: 'waiting', title: 'Awaiting review', rows: waiting, empty: null },
-    { key: 'done', title: 'Approved', rows: done, empty: null },
+  const shown = (view === 'completed' ? done : active)
+    .filter((t) => view === 'completed' || status === 'all' || t.status === status)
+    .filter((t) => !search.trim() || t.title.toLowerCase().includes(search.trim().toLowerCase()));
+
+  const count = (statuses: string[]) => mine.filter((t) => statuses.includes(t.status)).length;
+  const stats = [
+    { key: 'assigned', label: 'To do', value: count(['assigned', 'not_started']), icon: ListTodo, hint: 'Work still to hand in →' },
+    { key: 'submitted', label: 'Awaiting review', value: count(['submitted']), icon: Clock, hint: 'Handed in, with a reviewer →' },
+    { key: 'completed', label: 'Approved', value: done.length, icon: CheckCircle2, hint: 'Reviewed and accepted →' },
+    { key: 'revision_needed', label: 'Changes requested', value: count(['revision_needed']), icon: Flag, hint: 'Read the notes and hand it in again →' },
   ];
+
+  const openWork = openTaskId ? byId(openTaskId) : null;
+  const askToSubmit = (row: MenteeTaskView) => {
+    setSubmitTarget({ id: row.id, title: row.title, status: row.status });
+    setOpenTaskId(null);
+  };
+  const start = (id: string) => {
+    candidateApi.start(id).then(() => invalidate(qk.candidate.all)).catch(() => {});
+  };
 
   return (
     <div className="space-y-6">
@@ -214,34 +275,86 @@ export function PoolWorkList({ poolId }: { poolId?: string | null }) {
         </p>
       </div>
 
-      {loading && <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-brand-600" /></div>}
+      <MenteeTaskStats
+        stats={stats}
+        loading={loading}
+        onPick={(key) => {
+          setView(key === 'completed' ? 'completed' : 'active');
+          setStatus(key === 'completed' ? 'all' : key);
+        }}
+      />
+
+      <MenteeTaskViewToggle
+        view={view}
+        onChange={setView}
+        activeCount={active.length}
+        completedCount={done.length}
+        loading={loading}
+        completedLabel="Approved"
+      />
+
+      <SearchAndFilterBar
+        search={search}
+        onSearch={setSearch}
+        placeholder={view === 'completed' ? 'Search approved work...' : 'Search your work...'}
+        filters={view === 'active' ? [{ value: status, onChange: setStatus, options: POOL_FILTERS }] : []}
+      />
+
       {error && <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
 
-      {!loading && !mine.length && !error && (
-        <div className="mentee-page-heading text-center text-slate-500">
-          No work has been given to you yet. You will be notified when it is.
+      {loading ? (
+        <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-brand-600" /></div>
+      ) : shown.length === 0 ? (
+        <MenteeTaskEmpty
+          view={view}
+          title={view === 'completed' ? 'Nothing approved yet' : 'No work open right now'}
+          hint={
+            search.trim() ? 'Try a different search term'
+              : status !== 'all' ? 'No work in this category'
+                : mine.length ? 'Everything is handed in or approved.'
+                  : 'Work will appear here when the round gives it to you.'
+          }
+        />
+      ) : (
+        <div className="mentee-task-list">
+          {shown.map((task) => {
+            const row = toRow(task);
+            return (
+              <MenteeTaskRow
+                key={task.id}
+                task={row}
+                href={poolTaskHref(task.id)}
+                statusConfig={POOL_WORK_STATUS}
+                readOnly={task.readOnly}
+                readOnlyTitle="This round is closed"
+                onOpen={setOpenTaskId}
+                onStart={task.readOnly ? undefined : start}
+                onSubmit={task.readOnly ? undefined : askToSubmit}
+                quizHref={(id) => `/mentee/quizzes/${id}`}
+                interviewHref={(id) => `/mentee/interviews/${id}`}
+              />
+            );
+          })}
         </div>
       )}
 
-      {!loading && mine.length > 0 && groups.map((g) => (
-        (g.rows.length || g.empty) ? (
-          <section key={g.key} className="space-y-3">
-            <div className="flex items-baseline gap-2">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{g.title}</h2>
-              {g.rows.length > 0 && <span className="text-xs text-slate-400 tabular-nums">{g.rows.length}</span>}
-            </div>
-            {g.rows.length ? (
-              <div className="mentee-task-list">
-                {g.rows.map((task) => <PoolTaskRow key={task.id} task={task} />)}
-              </div>
-            ) : (
-              <p className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-card px-5 py-4 text-sm text-slate-500">
-                <Coins className="h-4 w-4 text-slate-300" aria-hidden="true" /> {g.empty}
-              </p>
-            )}
-          </section>
-        ) : null
-      ))}
+      <TaskDrawer
+        source="pool"
+        taskId={openTaskId}
+        open={Boolean(openTaskId)}
+        onClose={() => setOpenTaskId(null)}
+        readOnly={Boolean(openWork?.readOnly)}
+        onStart={start}
+        onSubmit={(t) => askToSubmit(toRow(t as CandidateTask))}
+      />
+
+      <SubmitTaskDrawer
+        source="pool"
+        open={Boolean(submitTarget)}
+        task={submitTarget}
+        onClose={() => setSubmitTarget(null)}
+        onSubmitted={() => invalidate(qk.candidate.all)}
+      />
     </div>
   );
 }

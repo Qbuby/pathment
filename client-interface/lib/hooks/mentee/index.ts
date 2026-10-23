@@ -30,6 +30,9 @@ export type { UseMenteeTasksReturn } from './useMenteeTasks';
 export { useTaskDetail } from './useTaskDetail';
 export type { UseTaskDetailReturn } from './useTaskDetail';
 
+export { useMenteeTaskDetail } from './useMenteeTaskDetail';
+export type { MenteeTaskSource } from './useMenteeTaskDetail';
+
 export { useProgramEnroll } from './useProgramEnroll';
 export type { UseProgramEnrollReturn } from './useProgramEnroll';
 

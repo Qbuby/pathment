@@ -114,6 +114,15 @@ candidate earned for a project could not be read off the project. Older pools ke
   piece opens at `/mentee/tasks/:id?pool=1` (`PoolTaskDetail`), and the quiz and interview runners
   are the mentee ones.
 
+  **It is the same screens, not lookalikes.** `/mentee/tasks` in pool scope is the clan task screen
+  with the round's wording: the four counts, the Active/Approved switch, search and a status filter,
+  and `MenteeTaskRow` - one component for a clan task and a round's work alike, because to the person
+  doing it they are the same object. The shared `TaskDrawer` and `SubmitTaskDrawer` take a
+  `source` (`clan` | `pool`) and read or hand in through the candidate API, so a round never grows a
+  second submission form. `/candidate/tasks` therefore returns what a clan task carries - difficulty,
+  estimated hours, description, and `points` - where `points` is what the work is WORTH; a candidate
+  is never shown their score or their rank.
+
   In pool scope the nav keeps only This Week, Tasks and Settings: progress, meetings, roadblocks,
   the community and messages are all about a mentor, a roadmap or a cohort that does not exist until
   placement. Settings drops Skills and Learning preferences for the same reason — both write to a

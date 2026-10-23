@@ -16,7 +16,7 @@ import { StatusBadge } from '@/components/admin/ui';
 import { SubmissionFileList } from '@/components/shared/SubmissionFileList';
 import { ResourceLink } from '@/components/shared/ResourceLink';
 import { TaskProgressTimeline } from '@/components/shared/TaskProgressTimeline';
-import { useTaskDetail } from '@/lib/hooks/mentee';
+import { useMenteeTaskDetail, type MenteeTaskSource } from '@/lib/hooks/mentee';
 import { isMissingDescription } from '@/lib/utils/html';
 
 /**
@@ -41,7 +41,7 @@ import { isMissingDescription } from '@/lib/utils/html';
  * one submission form in the product.
  */
 export function TaskDrawer({
-  taskId, open, onClose, onStart, onSubmit, readOnly = false,
+  taskId, open, onClose, onStart, onSubmit, readOnly = false, source = 'clan',
 }: {
   /** Null when nothing is selected — the detail query stays idle. */
   taskId: string | null;
@@ -50,8 +50,14 @@ export function TaskDrawer({
   onStart?: (taskId: string) => void | Promise<void>;
   onSubmit?: (task: any) => void;
   readOnly?: boolean;
+  /**
+   * Which scope the task belongs to. A selection round's work is fenced out of
+   * the clan endpoints, so it is read through the candidate API and mapped onto
+   * this same shape — the drawer itself does not care which it got.
+   */
+  source?: MenteeTaskSource;
 }) {
-  const { task, loading, error } = useTaskDetail(open && taskId ? taskId : '');
+  const { task, loading, error } = useMenteeTaskDetail(open && taskId ? taskId : '', source);
   const [starting, setStarting] = useState(false);
   useEffect(() => { setStarting(false); }, [taskId]);
 
@@ -284,8 +290,10 @@ export function TaskDrawer({
             </Section>
           )}
 
-          {/* Already collapsible on its own, and it carries its own write box. */}
-          {!['cancelled'].includes(status) && (
+          {/* Already collapsible on its own, and it carries its own write box.
+              The timeline is clan-scoped work history, and a selection round
+              keeps none, so it is left out rather than asked for and failed. */}
+          {source === 'clan' && !['cancelled'].includes(status) && (
             <TaskProgressTimeline taskId={task.id} mode="mentee" readOnly={readOnly} />
           )}
         </div>

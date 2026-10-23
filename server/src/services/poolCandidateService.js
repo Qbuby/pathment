@@ -63,7 +63,7 @@ class PoolCandidateService {
     const tasks = await TaskModel().findAll({
       where: { menteeId: userId, poolMemberId: { [Op.ne]: null }, status: { [Op.ne]: 'cancelled' } },
       include: [
-        { model: models.RoadmapTask, as: 'roadmapTask', attributes: ['id', 'title', 'type', 'difficulty', 'description'] },
+        { model: models.RoadmapTask, as: 'roadmapTask', attributes: ['id', 'title', 'type', 'difficulty', 'description', 'estimatedHours'] },
         { model: models.PoolMember, as: 'poolMember', attributes: ['id', 'poolId', 'decision'], required: true, where: { userId },
           include: [{ model: models.CandidatePool, as: 'pool', attributes: ['id', 'name', 'status', 'workItems'] }] },
       ],
@@ -74,7 +74,10 @@ class PoolCandidateService {
 
   _shapeTask(t) {
     // The task's piece of work, found through its template on the pool's list.
-    const item = t.poolMember?.pool ? require('./poolService').workItemForTask(t.poolMember.pool, t.roadmapTaskId) : null;
+    const poolService = require('./poolService');
+    const pool = t.poolMember?.pool || null;
+    const item = pool ? poolService.workItemForTask(pool, t.roadmapTaskId) : null;
+    const difficulty = t.roadmapTask?.difficulty || null;
     return {
       id: t.id,
       status: t.status,
@@ -86,6 +89,19 @@ class PoolCandidateService {
       required: item?.required ?? true,
       title: t.titleOverride || t.roadmapTask?.title || 'Qualifying work',
       type: t.typeOverride || t.roadmapTask?.type || 'assignment',
+      /*
+       * The same facts a clan task carries, so one row renders both.
+       *
+       * `points` is what the work is WORTH, not what anybody earned on it - a
+       * candidate is never shown their score or their rank, and this is the
+       * brief rather than a result. The list used to carry none of this, which
+       * is why a round's work could only be shown as a thin list of titles
+       * while a clan's was a proper task row.
+       */
+      difficulty,
+      estimatedHours: t.roadmapTask?.estimatedHours ?? null,
+      description: t.descriptionOverride || t.roadmapTask?.description || '',
+      points: pool && item ? poolService.pointsOf(pool, item, difficulty) : null,
       pool: t.poolMember?.pool ? { id: t.poolMember.pool.id, name: t.poolMember.pool.name, status: t.poolMember.pool.status } : null,
       readOnly: Boolean(t.poolMember?.decision) || ['closed'].includes(t.poolMember?.pool?.status),
     };
@@ -96,7 +112,7 @@ class PoolCandidateService {
     const task = await TaskModel().findOne({
       where: { id: taskId, menteeId: userId, poolMemberId: { [Op.ne]: null } },
       include: [
-        { model: models.RoadmapTask, as: 'roadmapTask', attributes: ['id', 'title', 'type', 'difficulty', 'description', 'deliverable', 'acceptanceCriteria'],
+        { model: models.RoadmapTask, as: 'roadmapTask', attributes: ['id', 'title', 'type', 'difficulty', 'description', 'estimatedHours', 'deliverable', 'acceptanceCriteria'],
           include: models.TaskResource ? [{ model: models.TaskResource, as: 'resources', attributes: ['id', 'title', 'url', 'resourceType'], required: false }] : [] },
         { model: models.PoolMember, as: 'poolMember', attributes: ['id', 'poolId', 'decision'], required: true, where: { userId },
           include: [{ model: models.CandidatePool, as: 'pool', attributes: ['id', 'name', 'status', 'workItems'] }] },

@@ -416,6 +416,12 @@ export interface CandidateTask {
   title: string;
   type: string;
   readOnly: boolean;
+  /** The same facts a clan task carries, so one row renders both. */
+  difficulty?: Difficulty | null;
+  estimatedHours?: number | null;
+  description?: string | null;
+  /** What the work is WORTH. A candidate is never shown what they scored. */
+  points?: number | null;
   pool: { id: string; name: string; status: PoolStatus } | null;
 }
 
