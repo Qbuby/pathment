@@ -247,7 +247,7 @@ export function HistoryTab({ poolId, data }: { poolId: string; data?: PoolDashbo
 
   return (
     <section className={panel}>
-      <PanelHeader icon={History} title="History" count={all.length} subtitle="Everything that happened in this pool — what, who, and why." />
+      <PanelHeader icon={History} title="History" count={all.length} subtitle="Everything that happened in this pool: what, who, and why." />
       {!all.length ? (
         <div className="border-t border-border"><EmptyState icon={History} title="Nothing yet" text="Changes to the pool appear here as they happen." /></div>
       ) : (

@@ -100,7 +100,7 @@ export function SettingsTab({ data, onChange, canManage }: { data: PoolDashboard
         <PanelHeader
           icon={Scale}
           title="What work is worth"
-          subtitle="A piece of work earns points, and a candidate's score is the points they earned. These are the defaults a new piece of work takes from its difficulty — you can change any one of them when you add it."
+          subtitle="A piece of work earns points, and a candidate's score is the points they earned. These are the defaults a new piece of work takes from its difficulty, and you can change any one of them when you add it."
         />
         <div className={body}>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -126,7 +126,7 @@ export function SettingsTab({ data, onChange, canManage }: { data: PoolDashboard
           </div>
           <p className="rounded-xl bg-muted/60 px-4 py-3 text-xs text-slate-600">
             A review&apos;s rating decides how much of a piece of work is earned: five stars earns all of its points,
-            three earns three fifths. Work that is never approved earns nothing. There are no weights to add up —
+            three earns three fifths. Work that is never approved earns nothing. There are no weights to add up,
             a score is the points on the work itself.
           </p>
         </div>

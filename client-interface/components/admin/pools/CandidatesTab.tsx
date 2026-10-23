@@ -186,7 +186,7 @@ function AddCandidatesDrawer({ poolId, onClose, onDone }: { poolId: string; onCl
         ? await poolApi.addFromApplications(poolId, [...chosen])
         : await poolApi.importMembers(poolId, mode === 'csv' ? { csv } : { emails });
       setResult(out);
-      toast.success('Candidates processed — see each row below');
+      toast.success('Candidates processed. See each row below');
       onDone();
     } catch (e) {
       toast.error(extractApiErrorMessage(e, 'Could not add candidates'));
@@ -305,7 +305,7 @@ function DecisionDrawer({ member, onClose, onSubmit }: { member: PoolMemberRow; 
       open
       onClose={onClose}
       title={`Change decision: ${member.name || member.email}`}
-      subtitle="For a change after the selection was confirmed — e.g. promoting someone from the waitlist."
+      subtitle="For a change after the selection was confirmed, such as promoting someone from the waitlist."
       width="sm"
       footer={(dismiss) => (
         <div className="flex justify-end gap-2">

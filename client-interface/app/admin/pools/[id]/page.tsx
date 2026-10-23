@@ -18,8 +18,7 @@ import { Chip, ErrorNote, POOL_STATUS, Spinner, fmtDate, secondaryBtn } from '@/
 import { OverviewTab } from '@/components/admin/pools/OverviewTab';
 import { CandidatesTab } from '@/components/admin/pools/CandidatesTab';
 import { WorkTab } from '@/components/admin/pools/WorkTab';
-import { ShortlistTab } from '@/components/admin/pools/ShortlistTab';
-import { PlacementTab } from '@/components/admin/pools/PlacementTab';
+import { SelectionTab } from '@/components/admin/pools/SelectionTab';
 import { SettingsTab } from '@/components/admin/pools/SettingsTab';
 import { HistoryTab } from '@/components/admin/pools/HistoryTab';
 
@@ -51,7 +50,15 @@ export default function PoolDetailPage({ params }: { params: Promise<{ id: strin
   const confirm = useConfirm();
   const invalidate = useInvalidate();
   const { can } = usePermissions();
-  const [managing, setManaging] = useState(false);
+  /**
+   * The Manage pool drawer, and which panel of it is showing.
+   *
+   * Settings used to be a page you left the pool for, which is a strange
+   * amount of ceremony for changing a date. It is a form, so it lives in the
+   * drawer, one level in with a way back.
+   */
+  const wantsSettings = (search.get('tab') || '') === 'settings';
+  const [manage, setManage] = useState<null | 'root' | 'settings'>(wantsSettings ? 'settings' : null);
   const { data, loading, error, refetch } = useApiQuery({
     queryKey: ['pools', id],
     queryFn: () => poolApi.get(id),
@@ -66,41 +73,48 @@ export default function PoolDetailPage({ params }: { params: Promise<{ id: strin
   const toReview = data
     ? data.members.filter((m) => m.bucket !== 'withdrawn').reduce((n, m) => n + m.work.filter((w) => w.status === 'submitted').length, 0)
     : 0;
-  // Placing only makes sense once somebody has been selected.
-  const anySelected = data ? data.members.some((m) => m.decision === 'selected') : false;
 
-  // Four tabs, one per step of the round. Review lives inside Work, and
-  // Placement inside Selection; Settings and History open from the header.
+  /**
+   * Three tabs, because a round is three questions: how is it going, who are
+   * these people, and who gets in.
+   *
+   * Work used to be the fourth. It is a short list you set up once and then
+   * barely touch, so standing it beside Candidates promised somewhere you
+   * would live and delivered somewhere you would visit twice. It moved behind
+   * Manage pool, next to the other set-it-once screens, and handing work out
+   * happens where the people are.
+   */
   const tabs = useMemo(() => [
     { key: 'overview', label: 'Overview', icon: LayoutGrid },
-    { key: 'candidates', label: 'Candidates', icon: UsersRound, count: canReview && toReview ? toReview : live },
     // Candidates is where work is reviewed, so its badge points at what is waiting.
-    { key: 'work', label: 'Work', icon: ClipboardList, count: work },
+    { key: 'candidates', label: 'Candidates', icon: UsersRound, count: canReview && toReview ? toReview : live },
     { key: 'selection', label: 'Selection', icon: ListOrdered },
-  ], [live, work, canReview, toReview]);
+  ], [live, canReview, toReview]);
 
   // Older tab names still arrive in links (notifications and emails already
   // sent), so each maps onto where that screen lives now.
   const raw = search.get('tab') || 'overview';
-  const LEGACY: Record<string, { tab: string; step?: 'scores' | 'place'; filter?: 'review' }> = {
+  const LEGACY: Record<string, { tab: string; filter?: 'review' }> = {
     review: { tab: 'candidates', filter: 'review' },
-    shortlist: { tab: 'selection', step: 'scores' },
-    placement: { tab: 'selection', step: 'place' },
+    // Scoring and placing are one screen now; both old links land on it.
+    shortlist: { tab: 'selection' },
+    placement: { tab: 'selection' },
+    // Settings is a drawer panel, so its old link opens the pool with it showing.
+    settings: { tab: 'overview' },
   };
   // Review used to be a view of the Work tab (?tab=work&view=review); it lives in Candidates now.
   const oldWorkReview = raw === 'work' && search.get('view') === 'review';
   const resolved = oldWorkReview ? 'candidates' : (LEGACY[raw]?.tab || raw);
-  const tab = ['overview', 'candidates', 'work', 'selection', 'settings', 'history'].includes(resolved) ? resolved : 'overview';
-  const wantedStep = LEGACY[raw]?.step || (search.get('step') === 'place' ? 'place' : 'scores');
-  const step: 'scores' | 'place' = wantedStep === 'place' && canPlace && anySelected ? 'place' : 'scores';
+  const tab = ['overview', 'candidates', 'work', 'selection', 'history'].includes(resolved) ? resolved : 'overview';
 
   // Candidates can open already filtered to the work waiting for a reviewer.
   const candidateFilter = (LEGACY[raw]?.filter || (oldWorkReview ? 'review' : null) || (search.get('filter') === 'review' ? 'review' : undefined)) as 'review' | undefined;
 
   const go = (key: string) => {
+    // Settings is not a destination any more; it is a panel of the drawer.
+    if (key === 'settings') { setManage('settings'); return; }
     const legacy = LEGACY[key];
     const params = new URLSearchParams({ tab: legacy?.tab || key });
-    if (legacy?.step === 'place') params.set('step', 'place');
     if (legacy?.filter) params.set('filter', legacy.filter);
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   };
@@ -153,13 +167,27 @@ export default function PoolDetailPage({ params }: { params: Promise<{ id: strin
             {pool.archivedAt && <Chip cls="bg-slate-100 text-slate-500 border-slate-200">Archived</Chip>}
           </div>
         </div>
-        <button onClick={() => setManaging(true)} className={`${secondaryBtn} shrink-0`} aria-haspopup="dialog">
+        <button onClick={() => setManage('root')} className={`${secondaryBtn} shrink-0`} aria-haspopup="dialog">
           <SlidersHorizontal className="h-4 w-4" /> Manage pool
         </button>
       </div>
 
-      {managing && (
-        <Drawer open onClose={() => setManaging(false)} title="Manage pool" subtitle={pool.name} width="md">
+      {manage && (
+        <Drawer
+          open
+          onClose={() => setManage(null)}
+          title={manage === 'settings' ? 'Settings' : 'Manage pool'}
+          subtitle={pool.name}
+          width={manage === 'settings' ? 'lg' : 'md'}
+        >
+          {manage === 'settings' ? (
+            <div className="space-y-4">
+              <button onClick={() => setManage('root')} className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-700 hover:text-brand-800">
+                <ArrowLeft className="h-4 w-4" /> Manage pool
+              </button>
+              <SettingsTab data={data} onChange={reload} canManage={can('pool.manage')} />
+            </div>
+          ) : (
           <div className="space-y-6">
             {/* What the pool is: moved here from the old header card. */}
             <section>
@@ -195,7 +223,7 @@ export default function PoolDetailPage({ params }: { params: Promise<{ id: strin
                     {NEXT[pool.status].map((n, i) => (
                       <button
                         key={n.to}
-                        onClick={() => { setManaging(false); transition(n.to, `Pool moved to ${POOL_STATUS[n.to as PoolStatus]?.label || n.to}`); }}
+                        onClick={() => { setManage(null); transition(n.to, `Pool moved to ${POOL_STATUS[n.to as PoolStatus]?.label || n.to}`); }}
                         className={`flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 text-left transition-colors ${i === 0 ? 'border-brand-300 bg-brand-50 hover:bg-brand-100 dark:bg-brand-500/10' : 'border-slate-200 hover:border-slate-300'}`}
                       >
                         <span className="min-w-0">
@@ -210,15 +238,18 @@ export default function PoolDetailPage({ params }: { params: Promise<{ id: strin
               </div>
             </section>
 
-            {/* The pages that are set up once and looked back on rarely. */}
+            {/* Set up once, looked back on rarely. Work is here rather than in
+                the tab bar because that is what it is: a list you write at the
+                start of a round and then barely touch. */}
             <section>
               <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Pool</h3>
               <div className="mt-2 divide-y divide-slate-200 overflow-hidden rounded-xl border border-slate-200">
                 {([
+                  ['work', ClipboardList, 'Work in this round', `${work} piece${work === 1 ? '' : 's'}. Add it, price it, and hand it out.`],
                   ['settings', Settings2, 'Settings', can('pool.manage') ? 'Name, dates, scoring, reminders and placement' : 'View the name, dates, scoring and reminders'],
                   ['history', History, 'History', 'Everything that happened, who did it and why'],
                 ] as const).map(([key, Icon, text, hint]) => (
-                  <button key={key} onClick={() => { setManaging(false); go(key); }} className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                  <button key={key} onClick={() => { if (key !== 'settings') setManage(null); go(key); }} className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50">
                     <span className="rounded-lg bg-slate-100 p-2 text-slate-600 dark:bg-slate-800"><Icon className="h-4 w-4" /></span>
                     <span className="min-w-0 flex-1">
                       <span className="block text-sm font-medium text-slate-800">{text}</span>
@@ -236,7 +267,7 @@ export default function PoolDetailPage({ params }: { params: Promise<{ id: strin
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">End the round</h3>
                 <div className="mt-2 space-y-2">
                   {pool.status !== 'closed' && (
-                    <button onClick={() => { setManaging(false); transition('closed', 'Pool closed'); }} className="flex w-full items-start gap-3 rounded-xl border border-rose-200 px-4 py-3 text-left transition-colors hover:bg-rose-50 dark:border-rose-900/50 dark:hover:bg-rose-950/30">
+                    <button onClick={() => { setManage(null); transition('closed', 'Pool closed'); }} className="flex w-full items-start gap-3 rounded-xl border border-rose-200 px-4 py-3 text-left transition-colors hover:bg-rose-50 dark:border-rose-900/50 dark:hover:bg-rose-950/30">
                       <Lock className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />
                       <span>
                         <span className="block text-sm font-medium text-rose-700 dark:text-rose-400">Close the pool</span>
@@ -245,7 +276,7 @@ export default function PoolDetailPage({ params }: { params: Promise<{ id: strin
                     </button>
                   )}
                   {(pool.status === 'closed' || pool.status === 'draft') && (
-                    <button onClick={() => { setManaging(false); transition('archived', 'Pool archived'); }} className="flex w-full items-start gap-3 rounded-xl border border-slate-200 px-4 py-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                    <button onClick={() => { setManage(null); transition('archived', 'Pool archived'); }} className="flex w-full items-start gap-3 rounded-xl border border-slate-200 px-4 py-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50">
                       <Archive className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
                       <span>
                         <span className="block text-sm font-medium text-slate-800">Archive</span>
@@ -257,10 +288,11 @@ export default function PoolDetailPage({ params }: { params: Promise<{ id: strin
               </section>
             )}
           </div>
+          )}
         </Drawer>
       )}
 
-      {tab === 'settings' || tab === 'history' ? (
+      {tab === 'work' || tab === 'history' ? (
         <button onClick={() => go('overview')} className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-700 hover:text-brand-800">
           <ArrowLeft className="h-4 w-4" /> Back to the pool
         </button>
@@ -276,41 +308,13 @@ export default function PoolDetailPage({ params }: { params: Promise<{ id: strin
       {tab === 'overview' && <OverviewTab data={data} onGo={go} />}
       {tab === 'candidates' && <CandidatesTab data={data} onChange={reload} canManage={can('pool.members')} canSelect={can('pool.select')} canReview={canReview} canAssign={can('pool.assign')} initialFilter={candidateFilter} />}
 
-      {/* Work: what candidates are given. Reviewing it happens in Candidates, person by person. */}
+      {/* Work: what candidates are given. Reached from Manage pool, because it
+          is set up once; handing it out happens where the people are. */}
       {tab === 'work' && <WorkTab data={data} onChange={reload} canAssign={can('pool.assign')} />}
 
-      {/* Selection: score and shortlist, then place — step two opens once someone is selected. */}
-      {tab === 'selection' && (
-        <div className="space-y-6">
-          {canPlace && (
-            <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 sm:inline-grid sm:min-w-md" role="tablist" aria-label="Selection steps">
-              {([
-                ['scores', '1', 'Scores & shortlist', true],
-                ['place', '2', 'Place in clans', anySelected],
-              ] as const).map(([key, num, text, enabled]) => (
-                <button
-                  key={key}
-                  type="button"
-                  role="tab"
-                  aria-selected={step === key}
-                  disabled={!enabled}
-                  title={enabled ? undefined : 'Confirm a shortlist first — placing starts once someone is selected'}
-                  onClick={() => router.replace(`${pathname}?tab=selection${key === 'place' ? '&step=place' : ''}`, { scroll: false })}
-                  className={`inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${step === key ? 'bg-card text-brand-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-                >
-                  <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] ${step === key ? 'bg-brand-600 text-white' : 'bg-slate-200 text-slate-600'}`}>{num}</span>
-                  {text}
-                </button>
-              ))}
-            </div>
-          )}
-          {step === 'scores'
-            ? <ShortlistTab data={data} onChange={reload} canSelect={can('pool.select')} />
-            : <PlacementTab data={data} onChange={reload} />}
-        </div>
-      )}
+      {/* Selection: rank, decide and place, in that order, on one screen. */}
+      {tab === 'selection' && <SelectionTab data={data} onChange={reload} canSelect={can('pool.select')} canPlace={canPlace} />}
 
-      {tab === 'settings' && <SettingsTab data={data} onChange={reload} canManage={can('pool.manage')} />}
       {tab === 'history' && <HistoryTab poolId={pool.id} data={data} />}
     </div>
   );

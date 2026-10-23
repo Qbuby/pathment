@@ -226,7 +226,7 @@ function AddWorkDrawer({ data, onClose, onDone }: { data: PoolDashboard; onClose
         {source === 'custom' && (<>
           <div>
             <label htmlFor="pool-work-title" className="mb-1 block text-sm font-medium text-slate-700">
-              Title {kind === 'task' ? <span className="text-red-500">*</span> : <span className="font-normal text-slate-400">(optional — defaults to the kit&apos;s name)</span>}
+              Title {kind === 'task' ? <span className="text-red-500">*</span> : <span className="font-normal text-slate-400">(optional, defaults to the kit&apos;s name)</span>}
             </label>
             <input id="pool-work-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Build a small REST API" className={inputCls} />
           </div>
@@ -288,7 +288,7 @@ function AddWorkDrawer({ data, onClose, onDone }: { data: PoolDashboard; onClose
         {source === 'custom' && (<>
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Brief</label>
-            <RichTextEditor content={description} onChange={setDescription} placeholder="Optional — what should they do?" minHeight="120px" />
+            <RichTextEditor content={description} onChange={setDescription} placeholder="Optional: what should they do?" minHeight="120px" />
           </div>
 
           {kind === 'task' && (<>
@@ -316,7 +316,7 @@ function AddWorkDrawer({ data, onClose, onDone }: { data: PoolDashboard; onClose
                     <button type="button" onClick={() => setCriteria((c) => [...c, ''])} className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700"><Plus className="h-3 w-3" /> Add check</button>
                   </div>
                   <div className="space-y-2">
-                    {criteria.length === 0 && <p className="text-xs text-slate-400">No criteria yet. Add checks the candidate must meet — reviewers tick them off.</p>}
+                    {criteria.length === 0 && <p className="text-xs text-slate-400">No criteria yet. Add checks the candidate must meet, and reviewers tick them off.</p>}
                     {criteria.map((c, i) => (
                       <div key={i} className="flex items-center gap-2">
                         <input value={c} onChange={(e) => setCriteria((prev) => prev.map((x, j) => (j === i ? e.target.value : x)))}
@@ -366,7 +366,7 @@ function AddWorkDrawer({ data, onClose, onDone }: { data: PoolDashboard; onClose
             <span className="mb-1.5 block text-sm font-medium text-slate-700">Who gets it</span>
             <div className="grid gap-2 sm:grid-cols-2">
               {([
-                ['all', 'Every active candidate', Users, 'The usual case — everyone in the round'],
+                ['all', 'Every active candidate', Users, 'The usual case: everyone in the round'],
                 ['later', 'Nobody yet', UserPlus, 'Add it now and choose people from the Work tab'],
               ] as const).map(([val, text, Icon, hint]) => (
                 <button key={val} type="button" onClick={() => setWho(val)} aria-pressed={who === val}

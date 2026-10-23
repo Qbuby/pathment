@@ -135,6 +135,17 @@ export function CandidateReview({ data, onChange, canManage, canSelect, canRevie
   const [activeId, setActiveId] = useState<string | null>(null);
   const [workTab, setWorkTab] = useState<'review' | 'progress' | 'done'>('review');
   const [reviewing, setReviewing] = useState<ReviewQueueItem | null>(null);
+  /**
+   * Reviewing the whole round rather than one person's work.
+   *
+   * A round of four hundred hands in a few hundred pieces, and reaching each
+   * one through its candidate is a trip back to a list every single time. In
+   * queue mode the drawer steps through everything waiting, in the order it
+   * was handed in, and deciding one simply brings up the next.
+   */
+  const [queueMode, setQueueMode] = useState(false);
+  const [clanChoice, setClanChoice] = useState('');
+  const [placingNow, setPlacingNow] = useState(false);
 
   const counts = useMemo(() => Object.fromEntries(FILTER_LABEL.map(([k]) => [k, members.filter(MATCH[k]).length])) as Record<Filter, number>, [members]);
   // A filter with nobody in it has no pill to show it is on, so fall back to everyone.
@@ -159,7 +170,20 @@ export function CandidateReview({ data, onChange, canManage, canSelect, canRevie
   const inReview = work.filter(({ w }) => w?.status === 'submitted');
   const inProgress = work.filter(({ w }) => w?.status !== 'submitted' && w?.status !== 'completed');
   const completed = work.filter(({ w }) => w?.status === 'completed');
-  const reviewIdx = reviewing ? mineQueue.findIndex((q) => q.submissionId === reviewing.submissionId) : -1;
+  const waiting = queue.data || [];
+  /**
+   * The clans a selected candidate can go into, fetched only when one is on
+   * screen. Placing somebody is the last thing that happens to them, and
+   * having to leave for another screen to do it is the moment the admin has
+   * to remember where they were.
+   */
+  const placement = useApiQuery({
+    queryKey: ['pools', pool.id, 'placement'],
+    queryFn: () => poolApi.placementPreview(pool.id),
+    enabled: canSelect,
+  });
+  const reviewList = queueMode ? waiting : mineQueue;
+  const reviewIdx = reviewing ? reviewList.findIndex((q) => q.submissionId === reviewing.submissionId) : -1;
 
   const afterReview = async () => { await Promise.all([queue.refetch(), scores.refetch()]); onChange(); };
 
@@ -205,11 +229,24 @@ export function CandidateReview({ data, onChange, canManage, canSelect, canRevie
             <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search a candidate…" aria-label="Search candidates"
               className="w-full rounded-xl border border-slate-200 bg-card py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
           </div>
-          {canManage && pool.status !== 'closed' && (
-            <button onClick={onAdd} className="inline-flex w-full shrink-0 items-center justify-center gap-1.5 rounded-xl bg-brand-600 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-700 sm:w-auto">
-              <UserPlus className="h-4 w-4" /> Add candidates
-            </button>
-          )}
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {/* One way into everything waiting, rather than finding it person
+                by person. The count is the backlog, so it reads as a job. */}
+            {canReview && waiting.length > 0 && (
+              <button
+                onClick={() => { setQueueMode(true); setReviewing(waiting[0]); }}
+                className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3.5 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-muted"
+              >
+                <ClipboardCheck className="h-4 w-4" /> Review queue
+                <span className="rounded-full bg-brand-600 px-1.5 py-0.5 text-xs font-semibold text-white tabular-nums">{waiting.length}</span>
+              </button>
+            )}
+            {canManage && pool.status !== 'closed' && (
+              <button onClick={onAdd} className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl bg-brand-600 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-700">
+                <UserPlus className="h-4 w-4" /> Add candidates
+              </button>
+            )}
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter candidates">
           {FILTER_LABEL.filter(([k]) => k === 'all' || counts[k] > 0).map(([k, text]) => {
@@ -483,7 +520,7 @@ export function CandidateReview({ data, onChange, canManage, canSelect, canRevie
                         onClick={() => { setAdjustDraft(currentAdjustment ? String(currentAdjustment) : ''); setAdjustNote(score?.adjustmentNote || ''); }}
                         className="w-full rounded-lg border border-slate-200 bg-card px-3 py-2 text-left text-sm text-slate-700 hover:border-brand-300 hover:text-brand-700"
                       >
-                        {currentAdjustment ? `${currentAdjustment > 0 ? '+' : ''}${currentAdjustment} pts — change it` : 'Add an adjustment'}
+                        {currentAdjustment ? `${currentAdjustment > 0 ? '+' : ''}${currentAdjustment} pts, change it` : 'Add an adjustment'}
                       </button>
                     ) : (
                       <div className="space-y-2">
@@ -503,7 +540,7 @@ export function CandidateReview({ data, onChange, canManage, canSelect, canRevie
                         <input
                           value={adjustNote}
                           aria-label="Why"
-                          placeholder="Why — it is shown with the number"
+                          placeholder="Why? It is shown with the number"
                           onChange={(e) => setAdjustNote(e.target.value)}
                           onKeyDown={(e) => { if (e.key === 'Enter') void saveAdjustment(); }}
                           className="w-full rounded-lg border border-slate-300 bg-card px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -541,6 +578,50 @@ export function CandidateReview({ data, onChange, canManage, canSelect, canRevie
               {member.placementStatus === 'placed' && member.placedClan && <p className="mt-2 text-xs text-emerald-700">Placed in {member.placedClan.name}</p>}
               {member.placementStatus === 'pending' && member.targetClan && <p className="mt-2 text-xs text-slate-500">Planned for {member.targetClan.name}</p>}
               {member.placementStatus === 'failed' && <p className="mt-2 text-xs text-rose-600">{member.placementError}</p>}
+
+              {/* Place them, here, rather than on a screen of their own. */}
+              {canSelect && member.decision === 'selected' && member.placementStatus !== 'placed' && (
+                <div className="mt-3 space-y-2 border-t border-slate-200 pt-3">
+                  <label htmlFor="place-clan" className="text-xs font-medium text-slate-600">Place in a clan</label>
+                  <select
+                    id="place-clan"
+                    value={clanChoice || member.targetClan?.id || ''}
+                    onChange={(e) => setClanChoice(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 bg-card px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  >
+                    <option value="">Choose a clan</option>
+                    {(placement.data?.clans || []).map((c) => (
+                      <option key={c.id} value={c.id} disabled={Boolean(c.problem)}>{c.name}{c.problem ? ` (${c.problem})` : ''}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={placingNow || !(clanChoice || member.targetClan?.id)}
+                    onClick={async () => {
+                      const clanId = clanChoice || member.targetClan?.id || '';
+                      if (!clanId) return;
+                      setPlacingNow(true);
+                      try {
+                        await poolApi.setTargets(pool.id, [{ memberId: member.id, clanId }]);
+                        const out = await poolApi.place(pool.id, [member.id]);
+                        if (out.summary.failed) toast.warning('Could not place them. The reason is on this card.');
+                        else toast.success('Placed');
+                        setClanChoice('');
+                        await Promise.all([placement.refetch(), scores.refetch()]);
+                        onChange();
+                      } catch (e) {
+                        toast.error(extractApiErrorMessage(e, 'Could not place this candidate'));
+                      } finally {
+                        setPlacingNow(false);
+                      }
+                    }}
+                    className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-brand-700 disabled:opacity-50"
+                  >
+                    {placingNow ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Waypoints className="h-3.5 w-3.5" />}
+                    {member.placementStatus === 'failed' ? 'Try again' : 'Place them'}
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Only while they have not joined. */}
@@ -574,10 +655,18 @@ export function CandidateReview({ data, onChange, canManage, canSelect, canRevie
         <ReviewDrawer
           poolId={pool.id}
           item={reviewing}
-          onClose={() => setReviewing(null)}
+          onClose={() => { setReviewing(null); setQueueMode(false); }}
+          onReviewed={queueMode ? () => {
+            // Work out the next one from the list as it stands now: the refetch
+            // that follows drops the one just decided, so an index would skip.
+            const i = reviewList.findIndex((q) => q.submissionId === reviewing?.submissionId);
+            const upcoming = reviewList[i + 1] || null;
+            setReviewing(upcoming);
+            if (!upcoming) { setQueueMode(false); toast.success('That is everything reviewed'); }
+          } : undefined}
           onDone={afterReview}
-          next={mineQueue.length > 1 && reviewIdx >= 0 ? { onClick: () => setReviewing(mineQueue[reviewIdx + 1]), disabled: reviewIdx >= mineQueue.length - 1, position: `${reviewIdx + 1} of ${mineQueue.length}` } : undefined}
-          prev={mineQueue.length > 1 && reviewIdx >= 0 ? { onClick: () => setReviewing(mineQueue[reviewIdx - 1]), disabled: reviewIdx <= 0 } : undefined}
+          next={reviewList.length > 1 && reviewIdx >= 0 ? { onClick: () => setReviewing(reviewList[reviewIdx + 1]), disabled: reviewIdx >= reviewList.length - 1, position: `${reviewIdx + 1} of ${reviewList.length}` } : undefined}
+          prev={reviewList.length > 1 && reviewIdx >= 0 ? { onClick: () => setReviewing(reviewList[reviewIdx - 1]), disabled: reviewIdx <= 0 } : undefined}
         />
       )}
     </div>

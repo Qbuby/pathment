@@ -33,7 +33,7 @@ const rowCls = (on: boolean, disabled: boolean) =>
 /** Who can be given work at all, and why not when they cannot. */
 function blockedReason(m: PoolMemberRow): string | null {
   if (m.decision) return `Already ${m.decision.replace('_', ' ')}`;
-  if (!m.userId) return 'Has not activated their account — gets it automatically when they do';
+  if (!m.userId) return 'Has not activated their account, so they get it automatically when they do';
   return null;
 }
 
@@ -227,7 +227,7 @@ export function AssignWorkDrawer({
             )
           ) : work.length === 0 ? (
             <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-              {data.assignments.length ? 'No work matches that search.' : 'This pool has no work yet — add some on the Work tab.'}
+              {data.assignments.length ? 'No work matches that search.' : 'This round has no work yet. Add some from Manage pool.'}
             </p>
           ) : (
             <ul className="divide-y divide-border">

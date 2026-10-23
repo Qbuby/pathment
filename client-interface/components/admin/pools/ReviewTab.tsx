@@ -84,11 +84,20 @@ function HalfStarRating({ value, onChange }: { value: number | null; onChange: (
   );
 }
 
-export function ReviewDrawer({ poolId, item, onClose, onDone, next, prev }: {
+export function ReviewDrawer({ poolId, item, onClose, onDone, onReviewed, next, prev }: {
   poolId: string;
   item: ReviewQueueItem;
   onClose: () => void;
   onDone: () => void;
+  /**
+   * Queue mode: where to go once this one is decided.
+   *
+   * Without it, deciding closes the drawer, which is right when you opened one
+   * person's work on purpose. Clearing three hundred submissions that way is
+   * three hundred round trips through a list, so the queue passes this and the
+   * next submission simply takes the screen.
+   */
+  onReviewed?: () => void;
   next?: { onClick: () => void; disabled: boolean; position: string };
   prev?: { onClick: () => void; disabled: boolean };
 }) {
@@ -114,20 +123,44 @@ export function ReviewDrawer({ poolId, item, onClose, onDone, next, prev }: {
   const bodyRef = useRef<HTMLDivElement>(null);
   useEffect(() => { bodyRef.current?.parentElement?.scrollTo({ top: 0 }); }, [item.submissionId]);
 
+  /**
+   * Hands stay on the keyboard.
+   *
+   * Rating then deciding is two clicks across opposite corners of the screen,
+   * and in a round of four hundred that is the whole job. Typing is left
+   * alone: the shortcuts only fire when the focus is not in a field, so
+   * writing "approve the rest" in the feedback box does not approve anything.
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+      if (e.key >= '1' && e.key <= '5') { setRating(Number(e.key)); e.preventDefault(); return; }
+      const k = e.key.toLowerCase();
+      if (k === 'a') { e.preventDefault(); void send('approved'); }
+      else if (k === 'r') { e.preventDefault(); void send('changes'); }
+      else if ((k === 'n' || e.key === 'ArrowRight') && next && !next.disabled) { e.preventDefault(); next.onClick(); }
+      else if ((k === 'p' || e.key === 'ArrowLeft') && prev && !prev.disabled) { e.preventDefault(); prev.onClick(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
   const versions = data?.versions || [];
   const current = versions.find((v) => v.id === item.submissionId) || versions[0];
   const earlier = versions.filter((v) => v !== current);
   const addTemplate = (t: string) => setFeedback((p) => (p.trim() ? `${p}\n${t}` : t));
 
   const send = async (decision: 'approved' | 'changes') => {
-    if (rating === null) return toast.error('Give a rating — it is what the pool score is built from');
+    if (rating === null) return toast.error('Give a rating. It is what the score is built from');
     if (decision === 'changes' && !feedback.trim()) return toast.error('Say what needs to change');
     setBusy(decision);
     try {
       await poolApi.review(poolId, item.submissionId, { rating, decision, feedbackText: feedback.trim(), checkedCriteria: checked });
       toast.success(decision === 'approved' ? 'Approved' : 'Changes requested');
       onDone();
-      onClose();
+      if (onReviewed) onReviewed(); else onClose();
     } catch (e) {
       toast.error(extractApiErrorMessage(e, 'Could not save the review'));
     } finally {
@@ -210,7 +243,7 @@ export function ReviewDrawer({ poolId, item, onClose, onDone, next, prev }: {
                 <Coins className="h-3.5 w-3.5" aria-hidden="true" />
                 {worth > 0
                   ? <>Worth up to <span className="font-medium text-slate-700">{pts(worth)}</span> of this candidate&apos;s score{item.required === false ? ', and optional' : ''}</>
-                  : 'Worth no points — this one is practice'}
+                  : 'Worth no points, so this one is practice'}
               </p>
             </div>
 
@@ -263,7 +296,7 @@ export function ReviewDrawer({ poolId, item, onClose, onDone, next, prev }: {
                       ))}
                       {(v.feedback || []).map((f) => (
                         <p key={f.id} className={`rounded-lg px-3 py-1.5 text-xs ${f.isApproved ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>
-                          {f.isApproved ? 'Approved' : 'Changes requested'}{f.rating != null ? ` · ${f.rating}/5` : ''}{f.feedbackText ? ` — ${f.feedbackText}` : ''}
+                          {f.isApproved ? 'Approved' : 'Changes requested'}{f.rating != null ? ` · ${f.rating}/5` : ''}{f.feedbackText ? `: ${f.feedbackText}` : ''}
                         </p>
                       ))}
                     </div>

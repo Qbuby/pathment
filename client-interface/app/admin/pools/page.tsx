@@ -47,7 +47,7 @@ function CreatePoolDrawer({ onClose }: { onClose: () => void }) {
         closesAt: fromLocalInput(form.closesAt),
         qualificationDueAt: fromLocalInput(form.qualificationDueAt),
       });
-      toast.success('Pool created — set up its scoring and work next');
+      toast.success('Pool created. Set up its scoring and work next');
       router.push(workspacePath(`/admin/pools/${pool.id}?tab=settings`));
     } catch (e) {
       toast.error(extractApiErrorMessage(e, 'Could not create the pool'));

@@ -30,13 +30,13 @@ export function OverviewTab({ data, onGo }: { data: PoolDashboard; onGo: (tab: s
   const worthless = live_work.filter((a) => !a.points).length;
 
   const attention = [
-    !live_work.length && { text: 'No qualifying work yet — a score is the points earned, so there is nothing to rank on', tab: 'work' },
+    !live_work.length && { text: 'No qualifying work yet. A score is the points earned, so there is nothing to rank on', tab: 'work' },
     live_work.length > 0 && worthless === live_work.length && { text: 'Every piece of work is worth 0 points, so nobody can be ranked', tab: 'work' },
     live_work.length > 0 && worthless > 0 && worthless < live_work.length && { text: `${worthless} piece${worthless === 1 ? ' of work is' : 's of work are'} worth 0 points`, tab: 'work' },
     needsReview > 0 && { text: `${needsReview} piece${needsReview === 1 ? ' of work is' : 's of work are'} waiting for a review`, tab: 'review' },
-    expiredInvites > 0 && { text: `${expiredInvites} invitation${expiredInvites === 1 ? ' has' : 's have'} expired — resend them`, tab: 'candidates' },
+    expiredInvites > 0 && { text: `${expiredInvites} invitation${expiredInvites === 1 ? ' has' : 's have'} expired, so resend them`, tab: 'candidates' },
     stalled > 0 && { text: `${stalled} candidate${stalled === 1 ? ' has' : 's have'} had no activity${inactivityDays ? ` in ${inactivityDays} days` : ' lately'}`, tab: 'candidates' },
-    failedPlacements > 0 && { text: `${failedPlacements} placement${failedPlacements === 1 ? '' : 's'} failed — fix and retry`, tab: 'placement' },
+    failedPlacements > 0 && { text: `${failedPlacements} placement${failedPlacements === 1 ? '' : 's'} failed, so fix and retry`, tab: 'placement' },
     pendingPlacement > 0 && failedPlacements === 0 && { text: `${pendingPlacement} selected candidate${pendingPlacement === 1 ? '' : 's'} not placed yet`, tab: 'placement' },
   ].filter(Boolean) as { text: string; tab: string }[];
 
@@ -79,15 +79,21 @@ export function OverviewTab({ data, onGo }: { data: PoolDashboard; onGo: (tab: s
           <PanelHeader icon={AlertTriangle} title="Needs attention" count={attention.length} />
           <div className="px-5 pb-5 sm:px-6 sm:pb-6">
             {attention.length === 0 ? (
-              <p className="flex items-center gap-2 rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-                <CheckCircle2 className="h-4 w-4 shrink-0" /> Nothing is waiting on a person right now.
+              <p className="flex items-center gap-2 rounded-2xl border border-border bg-muted/50 px-4 py-3 text-sm text-slate-600">
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" /> Nothing is waiting on a person right now.
               </p>
             ) : (
               <ul className="space-y-2">
                 {attention.map((a) => (
                   <li key={a.text}>
-                    <button onClick={() => onGo(a.tab)} className="flex w-full items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-left text-sm text-amber-900 transition-colors hover:bg-amber-100">
-                      <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" /> <span className="flex-1">{a.text}</span> <ChevronRight className="h-4 w-4 shrink-0" />
+                    {/* One plain surface, like every other list in admin. The
+                        colour used to shout the same thing eight times over,
+                        which made the one row that mattered no louder than the
+                        rest; the count in the header says how many there are. */}
+                    <button onClick={() => onGo(a.tab)} className="flex w-full items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 text-left text-sm text-slate-700 transition-colors hover:bg-muted">
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" aria-hidden="true" />
+                      <span className="flex-1">{a.text}</span>
+                      <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />
                     </button>
                   </li>
                 ))}

@@ -241,7 +241,7 @@ export function RoadmapStepPicker({
       {!loading && (roadmaps || []).length > 0 && (
         <p className="mt-2 flex items-start gap-1.5 text-[11px] text-muted-foreground">
           <Route className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
-          Each step keeps its own brief and checks. Points come from its difficulty — change them per piece on the Work tab.
+          Each step keeps its own brief and checks. Points come from its difficulty, and you can change them per piece afterwards.
         </p>
       )}
     </div>
