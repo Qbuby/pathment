@@ -156,7 +156,7 @@ class TalksService {
     const { url, urlKey } = this.normalizeUrl(rawUrl);
     const existing = await models.Talk.findOne({
       where: { urlKey },
-      attributes: ['id', 'title', 'speaker', 'url', 'thumbnailUrl']
+      attributes: ['id', 'title', 'speaker', 'url', 'thumbnailUrl', 'durationMins']
     });
     const metadata = await fetchVideoMetadata(url);
     return {
@@ -167,7 +167,8 @@ class TalksService {
         title: existing.title,
         speaker: existing.speaker,
         url: existing.url,
-        thumbnailUrl: existing.thumbnailUrl
+        thumbnailUrl: existing.thumbnailUrl,
+        durationMins: existing.durationMins
       } : null,
       metadata
     };
@@ -179,7 +180,7 @@ class TalksService {
     const categoryIds = await this._validCategoryIds(data.categoryIds);
 
     let autoMeta = null;
-    if (!data.title || !data.thumbnailUrl || !data.speaker || !data.description) {
+    if (!data.title || !data.thumbnailUrl || !data.speaker || !data.description || !data.durationMins) {
       try {
         autoMeta = await fetchVideoMetadata(url);
       } catch (_) {}
@@ -189,7 +190,7 @@ class TalksService {
       title: data.title || autoMeta?.title,
       speaker: data.speaker !== undefined ? data.speaker : autoMeta?.speaker,
       description: data.description !== undefined ? data.description : autoMeta?.description,
-      durationMins: data.durationMins,
+      durationMins: (data.durationMins !== undefined && data.durationMins !== null && data.durationMins !== '') ? data.durationMins : (autoMeta?.durationMins || null),
       thumbnailUrl: data.thumbnailUrl || autoMeta?.thumbnailUrl || null
     };
 

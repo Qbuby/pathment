@@ -7,6 +7,7 @@ import { talksApi } from '@/lib/services/talks-api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { toExternalHref } from '@/lib/utils/url';
 import { toast } from 'sonner';
+import { VideoPlayerModal } from '@/components/shared/VideoPlayerModal';
 
 export interface TalkReviewSectionProps {
   talks: Array<{
@@ -56,6 +57,7 @@ function SingleTalkCard({
     ratingsCount?: number;
   };
 }) {
+  const [isPlaying, setIsPlaying] = useState(false);
   const [userRating, setUserRating] = useState<number>(0);
   const [hoverRating, setHoverRating] = useState<number>(0);
   const [feedback, setFeedback] = useState<string>('');
@@ -89,6 +91,16 @@ function SingleTalkCard({
   };
 
   return (
+    <>
+      {isPlaying && (
+        <VideoPlayerModal
+          open={isPlaying}
+          onClose={() => setIsPlaying(false)}
+          title={talk.title}
+          speaker={talk.speaker}
+          url={talk.url}
+        />
+      )}
     <div className="rounded-2xl border border-brand-200 dark:border-brand-500/20 bg-card overflow-hidden shadow-xs">
       <div className="grid md:grid-cols-5 gap-4 p-5">
         {/* Cover / Thumbnail */}
@@ -104,17 +116,16 @@ function SingleTalkCard({
               <Video className="w-12 h-12" />
             </div>
           )}
-          <a
-            href={toExternalHref(talk.url)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="absolute inset-0 bg-black/15 hover:bg-black/30 transition-colors flex items-center justify-center group"
-            title="Watch talk"
+          <button
+            type="button"
+            onClick={() => setIsPlaying(true)}
+            className="absolute inset-0 bg-black/15 hover:bg-black/30 transition-colors flex items-center justify-center group cursor-pointer"
+            title="Watch talk in Pathment"
           >
             <span className="w-11 h-11 rounded-full bg-white/90 text-slate-900 flex items-center justify-center shadow-md group-hover:scale-110 transition-transform">
               <Play className="w-5 h-5 fill-slate-900 ml-0.5" />
             </span>
-          </a>
+          </button>
           {talk.durationMins && (
             <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded-md bg-black/75 text-white text-[11px] font-semibold">
               {talk.durationMins}m
@@ -126,15 +137,13 @@ function SingleTalkCard({
         <div className="md:col-span-3 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between gap-2">
-              <a
-                href={toExternalHref(talk.url)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-base font-semibold text-foreground hover:text-brand-600 transition-colors flex items-center gap-1.5"
+              <button
+                type="button"
+                onClick={() => setIsPlaying(true)}
+                className="text-base font-semibold text-foreground hover:text-brand-600 transition-colors flex items-center gap-1.5 text-left cursor-pointer"
               >
                 <span>{talk.title}</span>
-                <ExternalLink className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-              </a>
+              </button>
             </div>
 
             {talk.speaker && (
@@ -161,14 +170,24 @@ function SingleTalkCard({
               )}
             </div>
 
-            <a
-              href={toExternalHref(talk.url)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-xs font-medium transition-colors shadow-xs"
-            >
-              <Play className="w-3 h-3 fill-white" /> Watch Talk
-            </a>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsPlaying(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-xs font-medium transition-colors shadow-xs cursor-pointer"
+              >
+                <Play className="w-3 h-3 fill-white" /> Watch in Pathment
+              </button>
+              <a
+                href={toExternalHref(talk.url)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                title="Open on host site"
+              >
+                <ExternalLink className="w-4 h-4" />
+              </a>
+            </div>
           </div>
         </div>
       </div>
@@ -230,5 +249,6 @@ function SingleTalkCard({
         )}
       </div>
     </div>
+    </>
   );
 }

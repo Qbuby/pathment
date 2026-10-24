@@ -12,7 +12,9 @@ export interface TalkReview {
   feedback?: string | null;
   user?: {
     id: string;
-    name: string;
+    firstName?: string;
+    lastName?: string;
+    name?: string;
   } | null;
   createdAt: string;
 }
@@ -60,12 +62,14 @@ export interface ResolveUrlResult {
     speaker?: string | null;
     url: string;
     thumbnailUrl?: string | null;
+    durationMins?: number | null;
   } | null;
   metadata: {
     title?: string | null;
     speaker?: string | null;
     thumbnailUrl?: string | null;
     description?: string | null;
+    durationMins?: number | null;
   };
 }
 
@@ -80,14 +84,17 @@ export const talksApi = {
     return apiClient.get(query ? `/talks?${query}` : '/talks');
   },
   get: (id: string) => apiClient.get(`/talks/${id}`),
-  resolveUrl: (url: string) => apiClient.get<ResolveUrlResult>(`/talks/resolve-url?url=${encodeURIComponent(url)}`),
+  resolveUrl: (url: string) =>
+    apiClient
+      .get<{ success?: boolean; data?: ResolveUrlResult } & ResolveUrlResult>(`/talks/resolve-url?url=${encodeURIComponent(url)}`)
+      .then((res) => ((res.data?.metadata || res.data?.exists !== undefined ? res.data : res) as ResolveUrlResult)),
   create: (data: TalkInput) => apiClient.post('/talks', data),
   update: (id: string, data: Partial<TalkInput>) => apiClient.patch(`/talks/${id}`, data),
   remove: (id: string) => apiClient.delete(`/talks/${id}`),
 
   getReviews: (talkId: string) => apiClient.get<{ reviews: TalkReview[] }>(`/talks/${talkId}/reviews`),
   addReview: (talkId: string, data: { rating: number; feedback?: string }) =>
-    apiClient.post(`/talks/${talkId}/reviews`, data),
+    apiClient.post<{ talk: TalkItem; review: TalkReview }>(`/talks/${talkId}/reviews`, data),
 
   listCategories: () => apiClient.get('/talks/categories'),
   createCategory: (name: string) => apiClient.post('/talks/categories', { name }),

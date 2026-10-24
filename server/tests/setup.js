@@ -114,7 +114,8 @@ jest.mock('../src/utils/videoMetadata', () => ({
       title: 'Simple made easy',
       speaker: 'Rich Hickey',
       thumbnailUrl: ytId ? `https://img.youtube.com/vi/${ytId}/hqdefault.jpg` : 'https://img.youtube.com/vi/mock/hqdefault.jpg',
-      description: 'A mock talk description for tests'
+      description: 'A mock talk description for tests',
+      durationMins: 45
     };
   })
 }));

@@ -20,15 +20,18 @@ import {
   Play,
   AlertCircle,
   X,
+  MessageSquare,
 } from 'lucide-react';
 import { useTalks, type TalkItem, type TalkCategory } from '@/lib/hooks/mentor/useTalks';
-import { talksApi, type ResolveUrlResult } from '@/lib/services/talks-api';
+import { talksApi } from '@/lib/services/talks-api';
 import { Drawer } from '@/components/shared/Drawer';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { useConfirm } from '@/lib/context/ConfirmContext';
 import { toExternalHref } from '@/lib/utils/url';
 import { useDebounce } from '@/lib/hooks/useDebounce';
 import { usePermissions } from '@/lib/hooks/usePermissions';
+import { VideoPlayerModal } from '@/components/shared/VideoPlayerModal';
+import { TalkReviewsDrawer } from '@/components/shared/talks/TalkReviewsDrawer';
 
 export default function TalksView() {
   const confirm = useConfirm();
@@ -53,13 +56,15 @@ export default function TalksView() {
 
   const [editingTalk, setEditingTalk] = useState<TalkItem | 'new' | null>(null);
   const [categoriesDrawerOpen, setCategoriesDrawerOpen] = useState(false);
+  const [playingTalk, setPlayingTalk] = useState<TalkItem | null>(null);
+  const [reviewingTalk, setReviewingTalk] = useState<TalkItem | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   const handleDeleteTalk = async (talk: TalkItem) => {
     if (
       await confirm({
         title: 'Delete this talk?',
-        message: `"${talk.title}" will be permanently removed from the library.`,
+        description: `"${talk.title}" will be permanently removed from the library.`,
         variant: 'danger',
         confirmLabel: 'Delete',
       })
@@ -180,6 +185,8 @@ export default function TalksView() {
               busy={busy === t.id}
               onEdit={() => setEditingTalk(t)}
               onDelete={() => handleDeleteTalk(t)}
+              onPlay={() => setPlayingTalk(t)}
+              onOpenReviews={() => setReviewingTalk(t)}
             />
           ))}
         </div>
@@ -208,6 +215,27 @@ export default function TalksView() {
           }}
         />
       )}
+
+      {playingTalk && (
+        <VideoPlayerModal
+          open={Boolean(playingTalk)}
+          onClose={() => setPlayingTalk(null)}
+          title={playingTalk.title}
+          speaker={playingTalk.speaker}
+          url={playingTalk.url}
+        />
+      )}
+
+      {reviewingTalk && (
+        <TalkReviewsDrawer
+          talk={reviewingTalk}
+          onClose={() => setReviewingTalk(null)}
+          onPlay={(t) => setPlayingTalk(t)}
+          onTalkUpdated={() => {
+            refetch();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -217,11 +245,15 @@ function TalkCard({
   busy,
   onEdit,
   onDelete,
+  onPlay,
+  onOpenReviews,
 }: {
   talk: TalkItem;
   busy: boolean;
   onEdit: () => void;
   onDelete: () => void;
+  onPlay: () => void;
+  onOpenReviews: () => void;
 }) {
   return (
     <div className="group relative bg-card rounded-3xl border border-border overflow-hidden flex flex-col transition-all hover:shadow-md hover:border-brand-300 dark:hover:border-brand-600">
@@ -239,15 +271,14 @@ function TalkCard({
           </div>
         )}
         <div className="absolute inset-0 bg-black/10 group-hover:bg-black/25 transition-colors flex items-center justify-center">
-          <a
-            href={toExternalHref(talk.url)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-11 h-11 rounded-full bg-white/90 text-slate-900 flex items-center justify-center shadow-lg opacity-85 group-hover:opacity-100 group-hover:scale-110 transition-all"
-            title="Watch talk"
+          <button
+            type="button"
+            onClick={onPlay}
+            className="w-11 h-11 rounded-full bg-white/90 text-slate-900 flex items-center justify-center shadow-lg opacity-85 group-hover:opacity-100 group-hover:scale-110 transition-all cursor-pointer"
+            title="Play video in Pathment"
           >
             <Play className="w-5 h-5 fill-slate-900 ml-0.5" />
-          </a>
+          </button>
         </div>
         {talk.durationMins ? (
           <span className="absolute bottom-2.5 right-2.5 px-2 py-0.5 rounded-md bg-black/75 text-white text-[11px] font-semibold backdrop-blur-xs flex items-center gap-1">
@@ -289,27 +320,27 @@ function TalkCard({
               </span>
             ))}
           </div>
-          {talk.ratingsCount > 0 ? (
-            <div className="inline-flex items-center gap-1 text-xs font-semibold text-amber-600 dark:text-amber-400 shrink-0">
-              <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
-              <span>{talk.rating.toFixed(1)}</span>
-              <span className="text-slate-400 text-[11px] font-normal">({talk.ratingsCount})</span>
-            </div>
-          ) : (
-            <span className="text-[11px] text-slate-400 shrink-0">No ratings yet</span>
-          )}
+          <button
+            type="button"
+            onClick={onOpenReviews}
+            className="inline-flex items-center gap-1 text-xs font-semibold text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 hover:underline shrink-0 transition-colors"
+            title="View or leave feedback & rating"
+          >
+            <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+            <span>{talk.ratingsCount > 0 ? talk.rating.toFixed(1) : 'Rate'}</span>
+            <span className="text-slate-400 text-[11px] font-normal">({talk.ratingsCount || 0})</span>
+          </button>
         </div>
 
-        <a
-          href={toExternalHref(talk.url)}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="block text-left group-hover:text-brand-700 dark:group-hover:text-brand-400 transition-colors"
+        <button
+          type="button"
+          onClick={onPlay}
+          className="block text-left group-hover:text-brand-700 dark:group-hover:text-brand-400 transition-colors w-full cursor-pointer"
         >
           <h3 className="text-base font-semibold text-foreground leading-snug line-clamp-2">
             {talk.title}
           </h3>
-        </a>
+        </button>
 
         {talk.speaker && (
           <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-1.5 flex items-center gap-1">
@@ -324,18 +355,30 @@ function TalkCard({
         )}
 
         <div className="mt-auto pt-4 border-t border-border flex items-center justify-between text-xs text-slate-400">
-          {talk.uploaderName && (
-            <span className="truncate max-w-[140px]" title={`Added by ${talk.uploaderName}`}>
-              By {talk.uploaderName}
-            </span>
-          )}
+          <button
+            type="button"
+            onClick={onPlay}
+            className="inline-flex items-center gap-1 text-brand-600 hover:text-brand-700 dark:text-brand-400 font-medium transition-colors"
+          >
+            <Play className="w-3 h-3 fill-current" />
+            <span>Play</span>
+          </button>
+          <button
+            type="button"
+            onClick={onOpenReviews}
+            className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300 hover:text-brand-600 dark:hover:text-brand-400 font-medium transition-colors"
+          >
+            <MessageSquare className="w-3 h-3" />
+            <span>Feedback</span>
+          </button>
           <a
             href={toExternalHref(talk.url)}
             target="_blank"
             rel="noopener noreferrer"
-            className="ml-auto inline-flex items-center gap-1 text-brand-600 hover:text-brand-700 dark:text-brand-400 font-medium transition-colors"
+            className="inline-flex items-center gap-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+            title="Open in new tab"
           >
-            Watch <ExternalLink className="w-3.5 h-3.5" />
+            <ExternalLink className="w-3 h-3" />
           </a>
         </div>
       </div>
@@ -373,16 +416,16 @@ function TalkEditorDrawer({
     setResolvingUrl(true);
     setConflictTalk(null);
     try {
-      const res = await talksApi.resolveUrl(trimmed);
-      const data: ResolveUrlResult = res.data;
-      if (data.exists && data.existingTalk && data.existingTalk.id !== talk?.id) {
+      const data = await talksApi.resolveUrl(trimmed);
+      if (data?.exists && data?.existingTalk && data.existingTalk.id !== talk?.id) {
         setConflictTalk(data.existingTalk);
       }
-      if (data.metadata) {
+      if (data?.metadata) {
         if (!title.trim() && data.metadata.title) setTitle(data.metadata.title);
         if (!speaker.trim() && data.metadata.speaker) setSpeaker(data.metadata.speaker);
         if (!description.trim() && data.metadata.description) setDescription(data.metadata.description);
         if (!thumbnailUrl && data.metadata.thumbnailUrl) setThumbnailUrl(data.metadata.thumbnailUrl);
+        if (!durationMins && data.metadata.durationMins) setDurationMins(String(data.metadata.durationMins));
       }
     } catch {
     } finally {
@@ -511,8 +554,18 @@ function TalkEditorDrawer({
             <input
               value={url}
               onChange={(e) => {
-                setUrl(e.target.value);
+                const val = e.target.value;
+                setUrl(val);
                 setConflictTalk(null);
+                if (/^https?:\/\/.+/i.test(val.trim())) {
+                  resolveVideoUrl(val);
+                }
+              }}
+              onPaste={(e) => {
+                const pasted = e.clipboardData.getData('text');
+                if (/^https?:\/\/.+/i.test(pasted.trim())) {
+                  resolveVideoUrl(pasted);
+                }
               }}
               onBlur={() => resolveVideoUrl(url)}
               placeholder="https://youtube.com/watch?v=..."
@@ -660,7 +713,7 @@ function CategoriesManagerDrawer({
     if (
       await confirm({
         title: `Delete category "${cat.name}"?`,
-        message: 'Categories with existing talks cannot be deleted until the talks are moved.',
+        description: 'Categories with existing talks cannot be deleted until the talks are moved.',
         variant: 'danger',
         confirmLabel: 'Delete',
       })
