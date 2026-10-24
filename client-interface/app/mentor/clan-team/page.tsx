@@ -127,6 +127,9 @@ function ClanTeamCard({ clanId, myRole }: { clanId: string; myRole: string }) {
   const [permMember, setPermMember] = useState<Member | null>(null);
   const [canManageTeam, setCanManageTeam] = useState(myRole === 'lead_mentor');
   const [canAddMentees, setCanAddMentees] = useState(myRole === 'lead_mentor');
+  // Handing the clan on survives a frozen cohort, so it is tracked separately
+  // from canManageTeam, which does not.
+  const [canHandOver, setCanHandOver] = useState(myRole === 'lead_mentor');
   const [canEditAvatar, setCanEditAvatar] = useState(myRole === 'lead_mentor' || myRole === 'co_mentor');
   const confirm = useConfirm();
 
@@ -148,10 +151,12 @@ function ClanTeamCard({ clanId, myRole }: { clanId: string; myRole: string }) {
         if (access) {
           setCanManageTeam(Boolean(access.canManageTeam));
           setCanAddMentees(Boolean(access.canAddMentees));
+          setCanHandOver(Boolean(access.canHandOver));
           setCanEditAvatar(Boolean(access.canEditAvatar));
         } else {
           setCanManageTeam(myRole === 'lead_mentor');
           setCanAddMentees(myRole === 'lead_mentor');
+          setCanHandOver(myRole === 'lead_mentor');
           setCanEditAvatar(myRole === 'lead_mentor' || myRole === 'co_mentor');
         }
       })
@@ -308,33 +313,40 @@ function ClanTeamCard({ clanId, myRole }: { clanId: string; myRole: string }) {
             <p className="text-sm text-slate-500">{clan.program?.name} · {menteeCount} mentee{menteeCount === 1 ? '' : 's'}</p>
           </div>
         </div>
-        {canManageTeam ? (
-          <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
+          {canManageTeam && (
+            <>
+              <button onClick={() => setAddingMentees(true)} disabled={historical} title={historical ? HISTORICAL_TITLE : undefined} className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 dark:bg-brand-500/15 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-100 disabled:opacity-50">
+                <Users2 className="w-4 h-4" /> Add mentees
+              </button>
+              <button onClick={() => setAdding(true)} disabled={historical} title={historical ? HISTORICAL_TITLE : undefined} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
+                <UserPlus className="w-4 h-4" /> Add to team
+              </button>
+            </>
+          )}
+          {!canManageTeam && canAddMentees && (
             <button onClick={() => setAddingMentees(true)} disabled={historical} title={historical ? HISTORICAL_TITLE : undefined} className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 dark:bg-brand-500/15 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-100 disabled:opacity-50">
               <Users2 className="w-4 h-4" /> Add mentees
             </button>
-            <button onClick={() => setAdding(true)} disabled={historical} title={historical ? HISTORICAL_TITLE : undefined} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
-              <UserPlus className="w-4 h-4" /> Add to team
+          )}
+          {/*
+            * Deliberately outside the manage-team branch, and never disabled
+            * for a historical clan. A closed cohort is precisely when a mentor
+            * needs this - the programme has ended and somebody else should
+            * pick these people up - and it writes nothing to the clan: the
+            * mentees stay in it, with their work, until another mentor takes
+            * them. Riding on canManageTeam hid it on every frozen clan, which
+            * is the only place it was ever meant to matter.
+            */}
+          {canHandOver && menteeCount > 0 && (
+            <button onClick={() => setHandingOverClan(true)} title="Offer these mentees to another clan" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-card px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+              <HandHeart className="w-4 h-4" /> Hand over clan
             </button>
-            {/*
-              * Deliberately NOT disabled when the clan is historical. This is
-              * the action a mentor needs most once a programme has closed and
-              * they are not continuing, and it writes nothing to the clan -
-              * the mentees stay in it until somebody takes them.
-              */}
-            {menteeCount > 0 && (
-              <button onClick={() => setHandingOverClan(true)} title="Offer these mentees to another clan" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-card px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-                <HandHeart className="w-4 h-4" /> Hand over clan
-              </button>
-            )}
-          </div>
-        ) : canAddMentees ? (
-          <button onClick={() => setAddingMentees(true)} disabled={historical} title={historical ? HISTORICAL_TITLE : undefined} className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 dark:bg-brand-500/15 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-100 shrink-0 disabled:opacity-50">
-            <Users2 className="w-4 h-4" /> Add mentees
-          </button>
-        ) : (
-          <span className="text-xs text-slate-400 shrink-0">View only (co-mentor)</span>
-        )}
+          )}
+          {!canManageTeam && !canAddMentees && !canHandOver && (
+            <span className="text-xs text-slate-400">View only (co-mentor)</span>
+          )}
+        </div>
       </div>
 
       <PushToPoolDrawer

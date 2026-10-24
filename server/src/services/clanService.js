@@ -622,10 +622,26 @@ class ClanService {
     const clan = await models.Clan.findByPk(clanId, { attributes: ['kind', 'frozenAt'] });
     const readOnly = clan?.kind !== 'standing' && Boolean(clan?.frozenAt);
     const canEditAvatar = !readOnly && await avatarService.canEditAvatar(clanId, user);
+
+    /**
+     * Handing the mentees on is deliberately NOT suppressed by `readOnly`.
+     *
+     * A frozen cohort is exactly when a mentor needs it: the programme has
+     * closed, they are not carrying on, and somebody else should pick these
+     * people up. It also writes nothing to this clan - the mentees stay in it,
+     * with their work, until another mentor actually takes them - so the
+     * read-only guarantee is untouched.
+     *
+     * It used to ride on `canManageTeam`, which IS zeroed out by `readOnly`,
+     * so the button vanished from the only clans it was written for.
+     */
+    const canHandOver = await authzService.can(user, P.MENTEE_TRANSFER, resource);
+
     return {
       role,
       canManageTeam: canManageTeam && !readOnly,
       canAddMentees: canAddMentees && !readOnly,
+      canHandOver,
       canEditAvatar,
       readOnly,
       permissions: permissions.sort(),

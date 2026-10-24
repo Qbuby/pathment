@@ -38,11 +38,26 @@ exports.getEnrollments = catchAsync(async (req, res) => {
     if (!privileged) filters.menteeId = req.user.id;
   }
 
-  // A program_admin sees only their programs' enrollments (org admins: all).
-  const programScope = await authzService.adminProgramScope(req.user, {
+  /**
+   * Bound the rows to what this person can see IN THE PORTAL THEY HAVE OPEN.
+   *
+   * This used to apply `adminProgramScope` alone, which answers "which
+   * programmes do they ADMINISTER" and knows nothing about the hat they are
+   * wearing. Somebody who administers one programme and mentors a clan in
+   * another therefore had their mentor reads narrowed to their admin
+   * programme: opening one of their own mentees on /mentor/mentees returned
+   * zero enrolments and the page said "Mentee not found. This mentee is not in
+   * any of your clans" - about a mentee who was in their clan, whose profile
+   * they had just been authorised to view two lines above.
+   *
+   * `programScopeFor` is the one answer every surface asks. Under the mentor
+   * hat it is the programmes of the clans they mentor; under the admin hat it
+   * is the programmes they administer; an org-tier admin is unrestricted.
+   */
+  const scope = await authzService.programScopeFor(req.user, null, {
     assignments: req.loadAssignments ? await req.loadAssignments() : undefined
   });
-  if (Array.isArray(programScope) && programScope.length) filters.programIds = programScope;
+  if (!scope.unrestricted && scope.programIds.length) filters.programIds = scope.programIds;
 
   const pagination = { page: parseInt(page) || 1, limit: parseInt(limit) || 20 };
 
