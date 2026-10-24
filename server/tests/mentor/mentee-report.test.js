@@ -162,4 +162,88 @@ describe('mentee period report', () => {
     const report = await service.build({ menteeId: '00000000-0000-0000-0000-000000000000' });
     expect(report).toBeNull();
   });
+
+  /**
+   * A percentage is a claim a reader cannot check and a mentee cannot act on.
+   * The report has to be able to say WHICH steps, including the ones never
+   * handed out: "not given out yet" and "given out and abandoned" look
+   * identical in a progress bar and could not be more different in a review.
+   */
+  it('names every step of the roadmap, not only the ones handed out', async () => {
+    await seedWork();
+    const report = await service.build({
+      menteeId: mentee.id, clanId: clan.id, from: iso(2026, 8, 1), to: iso(2026, 9, 30),
+    });
+    const core = report.roadmaps.find((r) => r.name === 'Core');
+    expect(core.tasks).toHaveLength(4);
+    expect(core.tasks.map((t) => t.title)).toEqual(['Step 1', 'Step 2', 'Step 3', 'Step 4']);
+    expect(core.tasks.filter((t) => t.state === 'completed')).toHaveLength(3);
+    // The fourth was never assigned, which is not the same as "not started".
+    expect(core.tasks[3].state).toBe('not_assigned');
+    expect(core.tasks[0].rating).toBe(4);
+  });
+
+  it('describes a step by where it stood at the END of the period', async () => {
+    await seedWork();
+    const august = await service.build({
+      menteeId: mentee.id, clanId: clan.id, from: iso(2026, 8, 1), to: iso(2026, 8, 31),
+    });
+    const core = august.roadmaps.find((r) => r.name === 'Core');
+    // Finished on 12 September, so in August's report it is not done yet.
+    expect(core.tasks[2].state).not.toBe('completed');
+    expect(core.tasks[2].completedAt).toBeNull();
+  });
+
+  /**
+   * The batch path is the one a clan or a programme report actually takes.
+   * It used to be a loop over the single builder, and the single builder ranks
+   * its subject against the whole programme - so a clan of twenty asked the
+   * scoring engine to rank the programme twenty times and the request died on
+   * the client's timeout. Whatever it does now, it has to agree with the
+   * single report it replaced.
+   */
+  it('builds for several people at once and agrees with the single report', async () => {
+    await seedWork();
+    const second = await createMentee({ email: `rep-mentee2-${Date.now()}@test.com` });
+    await clanService.addMember(clan.id, { userId: second.id, role: 'mentee' });
+    await createEnrollment({ menteeId: second.id, programId: program.id, status: 'active' });
+
+    const window = { from: iso(2026, 8, 1), to: iso(2026, 9, 30), clanId: clan.id };
+    const many = await service.buildMany([mentee.id, second.id], window);
+    expect(many).toHaveLength(2);
+
+    const alone = await service.build({ menteeId: mentee.id, ...window });
+    const fromBatch = many.find((r) => r.mentee.id === mentee.id);
+    expect(fromBatch.progress.absolute).toBe(alone.progress.absolute);
+    expect(fromBatch.activity.completed).toBe(alone.activity.completed);
+    expect(fromBatch.standing.inClan).toEqual(alone.standing.inClan);
+    expect(fromBatch.roadmaps).toEqual(alone.roadmaps);
+  });
+
+  /**
+   * The cost of the batch must not grow with the number of people in it. This
+   * is the actual regression guard: a per-mentee leaderboard call is what made
+   * a twenty-person clan time out, and nothing about the output would reveal
+   * it had come back.
+   */
+  it('does not rank the clan once per mentee', async () => {
+    await seedWork();
+    const performanceService = require('../../src/services/performanceService');
+    const extras = [];
+    for (let i = 0; i < 4; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const extra = await createMentee({ email: `rep-bulk-${i}-${Date.now()}@test.com` });
+      // eslint-disable-next-line no-await-in-loop
+      await clanService.addMember(clan.id, { userId: extra.id, role: 'mentee' });
+      extras.push(extra.id);
+    }
+
+    const spy = jest.spyOn(performanceService, 'leaderboard');
+    await service.buildMany([mentee.id, ...extras], {
+      from: iso(2026, 8, 1), to: iso(2026, 9, 30), clanId: clan.id,
+    });
+    // One for the clan, at most one more for the programme - never per person.
+    expect(spy.mock.calls.length).toBeLessThanOrEqual(2);
+    spy.mockRestore();
+  });
 });

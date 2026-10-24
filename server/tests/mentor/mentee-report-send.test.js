@@ -153,4 +153,55 @@ describe('sending mentee reports outward', () => {
     const audience = await service.resolveAudience(admin, { programId: program.id });
     expect(audience.menteeIds.sort()).toEqual([mine.id, theirs.id].sort());
   });
+
+  // ── what the sender writes ───────────────────────────────────────────────
+
+  /**
+   * Numbers do not explain a quiet month, and the person reading this cannot
+   * log in and ask. So the sender gets one line for everybody and a line of
+   * their own for whoever needs something said about them specifically.
+   */
+  it('puts a note about one mentee alongside that mentee, not everybody', async () => {
+    const result = await service.sendReports(mentor, {
+      recipients: ['funder@example.com'],
+      clanId: myClan.id,
+      note: 'Covering note for the clan',
+      notes: { [mine.id]: 'Away for a family emergency in week two.' },
+    });
+    expect(result.notes).toBe(1);
+    const [payload] = emailService.enqueue.mock.calls[0];
+    expect(payload.html).toContain('Covering note for the clan');
+    expect(payload.html).toContain('family emergency');
+    expect(payload.text).toContain('family emergency');
+  });
+
+  /** A note keyed to somebody outside the audience must not be mailed out. */
+  it('drops a note for a mentee the caller cannot report on', async () => {
+    const result = await service.sendReports(mentor, {
+      recipients: ['funder@example.com'],
+      clanId: myClan.id,
+      notes: { [theirs.id]: 'Should never leave the building' },
+    });
+    expect(result.notes).toBe(0);
+    const [payload] = emailService.enqueue.mock.calls[0];
+    expect(payload.html).not.toContain('Should never leave the building');
+  });
+
+  it('ignores a note that is only whitespace', async () => {
+    const result = await service.sendReports(mentor, {
+      recipients: ['funder@example.com'], clanId: myClan.id, notes: { [mine.id]: '   ' },
+    });
+    expect(result.notes).toBe(0);
+  });
+
+  it('escapes a note rather than letting it write the email', async () => {
+    await service.sendReports(mentor, {
+      recipients: ['funder@example.com'],
+      clanId: myClan.id,
+      notes: { [mine.id]: '<script>alert(1)</script>' },
+    });
+    const [payload] = emailService.enqueue.mock.calls[0];
+    expect(payload.html).not.toContain('<script>');
+    expect(payload.html).toContain('&lt;script&gt;');
+  });
 });

@@ -22,11 +22,14 @@ const looksLikeEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v
 
 export function SendReportsDrawer({
   count,
+  noteCount = 0,
   sending,
   onSend,
   trigger,
 }: {
   count: number;
+  /** How many of the selected reports already carry a note of their own. */
+  noteCount?: number;
   sending: boolean;
   onSend: (recipients: string[], note: string) => Promise<boolean>;
   trigger: (open: () => void) => React.ReactNode;
@@ -142,7 +145,7 @@ export function SendReportsDrawer({
 
           <div>
             <label htmlFor="report-note" className="text-sm font-medium text-foreground">
-              Note <span className="font-normal text-muted-foreground">(optional)</span>
+              A line for everybody <span className="font-normal text-muted-foreground">(optional)</span>
             </label>
             <textarea
               id="report-note"
@@ -153,7 +156,14 @@ export function SendReportsDrawer({
               className="mt-1.5 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
             <p className="mt-1 text-xs text-muted-foreground">
-              Appears at the top of the email, above the table.
+              Appears once at the top of the email, above everybody.
+              {noteCount > 0 && (
+                <>
+                  {' '}
+                  {noteCount} of these report{noteCount === 1 ? '' : 's'} also carry a note of their
+                  own, which stays with that person.
+                </>
+              )}
             </p>
           </div>
 
@@ -170,8 +180,8 @@ export function SendReportsDrawer({
             */}
           <p className="rounded-xl border border-border bg-muted/40 p-3 text-xs leading-5 text-muted-foreground">
             They will receive each mentee&apos;s name, overall progress, what was finished in the
-            period, their on-time rate and their place in the clan. Every send is recorded against
-            your account.
+            period, their on-time rate, their place in the clan, where they are up to on their
+            roadmap and any note you wrote about them. Every send is recorded against your account.
           </p>
         </div>
       </Drawer>

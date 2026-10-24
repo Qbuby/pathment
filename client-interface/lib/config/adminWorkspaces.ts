@@ -157,6 +157,14 @@ export const adminWorkspaces: { label: string; tabs: AdminWorkspaceTab[] }[] = [
     label: "Insights",
     tabs: [
       {
+        // Gated on mentee.view rather than analytics.view: this shows one
+        // person's work by name, which is a different thing from seeing the
+        // numbers in aggregate.
+        href: "/admin/reports",
+        label: "Reports",
+        permission: "mentee.view",
+      },
+      {
         href: "/admin/insights",
         label: "Overview",
         permission: "analytics.view",
@@ -170,14 +178,6 @@ export const adminWorkspaces: { label: string; tabs: AdminWorkspaceTab[] }[] = [
         href: "/admin/follow-ups",
         label: "Follow-ups",
         permission: "analytics.view",
-      },
-      {
-        // Gated on mentee.view rather than analytics.view: this shows one
-        // person's work by name, which is a different thing from seeing the
-        // numbers in aggregate.
-        href: "/admin/reports",
-        label: "Reports",
-        permission: "mentee.view",
       },
     ],
   },

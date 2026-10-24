@@ -77,6 +77,9 @@ const sendMenteeReports = catchAsync(async (req, res) => {
     from: req.body.from,
     to: req.body.to,
     note: req.body.note,
+    // One line for everybody, plus whatever the sender wrote about particular
+    // people. Keyed by mentee id; ids outside the audience are dropped.
+    notes: req.body.notes,
   });
   res.status(200).json(successResponse('Reports sent', result));
 });
