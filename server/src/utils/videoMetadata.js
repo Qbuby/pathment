@@ -71,16 +71,36 @@ async function fetchVideoMetadata(rawUrl) {
 
     try {
       const pageRes = await axios.get(`https://www.youtube.com/watch?v=${ytId}`, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+        // A full desktop UA and an explicit language: without them YouTube is
+        // free to answer with a stripped page in a language picked from the
+        // caller's IP, which is how an Urdu site blurb ended up on a TED talk.
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
         timeout: 4500,
       });
       const html = String(pageRes.data || '');
-      const metaDesc = html.match(/meta\s+name=["']description["']\s+content=["']([^"']+)["']/i) ||
-                       html.match(/meta\s+property=["']og:description["']\s+content=["']([^"']+)["']/i);
-      if (metaDesc && metaDesc[1]) {
-        description = decodeEntities(metaDesc[1]).trim().slice(0, 1000);
+      /**
+       * The real description, not the SEO blurb.
+       *
+       * The watch page carries two of them. `<meta name="description">` is
+       * built for search results and is cut to about 160 characters, so a
+       * TED talk arrived as "Visit http://TED.com to get our entire library
+       * of TED Talks..." and then stopped mid-sentence - which is what made
+       * the seeded library look fabricated. `shortDescription`, inside the
+       * player JSON the page ships to its own client, is the description the
+       * uploader actually wrote: 1686 characters for the same talk.
+       *
+       * The meta tag stays as the fallback for the pages that arrive without
+       * the player JSON.
+       */
+      const shortDesc = html.match(/"shortDescription":"((?:[^"\\]|\\.)*)"/);
+      if (shortDesc && shortDesc[1]) {
+        try {
+          description = JSON.parse(`"${shortDesc[1]}"`).trim().slice(0, 2000);
+        } catch (_) { /* fall through to the meta tag */ }
       }
-
       const lenSec = html.match(/["']lengthSeconds["']:\s*["']?(\d+)["']?/i);
       const approx = html.match(/["']approxDurationMs["']:\s*["']?(\d+)["']?/i);
       const iso = html.match(/itemprop=["']duration["']\s+content=["']([^"']+)["']/i);
@@ -91,6 +111,26 @@ async function fetchVideoMetadata(rawUrl) {
         durationMins = Math.max(1, Math.round(Number(approx[1]) / 60000));
       } else if (iso && iso[1]) {
         durationMins = parseIsoDuration(iso[1]);
+      }
+
+      /**
+       * The meta tag is a fallback, and only for a page that proved it is a
+       * real watch page by carrying a duration.
+       *
+       * Asked for a video it will not serve us, YouTube answers with a
+       * stripped page whose description is its own site-wide blurb - "Enjoy
+       * the videos and music you love, upload original content..." - in
+       * whatever language it decides the caller speaks. Stored unchecked that
+       * is not a thin description, it is a fabricated one, identical on every
+       * talk it happens to. An empty description an admin can fill in beats a
+       * confident wrong one.
+       */
+      if (!description && durationMins) {
+        const metaDesc = html.match(/meta\s+name=["']description["']\s+content=["']([^"']+)["']/i) ||
+                         html.match(/meta\s+property=["']og:description["']\s+content=["']([^"']+)["']/i);
+        if (metaDesc && metaDesc[1]) {
+          description = decodeEntities(metaDesc[1]).trim().slice(0, 2000);
+        }
       }
     } catch (_) {}
   } else if (/vimeo\.com/i.test(url)) {
