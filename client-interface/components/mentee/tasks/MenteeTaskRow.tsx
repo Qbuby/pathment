@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BookOpen, Calendar, Sparkles, Star, XCircle } from 'lucide-react';
+import { BookOpen, Calendar, Sparkles, Star, Video, XCircle } from 'lucide-react';
 import { StatusBadge } from '@/components/admin/ui';
 import { stripHtml } from '@/lib/utils/html';
 
@@ -140,6 +140,14 @@ export function MenteeTaskRow({
               {task.source === 'roadmap' && (
                 <span className="px-2 py-1 bg-brand-100 text-brand-700 rounded text-xs font-medium flex items-center gap-1">
                   <BookOpen className="w-3 h-3" /> Roadmap
+                </span>
+              )}
+              {/* A talk is watched rather than built, so it is worth saying on
+                  the row itself - and saying it here rather than in the page
+                  means the pool work screen gets it too. */}
+              {task.type === 'talk' && (
+                <span className="px-2 py-1 bg-indigo-100 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 rounded text-xs font-medium flex items-center gap-1">
+                  <Video className="w-3 h-3" /> Talk
                 </span>
               )}
               {task.optional && (

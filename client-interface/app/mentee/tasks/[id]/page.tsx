@@ -21,6 +21,7 @@ import {
   Mic,
   ListChecks,
   Code2,
+  Video,
 } from "lucide-react";
 import { ResourceLink } from "@/components/shared/ResourceLink";
 import { SubmissionFileList } from "@/components/shared/SubmissionFileList";
@@ -33,6 +34,7 @@ import { TaskProgressTimeline } from "@/components/shared/TaskProgressTimeline";
 import { SubmitTaskDrawer } from "@/components/mentee/SubmitTaskDrawer";
 import { InterviewReviewDrawer } from "@/components/mentor/InterviewReviewDrawer";
 import { isMissingDescription } from "@/lib/utils/html";
+import { TalkReviewSection } from "@/components/mentee/TalkReviewSection";
 import { CourseProgressCard } from "@/components/shared/CourseProgressCard";
 import { useClan, isHistoricalCohortClan } from "@/lib/context/ClanContext";
 import { PoolTaskDetail } from "@/components/mentee/pool/PoolTaskDetail";
@@ -172,6 +174,7 @@ function ClanTaskDetail({ id }: { id: string }) {
   // Quiz tasks run in the quiz runner (start/resume/retake/view) — never the submit drawer.
   const isQuiz = (task.roadmapTask?.type || task.type) === "quiz";
   const openQuiz = () => router.push(`/mentee/quizzes/${task.id}`);
+  const isTalk = (task.roadmapTask?.type || task.type) === "talk" || (task.talks && task.talks.length > 0);
   // Course tasks are studied on Buildment and complete themselves from its progress.
   const isCourse = (task.roadmapTask?.type || task.type) === "course";
 
@@ -193,6 +196,11 @@ function ClanTaskDetail({ id }: { id: string }) {
               ) : (
                 <span className="px-2 py-1 bg-brand-100 text-brand-700 rounded text-xs font-medium flex items-center gap-1">
                   <BookOpen className="w-3 h-3" /> Roadmap
+                </span>
+              )}
+              {isTalk && (
+                <span className="px-2 py-1 bg-indigo-100 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 rounded text-xs font-medium flex items-center gap-1">
+                  <Video className="w-3 h-3" /> Talk / Podcast
                 </span>
               )}
             </div>
@@ -480,6 +488,10 @@ function ClanTaskDetail({ id }: { id: string }) {
                   </div>
                 </div>
               )}
+
+            {task?.talks && task.talks.length > 0 && (
+              <TalkReviewSection talks={task.talks} />
+            )}
 
             {taskDeliverable && (
               <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">

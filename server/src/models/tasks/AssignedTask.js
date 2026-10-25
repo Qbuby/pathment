@@ -178,7 +178,8 @@ module.exports = (sequelize, DataTypes) => {
     acceptanceCriteriaOverride: { type: DataTypes.ARRAY(DataTypes.TEXT), allowNull: true, field: 'acceptance_criteria_override' },
     resourcesOverride: { type: DataTypes.JSONB, allowNull: true, field: 'resources_override' },
     mentorNote: { type: DataTypes.TEXT, allowNull: true, field: 'mentor_note' },
-    openSourceOrgIds: { type: DataTypes.ARRAY(DataTypes.UUID), allowNull: true, field: 'open_source_org_ids' }
+    openSourceOrgIds: { type: DataTypes.ARRAY(DataTypes.UUID), allowNull: true, field: 'open_source_org_ids' },
+    talkIds: { type: DataTypes.ARRAY(DataTypes.UUID), allowNull: true, field: 'talk_ids' }
   }, {
     tableName: 'assigned_tasks',
     underscored: true,

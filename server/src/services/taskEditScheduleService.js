@@ -28,7 +28,7 @@ async function save(task, input, mentorId, transaction) {
   const config = normalizeTaskSchedule(input, type);
   const { zonedWallClockToUtc } = require('../utils/timezone');
   if (zonedWallClockToUtc(config.startsOn, config.timeLocal, config.timezone) <= new Date()) throw new ValidationError('Choose a future start for upcoming assignments');
-  const recipe = { ...slot?.recurring?.task, title: task.titleOverride ?? rt.title, description: task.descriptionOverride ?? rt.description, type, difficulty: rt.difficulty, deliverable: task.deliverableOverride ?? rt.deliverable, acceptanceCriteria: task.acceptanceCriteriaOverride ?? rt.acceptanceCriteria, resources: task.resourcesOverride ?? (rt.resources || []).map(r => ({ title: r.title, url: r.url, resourceType: r.resourceType })), openSourceOrgIds: task.openSourceOrgIds };
+  const recipe = { ...slot?.recurring?.task, title: task.titleOverride ?? rt.title, description: task.descriptionOverride ?? rt.description, type, difficulty: rt.difficulty, deliverable: task.deliverableOverride ?? rt.deliverable, acceptanceCriteria: task.acceptanceCriteriaOverride ?? rt.acceptanceCriteria, resources: task.resourcesOverride ?? (rt.resources || []).map(r => ({ title: r.title, url: r.url, resourceType: r.resourceType })), openSourceOrgIds: task.openSourceOrgIds, talkIds: task.talkIds };
   if (['quiz', 'interview'].includes(type) && !recipe[type]?.kitId) {
     const model = type === 'quiz' ? models.QuizAssignment : models.InterviewAssignment;
     const assignment = await model.findOne({ where: { assignedTaskId: task.id }, transaction, raw: true });

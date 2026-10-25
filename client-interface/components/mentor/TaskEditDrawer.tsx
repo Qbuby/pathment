@@ -35,7 +35,7 @@ const TYPE_LABEL: Record<string, string> = {
   assignment: "Assignment", project: "Project", reading: "Reading", video: "Video",
   discussion: "Discussion", practical: "Practical", exercise: "Exercise",
   assessment: "Assessment", custom: "Custom", quiz: "Quiz", interview: "Interview",
-  open_source: "Open Source", course: "Course",
+  open_source: "Open Source", course: "Course", talk: "Talk / Podcast",
 };
 const STATUS_META: Record<string, { label: string; cls: string }> = {
   assigned: { label: "Assigned", cls: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300" },

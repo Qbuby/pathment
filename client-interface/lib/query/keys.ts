@@ -66,6 +66,8 @@ export const qk = {
     tracks: (menteeId: string) => ['mentor', 'tracks', menteeId] as const,
     taskProgress: (taskId: string) => ['mentor', 'task-progress', taskId] as const,
     library: ['mentor', 'library'] as const,
+    talks: (search?: string, categoryId?: string) => ['mentor', 'talks', search || '', categoryId || ''] as const,
+    talkCategories: ['mentor', 'talk-categories'] as const,
     rewards: ['mentor', 'rewards'] as const,
     scheduleTemplates: ['mentor', 'schedule-templates'] as const,
     feedbackSnippets: ['mentor', 'feedback-snippets'] as const,

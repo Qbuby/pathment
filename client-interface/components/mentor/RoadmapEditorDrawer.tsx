@@ -10,11 +10,13 @@ import { pointsForDifficulty } from '@/lib/config/points';
 import { OpenSourceOrgPicker } from '@/components/shared/OpenSourceOrgPicker';
 import type { OpenSourceOrg } from '@/lib/services/open-source-orgs-api';
 import { Drawer } from '@/components/shared/Drawer';
+import { TalkPicker } from '@/components/shared/TalkPicker';
+import type { TalkItem } from '@/lib/services/talks-api';
 
-const STEP_TYPES = ['project', 'assignment', 'reading', 'video', 'quiz', 'discussion', 'open_source'];
+const STEP_TYPES = ['project', 'assignment', 'reading', 'video', 'quiz', 'discussion', 'open_source', 'talk'];
 const STEP_TYPE_LABELS: Record<string, string> = {
   project: 'Project', assignment: 'Assignment', reading: 'Reading',
-  video: 'Video', quiz: 'Quiz', discussion: 'Discussion', open_source: 'Open Source',
+  video: 'Video', quiz: 'Quiz', discussion: 'Discussion', open_source: 'Open Source', talk: 'Talk / Podcast',
 };
 const EFFORTS = ['xs', 's', 'm', 'l', 'xl'];
 const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'];
@@ -68,11 +70,13 @@ interface DraftStep {
   effort: string; dueOffsetDays: string; difficulty: string; deliverable: string; points: string;
   resources: DraftResource[];
   openSourceOrgs: OpenSourceOrg[];
+  talks?: TalkItem[];
 }
 const emptyStep = (): DraftStep => ({
   key: uid(), title: '', type: 'project', description: '', criteria: '',
   effort: 'm', dueOffsetDays: '', difficulty: 'medium', deliverable: '', points: '10', resources: [],
   openSourceOrgs: [],
+  talks: [],
 });
 
 // The roadmap shape this editor accepts (covers both mentor "local" and admin "org").
@@ -89,6 +93,7 @@ export interface EditableRoadmap {
     deliverable?: string | null; pointsBase?: number | null;
     resources?: { id?: string; title: string; url: string; resourceType?: string | null }[];
     openSourceOrgs?: { id: string; name: string; url: string }[];
+    talks?: TalkItem[];
   }[];
 }
 
@@ -341,6 +346,7 @@ export function RoadmapEditorDrawer({
       pointsBase: s.points.trim() ? Number(s.points) : undefined,
       resources: s.resources.filter((r) => r.url.trim()).map((r) => ({ label: r.label.trim(), url: r.url.trim() })),
       openSourceOrgIds: s.type === 'open_source' ? s.openSourceOrgs.map((o) => o.id) : undefined,
+      talkIds: s.type === 'talk' ? (s.talks || []).map((t) => t.id) : undefined,
     }));
     try {
       setSaving(true);
@@ -518,6 +524,17 @@ export function RoadmapEditorDrawer({
                         multiple
                         value={s.openSourceOrgs}
                         onChange={(orgs) => setStep(s.key, { openSourceOrgs: orgs })}
+                      />
+                    </div>
+                  )}
+
+                  {s.type === 'talk' && (
+                    <div className="mt-2 rounded-xl border border-brand-200 bg-brand-50/50 dark:border-brand-500/20 dark:bg-brand-500/5 p-3 space-y-2">
+                      <span className="block text-xs font-medium text-slate-700 dark:text-slate-300">Talks / Podcasts</span>
+                      <TalkPicker
+                        multiple
+                        value={s.talks || []}
+                        onChange={(talks) => setStep(s.key, { talks })}
                       />
                     </div>
                   )}
