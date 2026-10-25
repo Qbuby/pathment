@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Video,
@@ -410,28 +410,77 @@ function TalkEditorDrawer({
   const [resolvingUrl, setResolvingUrl] = useState(false);
   const [conflictTalk, setConflictTalk] = useState<{ id: string; title: string; url: string } | null>(null);
 
-  const resolveVideoUrl = async (inputUrl: string) => {
+  /**
+   * Looking a url up, once, in order.
+   *
+   * Every one of these used to be fire-and-forget. The url field resolved on
+   * change, on paste AND on blur, so a single paste launched three overlapping
+   * lookups - and typing a url by hand launched one per character. They
+   * returned in whatever order they finished, each one writing to the same
+   * state and each one clearing the spinner in its own `finally`, so the
+   * spinner stopped on the FIRST reply while two were still in flight. That is
+   * why the duration sometimes appeared, sometimes did not, and why the same
+   * url could behave differently twice in a row.
+   *
+   * Now: one lookup per url, the newest wins, and anything older is discarded
+   * when it lands rather than allowed to overwrite a fresher answer.
+   */
+  const resolveSeq = useRef(0);
+  const resolvedUrlRef = useRef<string | null>(null);
+  const editedRef = useRef<Record<string, boolean>>({});
+
+  const resolveVideoUrl = useCallback(async (inputUrl: string, { force = false } = {}) => {
     const trimmed = inputUrl.trim();
-    if (!/^https?:\/\//i.test(trimmed)) return;
+    if (!/^https?:\/\/.+/i.test(trimmed)) return;
+    // The same url twice in a row is the same answer; asking again is how a
+    // paste turned into three downloads of the same page.
+    if (!force && resolvedUrlRef.current === trimmed) return;
+    resolvedUrlRef.current = trimmed;
+
+    const seq = ++resolveSeq.current;
     setResolvingUrl(true);
     setConflictTalk(null);
     try {
       const data = await talksApi.resolveUrl(trimmed);
+      if (seq !== resolveSeq.current) return; // superseded while in flight
       if (data?.exists && data?.existingTalk && data.existingTalk.id !== talk?.id) {
         setConflictTalk(data.existingTalk);
       }
       if (data?.metadata) {
-        if (!title.trim() && data.metadata.title) setTitle(data.metadata.title);
-        if (!speaker.trim() && data.metadata.speaker) setSpeaker(data.metadata.speaker);
-        if (!description.trim() && data.metadata.description) setDescription(data.metadata.description);
+        /*
+         * A field the fetch owns is refilled for a NEW url unless the person
+         * has typed in it themselves. The old rule was "only if empty", which
+         * meant a url that failed the first time could never be corrected by
+         * a later successful lookup, and editing a talk never picked anything
+         * up at all.
+         */
+        const fill = (key: string, current: string, value: string | null | undefined, set: (v: string) => void) => {
+          if (!value) return;
+          if (editedRef.current[key] && current.trim()) return;
+          set(String(value));
+        };
+        fill('title', title, data.metadata.title, setTitle);
+        fill('speaker', speaker, data.metadata.speaker, setSpeaker);
+        fill('description', description, data.metadata.description, setDescription);
+        fill('duration', durationMins, data.metadata.durationMins ? String(data.metadata.durationMins) : null, setDurationMins);
         if (!thumbnailUrl && data.metadata.thumbnailUrl) setThumbnailUrl(data.metadata.thumbnailUrl);
-        if (!durationMins && data.metadata.durationMins) setDurationMins(String(data.metadata.durationMins));
       }
     } catch {
+      // A failed lookup must not be remembered as done, or retyping the same
+      // url would never try again.
+      if (seq === resolveSeq.current) resolvedUrlRef.current = null;
     } finally {
-      setResolvingUrl(false);
+      if (seq === resolveSeq.current) setResolvingUrl(false);
     }
-  };
+  }, [talk?.id, title, speaker, description, durationMins, thumbnailUrl]);
+
+  // Typing a url should not fire a lookup per character.
+  useEffect(() => {
+    const trimmed = url.trim();
+    if (!/^https?:\/\/.+/i.test(trimmed)) return;
+    const timer = setTimeout(() => resolveVideoUrl(trimmed), 450);
+    return () => clearTimeout(timer);
+  }, [url, resolveVideoUrl]);
 
   const toggleCategory = (id: string) => {
     setSelectedCatIds((prev) =>
@@ -518,7 +567,7 @@ function TalkEditorDrawer({
           </label>
           <input
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={(e) => { editedRef.current.title = true; setTitle(e.target.value); }}
             placeholder="e.g. How great leaders inspire action"
             className="w-full border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 bg-card text-foreground"
           />
@@ -531,8 +580,8 @@ function TalkEditorDrawer({
             </label>
             <input
               value={speaker}
-              onChange={(e) => setSpeaker(e.target.value)}
-              placeholder="e.g. Simon Sinek"
+              onChange={(e) => { editedRef.current.speaker = true; setSpeaker(e.target.value); }}
+              placeholder={resolvingUrl ? 'Reading the video…' : 'e.g. Simon Sinek'}
               className="w-full border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 bg-card text-foreground"
             />
           </div>
@@ -544,8 +593,8 @@ function TalkEditorDrawer({
               type="number"
               min={1}
               value={durationMins}
-              onChange={(e) => setDurationMins(e.target.value)}
-              placeholder="e.g. 18"
+              onChange={(e) => { editedRef.current.duration = true; setDurationMins(e.target.value); }}
+              placeholder={resolvingUrl ? 'Reading the video…' : 'e.g. 18'}
               className="w-full border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 bg-card text-foreground"
             />
           </div>
@@ -559,18 +608,8 @@ function TalkEditorDrawer({
             <input
               value={url}
               onChange={(e) => {
-                const val = e.target.value;
-                setUrl(val);
+                setUrl(e.target.value);
                 setConflictTalk(null);
-                if (/^https?:\/\/.+/i.test(val.trim())) {
-                  resolveVideoUrl(val);
-                }
-              }}
-              onPaste={(e) => {
-                const pasted = e.clipboardData.getData('text');
-                if (/^https?:\/\/.+/i.test(pasted.trim())) {
-                  resolveVideoUrl(pasted);
-                }
               }}
               onBlur={() => resolveVideoUrl(url)}
               placeholder="https://youtube.com/watch?v=..."
@@ -580,8 +619,15 @@ function TalkEditorDrawer({
               <Loader2 className="absolute right-3 top-2.5 w-4 h-4 text-brand-600 animate-spin" />
             )}
           </div>
-          <p className="mt-1 text-xs text-slate-400">
-            Paste a YouTube or video link to automatically fetch title, speaker, description & cover.
+          <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-400">
+            {resolvingUrl ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin text-brand-600" />
+                <span className="text-brand-600">Reading the video for its title, speaker, description, duration and cover…</span>
+              </>
+            ) : (
+              'Paste a YouTube or video link to automatically fetch title, speaker, description, duration & cover.'
+            )}
           </p>
 
           {/*
@@ -667,7 +713,7 @@ function TalkEditorDrawer({
           <textarea
             rows={3}
             value={description}
-            onChange={(e) => setDescription(e.target.value)}
+            onChange={(e) => { editedRef.current.description = true; setDescription(e.target.value); }}
             placeholder="Summarize the core message or why mentors should share this with their mentees…"
             className="w-full border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 bg-card text-foreground"
           />

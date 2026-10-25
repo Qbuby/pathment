@@ -44,9 +44,40 @@ function parseIsoDuration(str) {
   return totalSeconds > 0 ? Math.max(1, Math.round(totalSeconds / 60)) : null;
 }
 
+/**
+ * What we last fetched, for a minute.
+ *
+ * The add-talk drawer asks for the same url several times over - on paste, on
+ * the change that paste triggers, on blur, and again when somebody deletes a
+ * talk and adds it straight back. Each miss is a 1.4 MB download of a YouTube
+ * watch page, so without this a single paste can cost several megabytes and
+ * seconds of waiting for an answer we already had.
+ */
+const METADATA_TTL_MS = 60_000;
+const metadataCache = new Map();
+
+function cached(key) {
+  const hit = metadataCache.get(key);
+  if (!hit) return null;
+  if (hit.until <= Date.now()) { metadataCache.delete(key); return null; }
+  return hit.value;
+}
+
+function remember(key, value) {
+  metadataCache.set(key, { value, until: Date.now() + METADATA_TTL_MS });
+  for (const [k, v] of metadataCache) if (v.until <= Date.now()) metadataCache.delete(k);
+  return value;
+}
+
 async function fetchVideoMetadata(rawUrl) {
   const url = String(rawUrl || '').trim();
   const ytId = extractYoutubeId(url);
+
+  // Keyed on the video rather than the url, so the same talk pasted with a
+  // tracking suffix, as youtu.be, or as a full watch link is one lookup.
+  const cacheKey = ytId || url.toLowerCase();
+  const hit = cached(cacheKey);
+  if (hit) return { ...hit };
 
   let title = null;
   let speaker = null;
@@ -78,7 +109,7 @@ async function fetchVideoMetadata(rawUrl) {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           'Accept-Language': 'en-US,en;q=0.9',
         },
-        timeout: 4500,
+        timeout: 9000,
       });
       const html = String(pageRes.data || '');
       /**
@@ -148,7 +179,10 @@ async function fetchVideoMetadata(rawUrl) {
     } catch (_) {}
   }
 
-  return { title, speaker, thumbnailUrl, description, durationMins };
+  const result = { title, speaker, thumbnailUrl, description, durationMins };
+  // Only worth remembering an answer that actually says something; a failed
+  // fetch should be retried, not cached for a minute.
+  return (title || description || durationMins) ? remember(cacheKey, result) : result;
 }
 
 module.exports = { extractYoutubeId, getYoutubeThumbnail, parseIsoDuration, fetchVideoMetadata };
