@@ -8,6 +8,27 @@ function extractYoutubeId(url) {
   return match ? match[1] : null;
 }
 
+/**
+ * Turn the entities an HTML attribute carries back into text.
+ *
+ * The description is read straight out of a meta tag, so an apostrophe
+ * arrives as `&#39;` and an ampersand as `&amp;`. Written to the database
+ * undecoded they render literally on the talk card - "you&#39;re talking".
+ * `&amp;` is decoded last so that `&amp;#39;` does not become an apostrophe
+ * on a second pass.
+ */
+function decodeEntities(value) {
+  return String(value == null ? '' : value)
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(parseInt(code, 16)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&');
+}
+
 function getYoutubeThumbnail(id) {
   return id ? `https://img.youtube.com/vi/${id}/hqdefault.jpg` : null;
 }
@@ -57,7 +78,7 @@ async function fetchVideoMetadata(rawUrl) {
       const metaDesc = html.match(/meta\s+name=["']description["']\s+content=["']([^"']+)["']/i) ||
                        html.match(/meta\s+property=["']og:description["']\s+content=["']([^"']+)["']/i);
       if (metaDesc && metaDesc[1]) {
-        description = metaDesc[1].trim().slice(0, 1000);
+        description = decodeEntities(metaDesc[1]).trim().slice(0, 1000);
       }
 
       const lenSec = html.match(/["']lengthSeconds["']:\s*["']?(\d+)["']?/i);
