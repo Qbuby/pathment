@@ -497,11 +497,16 @@ function TalkEditorDrawer({
           </button>
           <button
             onClick={save}
-            disabled={saving}
-            className="px-4 py-2 rounded-lg bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 disabled:opacity-50 inline-flex items-center gap-2 shadow-sm transition-colors"
+            // A duplicate url cannot be saved - the workspace has a unique
+            // index on it - so the button stops rather than letting the submit
+            // travel to the server and come back as a red error on a form the
+            // user cannot fix without changing the url anyway.
+            disabled={saving || Boolean(conflictTalk)}
+            title={conflictTalk ? 'This talk is already in the library' : undefined}
+            className="px-4 py-2 rounded-lg bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2 shadow-sm transition-colors"
           >
             {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-            {talk ? 'Save changes' : 'Add talk'}
+            {conflictTalk ? 'Already added' : talk ? 'Save changes' : 'Add talk'}
           </button>
         </div>
       }
@@ -579,19 +584,28 @@ function TalkEditorDrawer({
             Paste a YouTube or video link to automatically fetch title, speaker, description & cover.
           </p>
 
+          {/*
+            * Finding the talk already there is a useful answer, not a warning:
+            * the library did its job and saved somebody a duplicate. So it
+            * reads as an ordinary panel like everything else in admin, rather
+            * than a yellow alert shouting about a non-problem. Adding is
+            * blocked while it stands, so the message no longer has to carry
+            * that weight on its own.
+            */}
           {conflictTalk && (
-            <div className="mt-2.5 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 flex items-center justify-between text-xs text-amber-900 dark:text-amber-200">
-              <div className="flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-                <span>
-                  <strong>Here is this podcast/talk already:</strong> &ldquo;{conflictTalk.title}&rdquo;
+            <div className="mt-2.5 flex items-center justify-between gap-2 rounded-xl border border-border bg-muted/50 p-3 text-xs text-slate-700 dark:text-slate-300">
+              <div className="flex min-w-0 items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-slate-400" />
+                <span className="min-w-0">
+                  <strong className="font-semibold text-slate-900 dark:text-slate-100">Already in the library:</strong>{' '}
+                  &ldquo;{conflictTalk.title}&rdquo;
                 </span>
               </div>
               <a
                 href={toExternalHref(conflictTalk.url)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-amber-700 dark:text-amber-300 underline font-medium ml-2 shrink-0"
+                className="ml-2 shrink-0 font-medium text-brand-600 underline hover:text-brand-700 dark:text-brand-400"
               >
                 Open talk
               </a>

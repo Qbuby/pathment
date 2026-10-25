@@ -114,24 +114,21 @@ async function fetchVideoMetadata(rawUrl) {
       }
 
       /**
-       * The meta tag is a fallback, and only for a page that proved it is a
-       * real watch page by carrying a duration.
+       * There is deliberately no meta-tag fallback for a YouTube description.
        *
-       * Asked for a video it will not serve us, YouTube answers with a
-       * stripped page whose description is its own site-wide blurb - "Enjoy
-       * the videos and music you love, upload original content..." - in
-       * whatever language it decides the caller speaks. Stored unchecked that
-       * is not a thin description, it is a fabricated one, identical on every
-       * talk it happens to. An empty description an admin can fill in beats a
-       * confident wrong one.
+       * `<meta name="description">` on a watch page is not the video's
+       * description. When YouTube has one it serves the SEO blurb, cut to
+       * about 160 characters; when it does not - a video whose uploader left
+       * the description blank, or a page it declines to render for us - it
+       * serves its own site-wide line, "Enjoy the videos and music you love,
+       * upload original content...", in whatever language it picks from the
+       * caller's IP. Stored unchecked, that is not a thin description but a
+       * fabricated one, and it reads identically on every talk it lands on.
+       *
+       * So `shortDescription` is the only source. Present means the uploader
+       * wrote one; absent or empty means there is none to show, and an empty
+       * field an admin can fill in beats a confident wrong one.
        */
-      if (!description && durationMins) {
-        const metaDesc = html.match(/meta\s+name=["']description["']\s+content=["']([^"']+)["']/i) ||
-                         html.match(/meta\s+property=["']og:description["']\s+content=["']([^"']+)["']/i);
-        if (metaDesc && metaDesc[1]) {
-          description = decodeEntities(metaDesc[1]).trim().slice(0, 2000);
-        }
-      }
     } catch (_) {}
   } else if (/vimeo\.com/i.test(url)) {
     try {
