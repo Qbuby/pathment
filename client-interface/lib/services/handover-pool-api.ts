@@ -78,6 +78,22 @@ export const handoverPoolApi = {
       .then((r) => r.data),
 
   /** Offer every mentee in a clan — the closing-cohort case. */
+  /**
+   * Offer a chosen set. Each item carries its own clan, because the selection
+   * can span clans and a mentee can belong to more than one.
+   */
+  pushMany: (input: {
+    mentees: { menteeId: string; clanId: string }[];
+    reason?: HandoverReason;
+    handoverNote?: string;
+  }) =>
+    apiClient
+      .post<{ data: { pushed: number; alreadyOffered: number; failed: number; total: number } }>(
+        '/handover-pool/push-many',
+        input,
+      )
+      .then((r) => r.data),
+
   pushClan: (input: { clanId: string; reason?: HandoverReason; handoverNote?: string }) =>
     apiClient
       .post<{ data: { pushed: number; skipped: number; total: number } }>('/handover-pool/push-clan', input)

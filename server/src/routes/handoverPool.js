@@ -24,6 +24,8 @@ router.get('/claimable-clans', mentorOrAdmin, handoverPoolController.claimableCl
 
 router.post('/push', mentorOrAdmin, handoverPoolController.push);
 router.post('/push-clan', mentorOrAdmin, handoverPoolController.pushClan);
+// A chosen set rather than a whole clan; items may span clans.
+router.post('/push-many', mentorOrAdmin, handoverPoolController.pushMany);
 router.post('/:entryId/claim', mentorOrAdmin, handoverPoolController.claim);
 router.post('/:entryId/withdraw', mentorOrAdmin, handoverPoolController.withdraw);
 

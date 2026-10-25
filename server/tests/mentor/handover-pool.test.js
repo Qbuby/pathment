@@ -414,4 +414,95 @@ describe('handover pool', () => {
       expect(again.entry.id).not.toBe(entry.id);
     });
   });
+
+  // ── a chosen set, which may span clans ───────────────────────────────────
+
+  /**
+   * The selection on a mentor's screen is whatever they ticked, and the clan
+   * picker above it can say "All clans". So the batch is a list of
+   * (mentee, clan) pairs, every one of which has to be judged on its own clan
+   * rather than on the first one in the list.
+   */
+  describe('pushing a chosen set', () => {
+    let second, third;
+
+    beforeEach(async () => {
+      second = await createMentee({ email: `hp-two-${Date.now()}@test.com` });
+      third = await createMentee({ email: `hp-three-${Date.now()}@test.com` });
+      await createEnrollment({ menteeId: second.id, programId: program.id, status: 'active' });
+      await createEnrollment({ menteeId: third.id, programId: program.id, status: 'active' });
+      await clanService.addMember(fromClan.id, { userId: second.id, role: 'mentee' });
+      // This one sits in a clan the giver does not run.
+      await clanService.addMember(otherClan.id, { userId: third.id, role: 'mentee' });
+    });
+
+    it('offers everybody that was chosen', async () => {
+      const result = await pool.pushMany(giver, {
+        mentees: [
+          { menteeId: mentee.id, clanId: fromClan.id },
+          { menteeId: second.id, clanId: fromClan.id },
+        ],
+        reason: 'program_closed',
+      });
+      expect(result.pushed).toBe(2);
+      expect(result.failed).toBe(0);
+      const open = await models.HandoverPoolEntry.count({ where: { status: 'open' } });
+      expect(open).toBe(2);
+    });
+
+    /** Nothing has moved: a batch offer is still only an offer. */
+    it('leaves every one of them in their clan', async () => {
+      await pool.pushMany(giver, {
+        mentees: [{ menteeId: mentee.id, clanId: fromClan.id }, { menteeId: second.id, clanId: fromClan.id }],
+      });
+      expect(await seatsIn(fromClan.id)).toBe(2);
+    });
+
+    /**
+     * The one that matters. A clan the caller cannot hand over from must cost
+     * that clan's mentees and nobody else's - not the whole batch, and not
+     * nothing.
+     */
+    it('refuses only the clan it may not touch, and offers the rest', async () => {
+      const result = await pool.pushMany(giver, {
+        mentees: [
+          { menteeId: mentee.id, clanId: fromClan.id },
+          { menteeId: third.id, clanId: otherClan.id },
+        ],
+      });
+      expect(result.pushed).toBe(1);
+      expect(result.failed).toBe(1);
+      expect(result.failures[0].menteeId).toBe(third.id);
+
+      const offered = await models.HandoverPoolEntry.findAll({ where: { status: 'open' } });
+      expect(offered.map((e) => e.menteeId)).toEqual([mentee.id]);
+    });
+
+    /** Already in the pool is not a failure; it is the state they asked for. */
+    it('counts somebody already offered apart from a failure', async () => {
+      await pool.push(giver, { menteeId: mentee.id, clanId: fromClan.id });
+      const result = await pool.pushMany(giver, {
+        mentees: [
+          { menteeId: mentee.id, clanId: fromClan.id },
+          { menteeId: second.id, clanId: fromClan.id },
+        ],
+      });
+      expect(result.pushed).toBe(1);
+      expect(result.alreadyOffered).toBe(1);
+      expect(result.failed).toBe(0);
+    });
+
+    it('refuses an empty selection rather than reporting a successful nothing', async () => {
+      await expect(pool.pushMany(giver, { mentees: [] }))
+        .rejects.toThrow(/at least one mentee/i);
+    });
+
+    it('ignores an item with no clan, which cannot be judged', async () => {
+      const result = await pool.pushMany(giver, {
+        mentees: [{ menteeId: mentee.id, clanId: fromClan.id }, { menteeId: second.id }],
+      });
+      expect(result.total).toBe(1);
+      expect(result.pushed).toBe(1);
+    });
+  });
 });

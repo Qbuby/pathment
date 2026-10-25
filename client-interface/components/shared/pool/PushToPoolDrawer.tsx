@@ -38,6 +38,13 @@ export function PushToPoolDrawer({
   /** One mentee, or the whole clan when omitted. */
   mentee,
   menteeCount,
+  /**
+   * A chosen set, which beats both of the above when present. Each item
+   * carries its own clan: the list it was ticked on can be showing every clan
+   * at once, and handing somebody out of one clan is not the same act as
+   * handing them out of another they also belong to.
+   */
+  selection,
 }: {
   open: boolean;
   onClose: () => void;
@@ -46,8 +53,10 @@ export function PushToPoolDrawer({
   clanName?: string;
   mentee?: { id: string; name: string } | null;
   menteeCount?: number;
+  selection?: { menteeId: string; clanId: string; name: string }[] | null;
 }) {
-  const wholeClan = !mentee;
+  const many = Array.isArray(selection) && selection.length > 0;
+  const wholeClan = !mentee && !many;
   const [reason, setReason] = useState<HandoverReason>(wholeClan ? 'program_closed' : 'capacity');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -55,10 +64,23 @@ export function PushToPoolDrawer({
   const submit = async () => {
     setBusy(true);
     try {
-      if (wholeClan) {
+      if (many) {
+        const result = await handoverPoolApi.pushMany({
+          mentees: selection!.map((m) => ({ menteeId: m.menteeId, clanId: m.clanId })),
+          reason,
+          handoverNote: note.trim() || undefined,
+        });
+        // Say what actually landed. A batch where one person was claimed a
+        // second earlier is a normal outcome, not a failure of the whole act.
+        const parts = [`${result.pushed} added to the pool`];
+        if (result.alreadyOffered) parts.push(`${result.alreadyOffered} already there`);
+        if (result.failed) parts.push(`${result.failed} could not be offered`);
+        if (result.failed) toast.warning(parts.join(' · '));
+        else toast.success(parts.join(' · '));
+      } else if (wholeClan) {
         const result = await handoverPoolApi.pushClan({ clanId, reason, handoverNote: note.trim() || undefined });
         toast.success(`${result.pushed} of ${result.total} added to the handover pool`);
-      } else {
+      } else if (mentee) {
         const result = await handoverPoolApi.push({
           menteeId: mentee.id, clanId, reason, handoverNote: note.trim() || undefined,
         });
@@ -81,10 +103,14 @@ export function PushToPoolDrawer({
       open={open}
       onClose={onClose}
       width="md"
-      title={wholeClan ? 'Hand this clan on' : `Hand ${mentee?.name || 'this mentee'} on`}
-      subtitle={wholeClan
-        ? `Every mentee in ${clanName || 'this clan'}${menteeCount ? ` (${menteeCount})` : ''} goes into the pool for another mentor to pick up.`
-        : 'Another mentor can then take them into their clan, with all of their work.'}
+      title={many
+        ? `Hand ${selection!.length} mentee${selection!.length === 1 ? '' : 's'} on`
+        : wholeClan ? 'Hand this clan on' : `Hand ${mentee?.name || 'this mentee'} on`}
+      subtitle={many
+        ? 'Another mentor can take any of them into their clan, with all of their work.'
+        : wholeClan
+          ? `Every mentee in ${clanName || 'this clan'}${menteeCount ? ` (${menteeCount})` : ''} goes into the pool for another mentor to pick up.`
+          : 'Another mentor can then take them into their clan, with all of their work.'}
       footer={(dismiss) => (
         <div className="flex items-center justify-end gap-2">
           <button
@@ -98,7 +124,7 @@ export function PushToPoolDrawer({
             className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
-            {wholeClan ? 'Add them all to the pool' : 'Add to the pool'}
+            {many ? `Add ${selection!.length} to the pool` : wholeClan ? 'Add them all to the pool' : 'Add to the pool'}
           </button>
         </div>
       )}
@@ -108,9 +134,9 @@ export function PushToPoolDrawer({
         <p className="flex gap-2.5 rounded-xl border border-border bg-muted/40 p-3 text-sm leading-6 text-muted-foreground">
           <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <span>
-            Nothing changes for {wholeClan ? 'them' : mentee?.name || 'them'} yet.{' '}
-            {wholeClan ? 'They stay' : 'They stay'} in {clanName || 'your clan'} with you, and keep
-            working, until another mentor takes them. You can withdraw the offer at any time before
+            Nothing changes for {many ? 'them' : wholeClan ? 'them' : mentee?.name || 'them'} yet.
+            They stay {many ? 'in their clans' : `in ${clanName || 'your clan'}`} with you, and keep
+            working, until another mentor takes them. You can withdraw any offer at any time before
             that.
           </span>
         </p>

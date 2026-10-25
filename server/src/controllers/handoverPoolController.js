@@ -52,6 +52,23 @@ const pushClan = catchAsync(async (req, res) => {
   res.status(200).json(successResponse(`${result.pushed} of ${result.total} added to the pool`, result));
 });
 
+/**
+ * POST /api/pool/push-many  { mentees: [{ menteeId, clanId }], reason?, handoverNote? }
+ *
+ * A chosen set, which may span clans. Each item carries its own clan because
+ * the selection comes from a screen that can be showing every clan at once,
+ * and handing somebody out of one clan is not the same act as handing them
+ * out of another they also belong to.
+ */
+const pushMany = catchAsync(async (req, res) => {
+  const { mentees, reason, handoverNote } = req.body || {};
+  const result = await pool.pushMany(req.user, { mentees, reason, handoverNote });
+  const parts = [`${result.pushed} of ${result.total} added to the pool`];
+  if (result.alreadyOffered) parts.push(`${result.alreadyOffered} already there`);
+  if (result.failed) parts.push(`${result.failed} could not be offered`);
+  res.status(200).json(successResponse(parts.join(', '), result));
+});
+
 /** POST /api/pool/:entryId/claim  { toClanId } — take them, with their work. */
 const claim = catchAsync(async (req, res) => {
   const result = await pool.claim(req.user, {
@@ -67,4 +84,5 @@ const withdraw = catchAsync(async (req, res) => {
   res.status(200).json(successResponse('Offer withdrawn', { entry }));
 });
 
-module.exports = { list, overview, claimableClans, push, pushClan, claim, withdraw };
+module.exports = { list, overview, claimableClans, push, pushClan,
+  pushMany, claim, withdraw };

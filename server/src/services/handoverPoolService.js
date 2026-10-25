@@ -204,6 +204,71 @@ class HandoverPoolService {
     return { pushed: pushed.length, skipped: skipped.length, total: members.length };
   }
 
+  /**
+   * Offer a chosen set of mentees, who may not share a clan.
+   *
+   * The selection on a mentor's screen can span clans - the picker says "All
+   * clans" and the list is everyone they mentor - and a mentee can sit in two
+   * clans at once, where handing them out of one is a different act from
+   * handing them out of the other. So an item is a (mentee, clan) pair rather
+   * than a bare id, and permission is checked per clan rather than once for
+   * the batch: a lead mentor of one clan and a co-mentor of another, whose
+   * transfer right was revoked on the second, must be able to offer from the
+   * first and not the second in the same selection.
+   *
+   * Per-item failures are collected, never thrown. Offering twenty people and
+   * losing all of it because the nineteenth was claimed a second earlier is
+   * not a trade anybody would choose, and the caller is told exactly what
+   * landed.
+   */
+  async pushMany(user, { mentees = [], reason = null, handoverNote = null } = {}) {
+    const items = (Array.isArray(mentees) ? mentees : [])
+      .map((m) => ({ menteeId: m?.menteeId, clanId: m?.clanId }))
+      .filter((m) => m.menteeId && m.clanId);
+    if (!items.length) throw new ValidationError('Choose at least one mentee to hand over');
+    if (items.length > 200) throw new ValidationError('Two hundred mentees at a time is the limit');
+
+    // One permission check per clan, not per mentee: a fifty-person clan is
+    // fifty identical questions otherwise.
+    const clanIds = [...new Set(items.map((m) => m.clanId))];
+    const allowedClans = new Set();
+    const refusedClans = new Map();
+    for (const clanId of clanIds) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await this._mayHandOver(user, clanId);
+        allowedClans.add(clanId);
+      } catch (error) {
+        refusedClans.set(clanId, error.message);
+      }
+    }
+
+    const pushed = [];
+    const alreadyOffered = [];
+    const failed = [];
+    for (const { menteeId, clanId } of items) {
+      if (!allowedClans.has(clanId)) {
+        failed.push({ menteeId, clanId, error: refusedClans.get(clanId) || 'Not allowed for this clan' });
+        continue;
+      }
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const { entry, alreadyOpen } = await this.push(user, { menteeId, clanId, reason, handoverNote });
+        (alreadyOpen ? alreadyOffered : pushed).push(entry.id);
+      } catch (error) {
+        failed.push({ menteeId, clanId, error: error.message });
+      }
+    }
+
+    return {
+      pushed: pushed.length,
+      alreadyOffered: alreadyOffered.length,
+      failed: failed.length,
+      total: items.length,
+      failures: failed.slice(0, 10),
+    };
+  }
+
   // ── withdraw ──────────────────────────────────────────────────────────────
 
   /** Take an offer back. Only ever possible while it is still open. */
