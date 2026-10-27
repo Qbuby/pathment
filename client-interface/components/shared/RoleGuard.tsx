@@ -15,11 +15,19 @@ interface RoleGuardProps {
   /** Also permit entry for org/program admin-tier users (scoped RBAC), even if
    *  they lack the `admin` capability. Used by the admin section layout. */
   permitAdminArea?: boolean;
+  /**
+   * Also permit a selection-pool candidate.
+   *
+   * `candidate` is not a portal role — a candidate works in the learner
+   * workspace with their round as the scope — so they do not hold `mentee`
+   * and would otherwise be bounced out of the section they belong in.
+   */
+  permitCandidates?: boolean;
 }
 
-export function RoleGuard({ children, allowedRoles, redirectTo = '/login', permitAdminArea = false }: RoleGuardProps) {
+export function RoleGuard({ children, allowedRoles, redirectTo = '/login', permitAdminArea = false, permitCandidates = false }: RoleGuardProps) {
   const { user, isLoading, availableRoles, activeRole, setActiveRole, refreshUser } = useAuth();
-  const { canAccessAdmin, loading: permsLoading } = usePermissions();
+  const { canAccessAdmin, canAccessPools, loading: permsLoading } = usePermissions();
   const router = useRouter();
   // Whether we've already re-checked capabilities with the server this mount.
   const [recheckedCaps, setRecheckedCaps] = useState(false);
@@ -29,8 +37,11 @@ export function RoleGuard({ children, allowedRoles, redirectTo = '/login', permi
   // what lets an admin who is also a mentee open the mentee section), OR - for
   // the admin section - if scoped RBAC grants them org/program admin access.
   const roleMatch = !!user && allowedRoles.some((r) => availableRoles.includes(r));
-  const adminAllowed = !!user && permitAdminArea && canAccessAdmin;
-  const permitted = roleMatch || adminAllowed;
+  // Pool reviewers/operators enter too; the nav and section gate then show them
+  // Selection pools and nothing else.
+  const adminAllowed = !!user && permitAdminArea && (canAccessAdmin || canAccessPools);
+  const candidateAllowed = !!user && permitCandidates && Boolean(user.capabilities?.includes('candidate'));
+  const permitted = roleMatch || adminAllowed || candidateAllowed;
   const sectionRole = allowedRoles[0];
   // For admin-area entry we must wait for the permission fetch before deciding.
   const awaitingPerms = !!user && !roleMatch && permitAdminArea && permsLoading;
@@ -61,7 +72,7 @@ export function RoleGuard({ children, allowedRoles, redirectTo = '/login', permi
   if (isLoading || verifying || awaitingPerms) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <Loader2 className="h-8 w-8 animate-spin text-brand-600" />
       </div>
     );
   }

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { TaskScheduleFields } from '@/components/mentor/TaskScheduleFields';
 import { ReviewHistoryCalendar } from '@/components/mentor/ReviewHistoryCalendar';
 import { toast } from 'sonner';
@@ -19,6 +20,7 @@ import { getBrowserTimeZone, formatMeeting } from '@/lib/utils/datetime';
 import { useConfirm } from '@/lib/context/ConfirmContext';
 import { MenteeTargetSelector } from '@/components/mentor/MenteeTargetSelector';
 import { useClan, isHistoricalMentorScope } from '@/lib/context/ClanContext';
+import { Avatar } from '@/components/shared/Avatar';
 
 const DURATIONS = [15, 30, 45, 60];
 const SLOT_DAYS = ['everyday', 'weekdays', 'weekends'];
@@ -110,7 +112,7 @@ function TemplatesTab() {
                     </div>
 
                     <button onClick={async () => { setBusy(t.id); try { await scheduleApi.importTemplate(t.id); toast.success('Imported - now an editable copy under My schedules'); refetch(); } catch { toast.error('Failed'); } finally { setBusy(null); } }} disabled={busy === t.id}
-                      className="mt-4 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold hover:border-brand-300 dark:hover:border-brand-500/40 transition-colors inline-flex items-center justify-center gap-1.5">{busy === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}Import &amp; edit</button>
+                      className="mt-4 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold hover:border-brand-300 dark:hover:border-brand-500/40 transition-colors inline-flex items-center justify-center gap-1.5">{busy === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-600" /> : <Download className="w-3.5 h-3.5" />}Import &amp; edit</button>
                   </div>
                 ))}
               </div>
@@ -162,7 +164,7 @@ function ScheduleDrawer({ template, onClose, onSaved }: { template: ScheduleTemp
         <>
           <button onClick={onClose} className="px-4 py-2 border border-slate-200 text-slate-700 rounded-xl text-sm hover:bg-slate-50">Cancel</button>
           <button onClick={save} disabled={saving} className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm inline-flex items-center gap-2 disabled:opacity-50">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}{template ? 'Save changes' : 'Create schedule'}
+            {saving ? <Loader2 className="w-4 h-4 animate-spin text-brand-600" /> : <Check className="w-4 h-4" />}{template ? 'Save changes' : 'Create schedule'}
           </button>
         </>
       }
@@ -228,7 +230,7 @@ function AssignModal({ template, cohort, onClose }: { template: ScheduleTemplate
       footer={
         <>
           <button onClick={onClose} className="px-4 py-2 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">Cancel</button>
-          <button onClick={assign} disabled={saving} className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm font-semibold inline-flex items-center gap-2 disabled:opacity-50 transition-all">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}Assign{sel.size ? ` (${sel.size})` : ''}</button>
+          <button onClick={assign} disabled={saving} className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm font-semibold inline-flex items-center gap-2 disabled:opacity-50 transition-all">{saving ? <Loader2 className="w-4 h-4 animate-spin text-brand-600" /> : null}Assign{sel.size ? ` (${sel.size})` : ''}</button>
         </>
       }
     >
@@ -249,14 +251,7 @@ function AssignModal({ template, cohort, onClose }: { template: ScheduleTemplate
               return (
                 <label key={m.id} className={`flex items-center gap-3 p-2.5 rounded-xl border text-xs font-medium cursor-pointer transition-all ${isChecked ? 'border-brand-300 dark:border-brand-500/40 bg-brand-50/60 dark:bg-brand-500/10 text-brand-800 dark:text-brand-200 font-semibold' : 'border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/60'}`}>
                   <input type="checkbox" checked={isChecked} onChange={() => toggle(m.id)} className="rounded border-slate-300 text-brand-600 focus:ring-brand-500 w-3.5 h-3.5 shrink-0" />
-                  {photo ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={photo} alt={m.name} className="w-6.5 h-6.5 rounded-full object-cover shrink-0" />
-                  ) : (
-                    <div className="w-6.5 h-6.5 rounded-full bg-brand-100 dark:bg-brand-500/20 text-brand-700 dark:text-brand-300 font-bold text-[10px] flex items-center justify-center shrink-0">
-                      {initials}
-                    </div>
-                  )}
+                  <Avatar name={m.name} src={photo} initials={initials} size="xs" />
                   <span className="truncate">{m.name}</span>
                 </label>
               );
@@ -349,7 +344,7 @@ function RoadmapSlotEditor({ slot, menteeId, roadmaps, onPatch, refreshTick }: {
 
       {/* Progress-aware: where to start the FIRST roadmap, given what they've done. */}
       {!headId ? null : statusLoading ? (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" />Checking this mentee&apos;s progress…</div>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin text-brand-600" />Checking this mentee&apos;s progress…</div>
       ) : started ? (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-500">
           <p className="font-semibold">Already started for this mentee</p>
@@ -455,7 +450,24 @@ function FillTab() {
         }
         const r: any = await scheduleApi.applySlotToAll(slotId, { kind: slot.kind, roadmapChain: slot.roadmapChain, startStep: slot.startStep, recurring: slot.recurring }, targetIds);
         const count = r?.data?.applied ?? 0;
-        toast.success(`Applied "${slot.label}" to ${count} mentee${count === 1 ? '' : 's'}`);
+        const skipped: { name: string; reason: string }[] = r?.data?.skipped ?? [];
+        /**
+         * Say who was left alone, by name.
+         *
+         * This used to overwrite every copy of the block silently, so a mentee
+         * who had moved their deep-work slot to the evening would find it back
+         * at 10am with nothing to explain it. They are skipped now — but a
+         * mentor who is told "applied to 18" and not told about the other two
+         * would reasonably believe everybody got it.
+         */
+        if (skipped.length) {
+          toast.success(`Applied "${slot.label}" to ${count} mentee${count === 1 ? '' : 's'}`, {
+            description: `Left unchanged for ${skipped.map((x) => x.name).join(', ')} — they had made this block their own.`,
+            duration: 8000,
+          });
+        } else {
+          toast.success(`Applied "${slot.label}" to ${count} mentee${count === 1 ? '' : 's'}`);
+        }
       }
       setRefreshTick((t) => t + 1);
     } catch { toast.error('Could not save slot config'); } finally { setBusy(null); }
@@ -708,7 +720,7 @@ function FillTab() {
                       title={historical ? HISTORICAL_TITLE : 'Generate recurring tasks for next occurrence immediately across target mentees'}
                       className="px-3.5 py-2 bg-brand-50 dark:bg-brand-500/15 border border-brand-200/80 dark:border-brand-500/30 text-brand-700 dark:text-brand-300 hover:bg-brand-100 dark:hover:bg-brand-500/25 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors disabled:opacity-50"
                     >
-                      {busy === slotId + ':activate' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 text-brand-600 dark:text-brand-400" />}
+                      {busy === slotId + ':activate' ? <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-600" /> : <Zap className="w-3.5 h-3.5 text-brand-600 dark:text-brand-400" />}
                       Activate now {scope === 'selected' ? `(${selectedMenteeIds.size})` : scope === 'all' ? `(${cohort.length})` : ''}
                     </button>
                   )}
@@ -719,7 +731,7 @@ function FillTab() {
                     title={historical ? HISTORICAL_TITLE : undefined}
                     className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-xs font-semibold shadow-xs inline-flex items-center gap-1.5 transition-all disabled:opacity-50"
                   >
-                    {busy === slotId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                    {busy === slotId ? <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-600" /> : <Check className="w-3.5 h-3.5" />}
                     {scope === 'single' ? 'Save slot' : `Save & Apply ${scope === 'selected' ? `(${selectedMenteeIds.size})` : `(${cohort.length})`}`}
                   </button>
                 </div>
@@ -734,6 +746,25 @@ function FillTab() {
 
 // ───────────────────────── Weekly recurring availability ─────────────────────────
 // Monday-first display order, mapped to JS weekday numbers (0=Sun … 6=Sat).
+/** "2:00 PM" or "14:00" → "14:00". Empty when it is neither. */
+function to24Hour(input: string): string {
+  const raw = String(input || '').trim().toUpperCase();
+  const twelve = raw.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/);
+  if (twelve) {
+    let hour = Number(twelve[1]) % 12;
+    if (twelve[3] === 'PM') hour += 12;
+    return `${String(hour).padStart(2, '0')}:${twelve[2]}`;
+  }
+  return /^\d{2}:\d{2}$/.test(raw) ? raw : '';
+}
+
+/** "14:00" + 30 → "14:30", clamped to the end of the day. */
+function addMinutes(hhmm: string, minutes: number): string {
+  const [h, m] = hhmm.split(':').map(Number);
+  const total = Math.min(23 * 60 + 59, h * 60 + m + Math.max(1, minutes));
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+
 const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
 const DAY_LABEL: Record<number, string> = { 0: 'Sunday', 1: 'Monday', 2: 'Tuesday', 3: 'Wednesday', 4: 'Thursday', 5: 'Friday', 6: 'Saturday' };
 type TimeRange = { start: string; end: string };
@@ -745,12 +776,14 @@ const emptyWeek = (): Record<number, DayHours> => {
   return w;
 };
 
-function RecurringHoursEditor({ onSaved }: { onSaved: () => void }) {
+function RecurringHoursEditor({ onSaved, reloadKey = 0 }: { onSaved: () => void; reloadKey?: number }) {
   const [week, setWeek] = useState<Record<number, DayHours>>(emptyWeek);
   const [slotMins, setSlotMins] = useState(30);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  // `reloadKey` changes when a weekly rule is added from the calendar above,
+  // so this editor and that calendar cannot show different weeks.
   useEffect(() => {
     meetingsApi.getRules().then((r: any) => {
       const rules: AvailabilityRule[] = r?.data?.rules ?? [];
@@ -765,7 +798,7 @@ function RecurringHoursEditor({ onSaved }: { onSaved: () => void }) {
       setWeek(w);
       if (rules.length) setSlotMins(rules[0].slotMins || 30);
     }).catch(() => {}).finally(() => setLoading(false));
-  }, []);
+  }, [reloadKey]);
 
   const toggle = (d: number) => setWeek((w) => ({ ...w, [d]: { ...w[d], enabled: !w[d].enabled } }));
   const setRange = (d: number, i: number, key: keyof TimeRange, val: string) =>
@@ -869,7 +902,7 @@ function RecurringHoursEditor({ onSaved }: { onSaved: () => void }) {
 
       <div className="flex justify-end">
         <button onClick={save} disabled={saving || loading} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold shadow-xs disabled:opacity-50 transition-all">
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}Save weekly hours
+          {saving ? <Loader2 className="w-4 h-4 animate-spin text-brand-600" /> : <Check className="w-4 h-4" />}Save weekly hours
         </button>
       </div>
     </section>
@@ -892,11 +925,53 @@ function AvailabilityTab() {
   const [cancelFor, setCancelFor] = useState<{ id: string; who: string } | null>(null);
   const [cancelReason, setCancelReason] = useState('');
 
+  /** Bumped when a weekly rule is added here, so the editor below reloads. */
+  const [rulesVersion, setRulesVersion] = useState(0);
+  const [repeating, setRepeating] = useState(false);
+
   const publish = async () => {
     if (!date) { toast.error('Pick a date'); return; }
     if (!time.trim()) { toast.error('Enter a time'); return; }
     try { setAdding(true); await meetingsApi.publishSlot({ date, time: time.trim(), durationMins: duration, timezone: getBrowserTimeZone() }); toast.success('Slot published'); setDate(''); refetch(); }
     catch (e: any) { toast.error(e?.response?.data?.message || 'Could not publish'); } finally { setAdding(false); }
+  };
+
+  /**
+   * Turn the time you just picked on a day into every week on that weekday.
+   *
+   * "I can make repetitive availability on days and with time" was the ask,
+   * and the only way to do it was to scroll past the calendar to a separate
+   * seven-row editor and retype what you had already chosen. Weekly hours are
+   * saved as a complete set, so this reads the current rules, adds one, and
+   * writes them back — then tells the editor below to reload, because two
+   * views of the same week must not disagree.
+   */
+  const repeatWeekly = async () => {
+    if (!date) { toast.error('Pick a day in the calendar first'); return; }
+    const start = to24Hour(time);
+    if (!start) { toast.error('Enter a time like 2:00 PM'); return; }
+    const weekday = new Date(`${date}T00:00:00`).getDay();
+    const end = addMinutes(start, duration);
+    try {
+      setRepeating(true);
+      const fetched = await meetingsApi.getRules() as { data?: { rules?: AvailabilityRule[] } };
+      const existing: AvailabilityRule[] = fetched?.data?.rules ?? [];
+      const already = existing.some((r) => r.weekday === weekday && r.startTime === start && r.endTime === end);
+      if (already) {
+        toast.success(`Already repeating every ${DAY_LABEL[weekday]} at ${time.trim()}`);
+        return;
+      }
+      await meetingsApi.saveRules(
+        [...existing.map((r) => ({ weekday: r.weekday, startTime: r.startTime, endTime: r.endTime, slotMins: r.slotMins || duration })),
+          { weekday, startTime: start, endTime: end, slotMins: duration }],
+        getBrowserTimeZone(),
+      );
+      toast.success(`Every ${DAY_LABEL[weekday]} at ${time.trim()} — mentees can book it any week`);
+      setRulesVersion((n) => n + 1);
+      refetch();
+    } catch (e) {
+      toast.error(extractApiErrorMessage(e, 'Could not set that weekly time'));
+    } finally { setRepeating(false); }
   };
   const removeSlot = async (id: string) => {
     try { setBusyId(id); await meetingsApi.deleteSlot(id); refetch(); } catch (e: any) { toast.error(e?.response?.data?.message || 'Could not remove'); } finally { setBusyId(null); }
@@ -945,11 +1020,83 @@ function AvailabilityTab() {
           <h3 className="text-slate-900 dark:text-slate-100 font-semibold text-sm">Upcoming 1:1s</h3>
         </div>
         <div className="p-6 grid gap-5 lg:grid-cols-[minmax(240px,0.8fr)_1fr]">
-          <div><ReviewHistoryCalendar label="Meeting calendar" unit="slot" initialDate={dateKey(new Date().toISOString())} dates={calendarDates} selected={calendarDate} onSelect={selectCalendarDay} selectableDays="all" /><p className="text-xs text-muted-foreground">Times shown in {getBrowserTimeZone()}. Days with a count have availability or a booked 1:1; select any day to plan a one-off slot.</p></div>
+          <div className="space-y-3">
+            <ReviewHistoryCalendar label="Meeting calendar" unit="slot" initialDate={dateKey(new Date().toISOString())} dates={calendarDates} selected={calendarDate} onSelect={selectCalendarDay} selectableDays="all" />
+            <p className="text-xs text-muted-foreground">Times shown in {getBrowserTimeZone()}. Days with a count have availability or a booked 1:1.</p>
+
+            {/*
+                The time lives with the date now.
+                Picking a day in this calendar only ever FILTERED the list; to
+                actually offer that day you scrolled past the weekly editor to
+                a separate "One-off slot" block and retyped the date you had
+                just clicked. And making it recur meant finding the right row
+                in a seven-row table and typing the time a third time. Both
+                answers belong next to the day you picked.
+            */}
+            {calendarDate ? (
+              <div className="rounded-xl border border-border bg-muted/40 p-3.5">
+                <p className="text-xs font-semibold text-foreground">
+                  Add a time on {new Date(`${calendarDate}T00:00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
+                </p>
+                <div className="mt-2.5 flex flex-wrap items-end gap-2">
+                  <label className="text-[11px] font-medium text-muted-foreground">
+                    Time
+                    <input
+                      value={time}
+                      onChange={(e) => setTime(e.target.value)}
+                      aria-label="Time"
+                      className="mt-1 block w-28 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                  </label>
+                  <label className="text-[11px] font-medium text-muted-foreground">
+                    Length
+                    <select
+                      value={duration}
+                      onChange={(e) => setDuration(Number(e.target.value))}
+                      aria-label="Duration"
+                      className="mt-1 block cursor-pointer rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    >
+                      {DURATIONS.map((d) => <option key={d} value={d}>{d} min</option>)}
+                    </select>
+                  </label>
+                </div>
+                <div className="mt-2.5 flex flex-wrap gap-2">
+                  <button
+                    onClick={publish}
+                    disabled={adding || repeating || historical}
+                    title={historical ? HISTORICAL_TITLE : undefined}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+                  >
+                    {adding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}Just this day
+                  </button>
+                  <button
+                    onClick={repeatWeekly}
+                    disabled={adding || repeating || historical}
+                    title={historical ? HISTORICAL_TITLE : 'Add this time to your weekly hours'}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-brand-300 hover:text-brand-700 disabled:opacity-50 dark:text-slate-200"
+                  >
+                    {repeating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Repeat className="h-3.5 w-3.5" />}
+                    Every {DAY_LABEL[new Date(`${calendarDate}T00:00:00`).getDay()]}
+                  </button>
+                </div>
+                {availabilityOnSelectedDay.length > 0 && (
+                  <p className="mt-2 text-[11px] text-muted-foreground">
+                    {availabilityOnSelectedDay.length} bookable {availabilityOnSelectedDay.length === 1 ? 'slot' : 'slots'} already open on this day.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="rounded-xl border border-dashed border-border px-3.5 py-3 text-xs text-muted-foreground">
+                Select a day to add a time to it.
+              </p>
+            )}
+          </div>
           {visibleMeetings.length === 0 ? (
             <div className="rounded-xl border border-dashed border-border bg-muted/50 p-4 text-xs text-muted-foreground">
               <p className="font-semibold text-foreground">{calendarDate ? `No booked 1:1s on ${calendarDate}.` : 'No upcoming 1:1s yet.'}</p>
-              {calendarDate && availabilityOnSelectedDay.length > 0 ? <p className="mt-1">{availabilityOnSelectedDay.length} bookable {availabilityOnSelectedDay.length === 1 ? 'slot is' : 'slots are'} open on this day.</p> : <p className="mt-1">Select a day, then add a one-off time below or set weekly hours.</p>}
+              {calendarDate && availabilityOnSelectedDay.length > 0
+                ? <p className="mt-1">{availabilityOnSelectedDay.length} bookable {availabilityOnSelectedDay.length === 1 ? 'slot is' : 'slots are'} open on this day.</p>
+                : <p className="mt-1">{calendarDate ? 'Add a time beside the calendar to open this day for booking.' : 'Select a day in the calendar to add a time to it.'}</p>}
             </div>
           ) : (
             <div className="space-y-2.5">
@@ -982,34 +1129,20 @@ function AvailabilityTab() {
 
 
       {/* Recurring weekly hours — the primary way to set availability. */}
-      <RecurringHoursEditor onSaved={refetch} />
+      <RecurringHoursEditor onSaved={refetch} reloadKey={rulesVersion} />
 
       <section className="bg-card rounded-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 shadow-xs">
         <div>
           <h3 className="text-slate-900 dark:text-slate-100 font-semibold flex items-center gap-2">
             <CalendarClock className="w-4 h-4 text-brand-600 dark:text-brand-400" />
-            One-off slot
+            One-off slots
           </h3>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Need a single extra time outside your weekly hours? Add it here.</p>
-        </div>
-        <div className="flex flex-wrap items-end gap-3">
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Date</label>
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="rounded-xl border border-slate-200 dark:border-slate-800 px-3 py-2 text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500 shadow-2xs" />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Time</label>
-            <input value={time} onChange={(e) => setTime(e.target.value)} className="rounded-xl border border-slate-200 dark:border-slate-800 px-3 py-2 text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500 shadow-2xs w-28" />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Duration</label>
-            <select value={duration} onChange={(e) => setDuration(Number(e.target.value))} className="rounded-xl border border-slate-200 dark:border-slate-800 px-3 py-2 text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-500 shadow-2xs cursor-pointer">
-              {DURATIONS.map((d) => <option key={d} value={d}>{d} min</option>)}
-            </select>
-          </div>
-          <button onClick={publish} disabled={adding || historical} title={historical ? HISTORICAL_TITLE : undefined} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold shadow-xs disabled:opacity-50 transition-all">
-            {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}Publish slot
-          </button>
+          {/* The form that used to live here asked for a date the mentor had
+              just clicked in the calendar. It is up there now, next to the
+              day. This is the list of what came out of it. */}
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            Single extra times outside your weekly hours. Add one by picking a day in the calendar above.
+          </p>
         </div>
         {oneOffSlots.length === 0 ? <p className="text-xs text-muted-foreground">No one-off slots published. Weekly-hour slots appear in the calendar above.</p> : (
           <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
@@ -1025,7 +1158,7 @@ function AvailabilityTab() {
                   </span>
                 ) : (
                   <button onClick={() => removeSlot(s.id)} disabled={busyId === s.id || historical} title={historical ? HISTORICAL_TITLE : undefined} className="text-slate-400 hover:text-red-500 transition-colors p-1 disabled:opacity-50">
-                    {busyId === s.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                    {busyId === s.id ? <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-600" /> : <Trash2 className="w-3.5 h-3.5" />}
                   </button>
                 )}
               </div>
@@ -1044,7 +1177,7 @@ function AvailabilityTab() {
           <>
             <button onClick={() => setCancelFor(null)} className="px-4 py-2 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">Keep meeting</button>
             <button onClick={confirmCancel} disabled={busyId === cancelFor?.id} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-semibold inline-flex items-center gap-2 disabled:opacity-50 transition-all">
-              {busyId === cancelFor?.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <X className="w-4 h-4" />}Cancel 1:1
+              {busyId === cancelFor?.id ? <Loader2 className="w-4 h-4 animate-spin text-brand-600" /> : <X className="w-4 h-4" />}Cancel 1:1
             </button>
           </>
         }

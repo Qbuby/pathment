@@ -8,6 +8,7 @@ const { VISIBLE_MEMBERSHIP_STATUSES, strongestClanRole } = require('../config/me
 const { ensureMenteeProfile } = require('./menteeProfile');
 const standingClanService = require('./standingClanService');
 const clanLifecycleService = require('./clanLifecycleService');
+const { mirrorPriorWork } = require('./standingWorkMirror');
 const avatarService = require('./clanAvatarService');
 const gamificationService = require('./gamificationService');
 
@@ -190,7 +191,7 @@ class ClanService {
           // Include paused mentees too (they stay in the clan) so the admin can
           // see and resume them here. The `status` field tells them apart.
           where: { status: { [Op.in]: ['active', 'paused'] } },
-          include: [{ model: models.User, as: 'user', attributes: ['id', 'firstName', 'lastName', 'email', 'profilePictureUrl', 'role'] }]
+          include: [{ model: models.User, as: 'user', attributes: ['id', 'firstName', 'lastName', 'email', 'profilePictureUrl', 'role', 'status'] }]
         }
       ]
     });
@@ -242,7 +243,17 @@ class ClanService {
     return out;
   }
 
-  async createClan(data, createdBy, { transaction: outerTransaction, standingApproval = false } = {}) {
+  /**
+   * `standingApproval` means "this came from an approved mentor request".
+   * `actor` lets an ADMIN make one directly.
+   *
+   * A standing clan used to be creatable only by approving a request, which
+   * is right for a mentor — they ask, an admin decides — and wrong for the
+   * admin, who was the decider and still could not make one themselves. The
+   * rule being enforced is about AUTHORITY, not about which code path you
+   * arrived by, so it now asks that question.
+   */
+  async createClan(data, createdBy, { transaction: outerTransaction, standingApproval = false, actor = null } = {}) {
     const { programId, name } = data;
     if (!programId || !name) {
       throw new ValidationError('programId and name are required');
@@ -250,15 +261,26 @@ class ClanService {
 
     const program = await models.Program.findByPk(programId, { transaction: outerTransaction });
     if (!program) throw new NotFoundError('Program not found');
-    if (data.kind === 'standing' && !standingApproval) throw new ValidationError('Standing clans are created by approving a mentor request');
-    if (data.kind !== 'standing' && program.status === 'completed') throw new ValidationError('Reopen the program before creating a cohort clan');
+    const wantsStanding = data.kind === 'standing';
+    const adminCreating = wantsStanding && !standingApproval && actor
+      ? await require('./authzService').hasAdminAccess(actor)
+      : false;
+    if (wantsStanding && !standingApproval && !adminCreating) {
+      throw new ValidationError('Standing clans are created by approving a mentor request');
+    }
+    if (wantsStanding) {
+      // The plan gate applies however the clan is made — an admin bypassing
+      // the request flow must not also bypass the entitlement.
+      await require('./standingClanService').assertStandingClanPlan(program.organizationId);
+    }
+    if (!wantsStanding && program.status === 'completed') throw new ValidationError('Reopen the program before creating a cohort clan');
 
     const create = async (transaction) => {
       await require('./organizationService').assertLimit(program.organizationId, 'clans', null, { transaction });
       const clan = await models.Clan.create({
         organizationId: program.organizationId,
         programId,
-        kind: standingApproval ? 'standing' : 'cohort',
+        kind: wantsStanding ? 'standing' : 'cohort',
         name,
         description: data.description || null,
         whatsappGroupLink: data.whatsappGroupLink || null,
@@ -266,7 +288,15 @@ class ClanService {
         tags: Array.isArray(data.tags) ? data.tags : [],
         levels: Array.isArray(data.levels) ? data.levels : [],
         countries: Array.isArray(data.countries) ? data.countries : [],
-        maxMentees: data.maxMentees || 25,
+        /**
+         * 25 is a COHORT's size — a programme intake is deliberately bounded.
+         * A standing clan is an open-ended mentoring space its mentor runs, and
+         * giving it the cohort default meant a 34-person cohort could not be
+         * carried into its own continuation: it filled at 25 and said "increase
+         * its capacity", from a screen with no way to do that. Uncapped unless
+         * somebody asks for a cap.
+         */
+        maxMentees: data.maxMentees ?? (wantsStanding ? null : 25),
         status: data.status || 'active',
         createdBy
       }, { transaction });
@@ -592,10 +622,26 @@ class ClanService {
     const clan = await models.Clan.findByPk(clanId, { attributes: ['kind', 'frozenAt'] });
     const readOnly = clan?.kind !== 'standing' && Boolean(clan?.frozenAt);
     const canEditAvatar = !readOnly && await avatarService.canEditAvatar(clanId, user);
+
+    /**
+     * Handing the mentees on is deliberately NOT suppressed by `readOnly`.
+     *
+     * A frozen cohort is exactly when a mentor needs it: the programme has
+     * closed, they are not carrying on, and somebody else should pick these
+     * people up. It also writes nothing to this clan - the mentees stay in it,
+     * with their work, until another mentor actually takes them - so the
+     * read-only guarantee is untouched.
+     *
+     * It used to ride on `canManageTeam`, which IS zeroed out by `readOnly`,
+     * so the button vanished from the only clans it was written for.
+     */
+    const canHandOver = await authzService.can(user, P.MENTEE_TRANSFER, resource);
+
     return {
       role,
       canManageTeam: canManageTeam && !readOnly,
       canAddMentees: canAddMentees && !readOnly,
+      canHandOver,
       canEditAvatar,
       readOnly,
       permissions: permissions.sort(),
@@ -681,10 +727,20 @@ class ClanService {
   /**
    * Reassign a mentee to a different clan (fix an accidental placement). Removes
    * their current mentee membership(s) and places them in `toClanId`.
-   *   - Same program → keep the enrollment (and its tasks): just move the group.
+   *   - Same program → keep the enrollment, and MIRROR the work across so the
+   *     new clan is not empty (see below).
    *   - Different program → WIPE the old enrollment, its assigned tasks and
    *     matches (a clean transfer — "remove all prev links"), then create a
    *     fresh enrollment in the new clan's program.
+   *
+   * On a same-programme move the enrolment was kept and the tasks with it, which
+   * reads like the work moves too. It does not: every clan-scoped query filters
+   * `assigned_tasks.clan_id`, and that still named the clan they just left. So
+   * the mentee arrived in an empty clan, the new mentor had nothing to review,
+   * and the history was reachable from neither side — the same hole standing
+   * clans had, with the same cause. It is closed the same way, with the same
+   * mirror: the work is COPIED, so the old clan's record stays exactly as it
+   * was and the certificates issued on it still read true.
    */
   async reassignMentee(menteeId, toClanId, actorId = null) {
     const { Op } = require('sequelize');
@@ -736,12 +792,39 @@ class ClanService {
     // Place them in the new clan (creates/activates the enrollment in its program).
     await this.addMember(toClanId, { userId: menteeId, role: 'mentee' });
 
+    /*
+     * Bring the work across for a same-programme move. Nothing to bring when
+     * the programme changed: the old enrolment and its tasks were just wiped
+     * above, deliberately, because a different programme's roadmap would make
+     * the copies meaningless.
+     *
+     * Idempotent on `continued_from_task_id`, so a mentee moved back and forth
+     * accumulates one copy per clan rather than one per move. Not fatal if it
+     * fails: the placement itself has already succeeded, and a mentee in the
+     * right clan with no history is recoverable, whereas unwinding the move is
+     * not.
+     */
+    const movedWithinProgram = oldMemberships.some((m) => m.clan && m.clan.programId === toClan.programId);
+    let carried = null;
+    if (movedWithinProgram) {
+      try {
+        const seat = await models.ClanMembership.findOne({
+          where: { clanId: toClanId, userId: menteeId, role: 'mentee' }, attributes: ['enrollmentId'],
+        });
+        carried = await mirrorPriorWork(sequelize, {
+          clanId: toClanId, menteeId, enrollmentId: seat?.enrollmentId || null,
+        });
+      } catch (error) {
+        console.error('[reassignMentee] work mirror failed (the move stands):', error.message);
+      }
+    }
+
     await createAuditLog({
       userId: actorId, action: 'MENTEE_REASSIGNED', entityType: 'ClanMembership', entityId: toClanId,
-      newValues: { menteeId, toClanId, fromClanIds: oldMemberships.map((m) => m.clanId), wipedEnrollments: wiped }
+      newValues: { menteeId, toClanId, fromClanIds: oldMemberships.map((m) => m.clanId), wipedEnrollments: wiped, carried }
     }).catch(() => {});
 
-    return { reassigned: true, toClanId, movedFrom: oldMemberships.map((m) => m.clanId), wipedEnrollments: wiped };
+    return { reassigned: true, toClanId, movedFrom: oldMemberships.map((m) => m.clanId), wipedEnrollments: wiped, carried };
   }
 
   /**
@@ -897,7 +980,15 @@ class ClanService {
     const { Op } = require('sequelize');
     const direct = await models.ClanMembership.findAll({
       where: { userId, status: { [Op.in]: ['active', 'paused'] } },
-      include: [{ model: models.Clan, as: 'clan', attributes: ['id', 'name', 'avatarUrl', 'programId', 'status', 'kind', 'frozenAt'] }],
+      include: [{
+        model: models.Clan, as: 'clan',
+        attributes: ['id', 'name', 'avatarUrl', 'programId', 'status', 'kind', 'frozenAt'],
+        // The programme's name, for the clan picker's second line. A clan name
+        // alone ("Core Team 2026") does not say which programme it belongs to,
+        // and once somebody is in clans from two programmes that is the first
+        // thing they need to tell them apart.
+        include: [{ model: models.Program, as: 'program', attributes: ['id', 'name', 'status'], required: false }],
+      }],
       order: [['joinedAt', 'DESC']]
     });
     const out = direct.map((m) => m.toJSON());
@@ -915,6 +1006,7 @@ class ClanService {
       const clans = await models.Clan.findAll({
         where: { id: { [Op.in]: missingClanIds } },
         attributes: ['id', 'name', 'avatarUrl', 'programId', 'status', 'kind', 'frozenAt'],
+        include: [{ model: models.Program, as: 'program', attributes: ['id', 'name', 'status'], required: false }],
       });
       const clanById = new Map(clans.map((c) => [c.id, c.toJSON()]));
       for (const g of grants) {

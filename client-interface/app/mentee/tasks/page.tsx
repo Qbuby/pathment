@@ -1,36 +1,31 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
-import Link from "next/link";
 import { LearningStat } from "@/components/mentee/LearningStat";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Clock,
   CheckCircle2,
-  AlertCircle,
   FileText,
   Loader2,
-  Star,
-  Calendar,
-  XCircle,
-  BookOpen,
-  Sparkles,
   GraduationCap,
   ClipboardList,
   Layers,
 } from "lucide-react";
 import { useMenteeTasks } from "@/lib/hooks/mentee";
-import {
-  StatsCard,
-  SearchAndFilterBar,
-  StatusBadge,
-} from "@/components/admin/ui";
+import { SearchAndFilterBar } from "@/components/admin/ui";
 import {
   SubmitTaskDrawer,
   type SubmitTaskTarget,
 } from "@/components/mentee/SubmitTaskDrawer";
-import { stripHtml } from "@/lib/utils/html";
+import { TaskDrawer } from "@/components/mentee/TaskDrawer";
+import {
+  MenteeTaskRow,
+  type MenteeTaskView,
+} from "@/components/mentee/tasks/MenteeTaskRow";
 import { useClan, isHistoricalCohortClan } from "@/lib/context/ClanContext";
+import { useMenteeScope } from "@/lib/hooks/mentee";
+import { PoolWorkList } from "@/components/mentee/pool/PoolQualification";
 
 function MenteeTasksContent() {
   const searchParams = useSearchParams();
@@ -43,6 +38,47 @@ function MenteeTasksContent() {
   const [submitTarget, setSubmitTarget] = useState<SubmitTaskTarget | null>(
     null,
   );
+  /**
+   * The task being read, in a drawer over the list.
+   *
+   * Reading a brief is the commonest thing a mentee does here and it used to
+   * cost a full page load and a trip back. `/mentee/tasks/:id` still exists and
+   * is still what every notification links to — this is the shortcut from the
+   * list, not a replacement for the address.
+   */
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+
+  /** Hand a list row to the submit drawer in the shape it expects. */
+  const askToSubmit = (task: any) => setSubmitTarget({ // eslint-disable-line @typescript-eslint/no-explicit-any
+    id: task.id,
+    title: task.roadmapTask?.title || task.title || "Task",
+    status: task.status,
+    deliverable: task.roadmapTask?.deliverable,
+    acceptanceCriteria: task.roadmapTask?.acceptanceCriteria || [],
+  });
+  /**
+   * A clan task in the shape the shared row reads.
+   *
+   * The row itself is the same component a selection round uses: the two were
+   * drifting apart for no reason other than where the work is fetched from.
+   */
+  const toRow = (task: any): MenteeTaskView => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
+    id: task.id,
+    title: task.roadmapTask?.title || task.title || "Task",
+    description: task.roadmapTask?.description ?? null,
+    type: task.roadmapTask?.type || task.type || null,
+    difficulty: task.roadmapTask?.difficulty ?? null,
+    dueDate: task.dueDate ?? null,
+    estimatedHours: task.roadmapTask?.estimatedHours ?? 0,
+    points: task.points ?? task.roadmapTask?.pointsBase ?? null,
+    status: task.status,
+    source: task.isCustomTask ? "custom" : "roadmap",
+    cancellationReason: task.cancellationReason ?? null,
+    finalRating: task.finalRating ?? null,
+    pointsAwarded: task.pointsAwarded ?? null,
+    revisionNote: task.submissions?.[0]?.feedback?.[0]?.comments ?? null,
+  });
+
   const {
     filteredTasks,
     stats,
@@ -75,57 +111,6 @@ function MenteeTasksContent() {
     );
   }, [requestedView, requestedStatus, setView, setFilterStatus]);
 
-  const getTaskSourceBadge = (isCustomTask: boolean) => {
-    return isCustomTask ? (
-      <span className="px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs font-medium flex items-center gap-1">
-        <Sparkles className="w-3 h-3" />
-        Custom
-      </span>
-    ) : (
-      <span className="px-2 py-1 bg-brand-100 text-brand-700 rounded text-xs font-medium flex items-center gap-1">
-        <BookOpen className="w-3 h-3" />
-        Roadmap
-      </span>
-    );
-  };
-
-  const getDifficultyBadge = (difficulty: string) => {
-    const badges: any = {
-      easy: {
-        bg: "bg-green-50",
-        text: "text-green-700",
-        border: "border-green-200",
-      },
-      medium: {
-        bg: "bg-yellow-50",
-        text: "text-yellow-700",
-        border: "border-yellow-200",
-      },
-      hard: {
-        bg: "bg-orange-50",
-        text: "text-orange-700",
-        border: "border-orange-200",
-      },
-      expert: {
-        bg: "bg-red-50",
-        text: "text-red-700",
-        border: "border-red-200",
-      },
-    };
-    const badge = badges[difficulty] || badges.medium;
-    return (
-      <span
-        className={`px-2 py-1 ${badge.bg} ${badge.text} border ${badge.border} rounded text-xs font-medium`}
-      >
-        {difficulty?.toUpperCase()}
-      </span>
-    );
-  };
-
-  const isOverdue = (dueDate: string) => {
-    if (!dueDate) return false;
-    return new Date(dueDate) < new Date();
-  };
 
   // Group tasks by their personal lane (track) for a calm, scannable list.
   const trackGroups = (filteredTasks as any[]).reduce(
@@ -367,262 +352,46 @@ function MenteeTasksContent() {
                   </div>
                 )}
                 <div className="mentee-task-list">
-                  {(groupTasks as any[]).map((task) => {
-                    const overdue =
-                      isOverdue(task.dueDate) &&
-                      !["completed", "submitted"].includes(task.status);
-                    // Interview & quiz tasks run in a dedicated flow — never the
-                    // generic start/submit path (which opens the submit drawer).
-                    const taskType = task.roadmapTask?.type || task.type;
-                    const isInterview = taskType === "interview";
-                    const interviewHref = `/mentee/interviews/${task.id}`;
-                    const isQuiz = taskType === "quiz";
-                    const quizHref = `/mentee/quizzes/${task.id}`;
-
-                    return (
-                      <div
-                        key={task.id}
-                        className="mentee-task-row p-5 sm:p-6 transition-colors w-full overflow-hidden"
-                      >
-                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-4">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex flex-wrap items-center gap-2 mb-2">
-                              <h3 className="text-slate-900 break-words min-w-0 flex-1">
-                                <Link
-                                  href={`/mentee/tasks/${task.id}`}
-                                  className="hover:text-brand-600 hover:underline underline-offset-4"
-                                >
-                                  {task.roadmapTask?.title}
-                                </Link>
-                              </h3>
-                              <div className="flex flex-wrap items-center gap-2 shrink-0">
-                                {getTaskSourceBadge(task.isCustomTask)}
-                                {getDifficultyBadge(
-                                  task.roadmapTask?.difficulty,
-                                )}
-                              </div>
-                            </div>
-
-                            {/* Show cancellation info if task is cancelled */}
-                            {task.status === "cancelled" &&
-                              task.cancellationReason && (
-                                <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-                                  <div className="flex items-start gap-2">
-                                    <XCircle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
-                                    <div className="min-w-0">
-                                      <p className="text-red-900 font-medium text-sm break-words">
-                                        Task Cancelled
-                                      </p>
-                                      <p className="text-red-700 text-sm mt-1 break-words">
-                                        {task.cancellationReason}
-                                      </p>
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
-
-                            <p className="text-slate-600 text-sm line-clamp-2 mb-3 break-words">
-                              {stripHtml(task.roadmapTask?.description)}
-                            </p>
-
-                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-600">
-                              {task.dueDate && (
-                                <>
-                                  <span
-                                    className={`flex items-center gap-1 shrink-0 ${overdue ? "text-red-600" : ""}`}
-                                  >
-                                    <Calendar className="w-4 h-4 shrink-0" />
-                                    Due{" "}
-                                    {new Date(
-                                      task.dueDate,
-                                    ).toLocaleDateString()}
-                                    {overdue && " (Overdue)"}
-                                  </span>
-                                  <span className="hidden sm:inline">•</span>
-                                </>
-                              )}
-                              <span className="shrink-0">
-                                {task.roadmapTask?.estimatedHours || 0}h
-                                estimated
-                              </span>
-                              {(task.points ?? task.roadmapTask?.pointsBase) != null && (
-                                <>
-                                  <span className="hidden sm:inline">•</span>
-                                  <span className="shrink-0">
-                                    {task.points ?? task.roadmapTask.pointsBase} points
-                                  </span>
-                                </>
-                              )}
-                            </div>
-
-                            {task.finalRating && (
-                              <div className="mt-2 flex items-center gap-2 flex-wrap">
-                                <div className="flex items-center gap-1 shrink-0">
-                                  {[1, 2, 3, 4, 5].map((star) => (
-                                    <Star
-                                      key={star}
-                                      className={`w-4 h-4 shrink-0 ${
-                                        star <= task.finalRating
-                                          ? "fill-yellow-400 text-yellow-400"
-                                          : "text-slate-300"
-                                      }`}
-                                    />
-                                  ))}
-                                </div>
-                                <span className="text-slate-600 text-sm shrink-0">
-                                  {task.pointsAwarded} points earned
-                                </span>
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="flex flex-col items-start sm:items-end gap-2 shrink-0 max-w-full">
-                            <div className="max-w-full overflow-hidden">
-                              <StatusBadge status={task.status} />
-                            </div>
-
-                            {task.status === "assigned" &&
-                              (isInterview ? (
-                                <button
-                                  onClick={() => router.push(interviewHref)}
-                                  disabled={historical}
-                                  title={historical ? HISTORICAL_TITLE : undefined}
-                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words disabled:opacity-50"
-                                >
-                                  Start interview
-                                </button>
-                              ) : isQuiz ? (
-                                <button
-                                  onClick={() => router.push(quizHref)}
-                                  disabled={historical}
-                                  title={historical ? HISTORICAL_TITLE : undefined}
-                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words disabled:opacity-50"
-                                >
-                                  Start quiz
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={() => handleStartTask(task.id)}
-                                  disabled={historical}
-                                  title={historical ? HISTORICAL_TITLE : undefined}
-                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words disabled:opacity-50"
-                                >
-                                  Start Task
-                                </button>
-                              ))}
-
-                            {(task.status === "in_progress" ||
-                              task.status === "revision_needed") &&
-                              (isInterview ? (
-                                <button
-                                  onClick={() => router.push(interviewHref)}
-                                  disabled={historical}
-                                  title={historical ? HISTORICAL_TITLE : undefined}
-                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words disabled:opacity-50"
-                                >
-                                  {task.status === "revision_needed"
-                                    ? "Redo questions"
-                                    : "Resume interview"}
-                                </button>
-                              ) : isQuiz ? (
-                                <button
-                                  onClick={() => router.push(quizHref)}
-                                  disabled={historical}
-                                  title={historical ? HISTORICAL_TITLE : undefined}
-                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words disabled:opacity-50"
-                                >
-                                  Resume quiz
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={() =>
-                                    setSubmitTarget({
-                                      id: task.id,
-                                      title: task.roadmapTask?.title || "Task",
-                                      status: task.status,
-                                      deliverable:
-                                        task.roadmapTask?.deliverable,
-                                      acceptanceCriteria:
-                                        task.roadmapTask?.acceptanceCriteria ||
-                                        [],
-                                    })
-                                  }
-                                  disabled={historical}
-                                  title={historical ? HISTORICAL_TITLE : undefined}
-                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words disabled:opacity-50"
-                                >
-                                  Submit Work
-                                </button>
-                              ))}
-
-                            {isQuiz &&
-                              (task.status === "submitted" ||
-                                task.status === "completed") && (
-                                <button
-                                  onClick={() => router.push(quizHref)}
-                                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors w-full sm:w-auto break-words"
-                                >
-                                  View quiz
-                                </button>
-                              )}
-
-                            {task.status === "submitted" && !isQuiz && (
-                              <span className="text-slate-600 text-sm shrink-0">
-                                Awaiting review
-                              </span>
-                            )}
-
-                            {task.status === "cancelled" && (
-                              <span className="text-red-600 text-sm shrink-0">
-                                No action needed
-                              </span>
-                            )}
-
-                            {task.status === "completed" &&
-                              task.submissions?.[0]?.feedback?.[0] && (
-                                <button
-                                  onClick={() =>
-                                    router.push(`/mentee/feedback/${task.id}`)
-                                  }
-                                  className="text-brand-600 hover:underline text-sm shrink-0"
-                                >
-                                  View Feedback
-                                </button>
-                              )}
-
-                            {/* Always show a way to view task details */}
-                            <button
-                              onClick={() =>
-                                router.push(`/mentee/tasks/${task.id}`)
-                              }
-                              className="text-slate-600 hover:text-brand-600 text-sm transition-colors cursor-pointer shrink-0"
-                            >
-                              View Details
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Show latest feedback for revision needed */}
-                        {task.status === "revision_needed" &&
-                          task.submissions?.[0]?.feedback?.[0] && (
-                            <div className="mt-4 p-4 bg-orange-50 border border-orange-200 rounded-lg">
-                              <p className="text-orange-900 text-sm font-medium mb-1">
-                                Revision Requested
-                              </p>
-                              <p className="text-orange-700 text-sm">
-                                {task.submissions[0].feedback[0].comments}
-                              </p>
-                            </div>
-                          )}
-                      </div>
-                    );
-                  })}
+                  {(groupTasks as any[]).map((task) => (
+                    <MenteeTaskRow
+                      key={task.id}
+                      task={toRow(task)}
+                      href={`/mentee/tasks/${task.id}`}
+                      readOnly={historical}
+                      readOnlyTitle={HISTORICAL_TITLE}
+                      onOpen={setOpenTaskId}
+                      onStart={handleStartTask}
+                      onSubmit={() => askToSubmit(task)}
+                      onViewFeedback={
+                        task.submissions?.[0]?.feedback?.[0]
+                          ? (id) => router.push(`/mentee/feedback/${id}`)
+                          : undefined
+                      }
+                      quizHref={(id) => `/mentee/quizzes/${id}`}
+                      interviewHref={(id) => `/mentee/interviews/${id}`}
+                      courseHref={(id) => `/mentee/tasks/${id}`}
+                    />
+                  ))}
                 </div>
               </div>
             ))}
           </div>
         )}
       </div>
+
+      <TaskDrawer
+        taskId={openTaskId}
+        open={!!openTaskId}
+        onClose={() => setOpenTaskId(null)}
+        readOnly={historical}
+        onStart={async (id) => { await handleStartTask(id); }}
+        onSubmit={(task) => {
+          // One drawer at a time: hand off to the submit form rather than
+          // stacking a second panel on top of this one.
+          setOpenTaskId(null);
+          askToSubmit(task);
+        }}
+      />
 
       <SubmitTaskDrawer
         open={!!submitTarget}
@@ -636,6 +405,13 @@ function MenteeTasksContent() {
 }
 
 export default function MenteeTasks() {
+  const scope = useMenteeScope();
+  // In a selection round, "my tasks" means the qualifying work — which lives
+  // outside every clan query by design (the AssignedTask pool fence). Wait for
+  // the scope before choosing: the clan list is clan-scoped on the server, and
+  // asking it without a clan is an error rather than an empty list.
+  if (scope.loading) return <p role="status">Loading tasks…</p>;
+  if (scope.inPool) return <PoolWorkList poolId={scope.pool?.id} />;
   return (
     <Suspense fallback={<p role="status">Loading tasks…</p>}>
       <MenteeTasksContent />

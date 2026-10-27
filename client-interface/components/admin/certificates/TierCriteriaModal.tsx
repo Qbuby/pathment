@@ -176,7 +176,7 @@ export function TierCriteriaModal({ isOpen, editingTier, onClose, onSave }: Tier
               {({ openFilePicker }) => (
                 <div onClick={openFilePicker} className="border border-dashed border-border rounded-xl p-4 flex flex-col items-center justify-center bg-background hover:bg-muted/40 cursor-pointer text-xs font-semibold">
                   {uploadingBadge ? (
-                    <Loader2 className="animate-spin w-5 h-5 text-brand-500" />
+                    <Loader2 className="animate-spin w-5 h-5 text-brand-600" />
                   ) : tierModalBadgeUrl ? (
                     <div className="flex flex-col items-center gap-1 text-center">
                       <img src={tierModalBadgeUrl} className="w-10 h-10 object-contain rounded" alt="Badge" />

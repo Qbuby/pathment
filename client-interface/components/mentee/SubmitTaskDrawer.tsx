@@ -7,6 +7,8 @@ import { Drawer } from '@/components/shared/Drawer';
 import { FileDragDrop } from '@/components/shared/FileDragDrop';
 import RichTextEditor from '@/components/shared/RichTextEditor';
 import { submissionService } from '@/lib/services/submissionService';
+import { candidateApi } from '@/lib/services/pool-api';
+import type { MenteeTaskSource } from '@/lib/hooks/mentee';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { cleanHtml, isBlankHtml } from '@/lib/utils/html';
 import {
@@ -45,12 +47,19 @@ export function SubmitTaskDrawer({
   onClose,
   onSubmitted,
   readOnly = false,
+  source = 'clan',
 }: {
   open: boolean;
   task: SubmitTaskTarget | null;
   onClose: () => void;
   onSubmitted?: () => void;
   readOnly?: boolean;
+  /**
+   * Where the work goes back to. A round's work is handed in through the
+   * candidate API, which takes the same fields; this stays the one submission
+   * form in the product rather than a round growing a second one.
+   */
+  source?: MenteeTaskSource;
 }) {
   const [description, setDescription] = useState('');
   const [links, setLinks] = useState<string[]>(['']);
@@ -74,14 +83,23 @@ export function SubmitTaskDrawer({
     if (!canSubmit) { toast.error('Add a note, a link, or a file before submitting'); return; }
     try {
       setSaving(true);
-      await submissionService.submitTask(task.id, {
-        submissionText: cleanHtml(description),
-        submissionUrls: validLinks,
-        files,
-        extensionRequested: false,
-        timeSpentHours: timeSpent ? parseFloat(timeSpent) : undefined,
-      });
-      toast.success(isResubmit ? 'Re-submitted - your mentor will take another look' : 'Submitted! Your mentor will review it shortly');
+      if (source === 'pool') {
+        const form = new FormData();
+        form.append('submissionText', cleanHtml(description));
+        validLinks.forEach((u) => form.append('submissionUrls[]', u));
+        files.forEach((f) => form.append('files', f));
+        await candidateApi.submit(task.id, form);
+      } else {
+        await submissionService.submitTask(task.id, {
+          submissionText: cleanHtml(description),
+          submissionUrls: validLinks,
+          files,
+          extensionRequested: false,
+          timeSpentHours: timeSpent ? parseFloat(timeSpent) : undefined,
+        });
+      }
+      const reviewer = source === 'pool' ? 'a reviewer' : 'your mentor';
+      toast.success(isResubmit ? `Re-submitted - ${reviewer} will take another look` : `Submitted! ${reviewer} will review it shortly`);
       reset();
       onSubmitted?.();
       onClose();

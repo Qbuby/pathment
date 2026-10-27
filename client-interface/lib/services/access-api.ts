@@ -32,6 +32,8 @@ export interface DirectoryUser {
   email: string;
   role: string;
   status?: 'active' | 'suspended' | 'pending' | 'inactive';
+  /** Profile photo; absent or null falls back to initials. */
+  profilePictureUrl?: string | null;
 }
 
 /** IAM admin API + the current user's effective permissions (for UI gating). */
@@ -40,6 +42,8 @@ export const accessApi = {
     apiClient.get<any>('/access/me/permissions').then((r) => ({
       permissions: (r.data?.permissions || []) as string[],
       canAccessAdmin: Boolean(r.data?.canAccessAdmin),
+      // Selection pools only (pool.* at org/programme scope) — not the admin area at large.
+      canAccessPools: Boolean(r.data?.canAccessPools),
     })),
   roleCatalog: () =>
     apiClient.get<any>('/access/roles').then((r) => (r.data?.roles || []) as RoleCatalogEntry[]),
@@ -50,11 +54,12 @@ export const accessApi = {
   unblockUser: (userId: string) =>
     apiClient.put<any>(`/access/users/${userId}/unblock`),
   /** Paginated org-wide user directory for the IAM People tab (all roles, searchable). */
-  directory: (params: { search?: string; role?: string; status?: string; page?: number; limit?: number } = {}) => {
+  directory: (params: { search?: string; role?: string; status?: string; programId?: string; page?: number; limit?: number } = {}) => {
     const qs = new URLSearchParams();
     if (params.search) qs.set('search', params.search);
     if (params.role) qs.set('role', params.role);
     if (params.status) qs.set('status', params.status);
+    if (params.programId) qs.set('programId', params.programId);
     if (params.page) qs.set('page', String(params.page));
     if (params.limit) qs.set('limit', String(params.limit));
     return apiClient.get<any>(`/access/directory?${qs.toString()}`).then((r) => r.data as { users: DirectoryUser[]; total: number; page: number; limit: number });

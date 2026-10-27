@@ -1,5 +1,5 @@
 const { Op } = require('sequelize');
-const { models } = require('../db');
+const { models, sequelize } = require('../db');
 const { ValidationError, AuthorizationError, NotFoundError, ClanFrozenError } = require('../utils/errors/errorTypes');
 const spaceService = require('./communitySpaceService');
 const gamificationService = require('./gamificationService');
@@ -12,6 +12,33 @@ const photo = (u) => (u && u.profilePictureUrl) || null;
 
 const POST_TYPES = ['kudos', 'win', 'question', 'discussion', 'resource', 'meme', 'standup'];
 const REACTION_TYPES = ['cheers', 'celebrate', 'helpful', 'insightful'];
+// Why something was reported. "other" says nothing by itself, so it is the one
+// category that must come with an explanation. Keep in step with the client.
+const REPORT_CATEGORIES = {
+  spam: 'Spam',
+  scam: 'Scam or fraud',
+  hate: 'Hateful content',
+  violence: 'Violence or threats',
+  other: 'Something else',
+};
+const REPORT_DETAILS_MAX = 1000;
+const REPORT_SEPARATOR = ' — ';
+/**
+ * Split a stored report line back into the reason that was picked and what the
+ * reporter wrote. Reports from before the reason picker have neither a known
+ * label nor a separator, so the whole line is treated as their own words.
+ */
+const parseReportReason = (reason) => {
+  const text = typeof reason === 'string' ? reason.trim() : '';
+  if (!text) return { category: null, categoryLabel: null, details: null };
+  for (const [category, categoryLabel] of Object.entries(REPORT_CATEGORIES)) {
+    if (text === categoryLabel) return { category, categoryLabel, details: null };
+    if (text.startsWith(`${categoryLabel}${REPORT_SEPARATOR}`)) {
+      return { category, categoryLabel, details: text.slice(categoryLabel.length + REPORT_SEPARATOR.length).trim() || null };
+    }
+  }
+  return { category: null, categoryLabel: null, details: text };
+};
 
 // Points awarded by community activity (no-op for non-mentees, which have no profile).
 const POINTS = { KUDOS_RECEIVED: 15, ANSWER_ACCEPTED: 25 };
@@ -116,28 +143,76 @@ class CommunityService {
   }
 
   // ── spaces ────────────────────────────────────────────────────────────
-  async listSpaces(user) {
-    return spaceService.listSpaces(user);
+  async listSpaces(user, options = {}) {
+    return spaceService.listSpaces(user, options);
   }
 
-  async getMembers(user, scopeType, scopeId) {
+  /**
+   * The people in a space — a page of them.
+   *
+   * This used to load every member of the scope in one go and hand the lot to
+   * the browser. In a programme space that is the whole fellowship: a
+   * thousand-odd user rows, each with a photo, rendered as one endless column
+   * nobody could get to the bottom of. The membership itself is derived, so
+   * the id list still has to be computed; what changed is that only the page
+   * being looked at is loaded, named and sent.
+   *
+   * `q` filters by name in the database rather than in the browser, which is
+   * the only way a search can find somebody who is not on the current page.
+   */
+  async getMembers(user, scopeType, scopeId, { limit = 50, offset = 0, q = null } = {}) {
     await this._requireAccess(user, scopeType, scopeId);
+    const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100);
+    const safeOffset = Math.max(parseInt(offset, 10) || 0, 0);
+
     const ids = await spaceService.getMemberIds(scopeType, scopeId);
-    if (!ids.length) return [];
-    const [users, memberships] = await Promise.all([
-      models.User.findAll({ where: { id: { [Op.in]: ids } }, attributes: ['id', 'firstName', 'lastName', 'role', 'profilePictureUrl'] }),
+    const empty = { members: [], pagination: { limit: safeLimit, offset: safeOffset, totalItems: 0, hasMore: false } };
+    if (!ids.length) return empty;
+
+    const where = { id: { [Op.in]: ids } };
+    const term = typeof q === 'string' ? q.trim() : '';
+    if (term) {
+      const like = `%${term}%`;
+      where[Op.or] = [
+        { firstName: { [Op.iLike]: like } },
+        { lastName: { [Op.iLike]: like } },
+        // So "ada lovelace" matches, not just one half of it.
+        sequelize.where(
+          sequelize.fn('concat', sequelize.col('first_name'), ' ', sequelize.col('last_name')),
+          { [Op.iLike]: like },
+        ),
+      ];
+    }
+
+    const [{ rows: users, count: totalItems }, memberships] = await Promise.all([
+      models.User.findAndCountAll({
+        where,
+        attributes: ['id', 'firstName', 'lastName', 'role', 'profilePictureUrl'],
+        order: [['first_name', 'ASC'], ['last_name', 'ASC']],
+        limit: safeLimit,
+        offset: safeOffset,
+      }),
       scopeType === 'clan'
         ? models.ClanMembership.findAll({ where: { clanId: scopeId, status: 'active' }, attributes: ['userId', 'role'] })
         : Promise.resolve([])
     ]);
+
     const clanRole = new Map(memberships.map((m) => [m.userId, m.role]));
-    return users.map((u) => ({
-      id: u.id,
-      name: fullName(u),
-      avatar: initials(u),
-      avatarUrl: photo(u),
-      role: clanRole.get(u.id) || u.role
-    }));
+    return {
+      members: users.map((u) => ({
+        id: u.id,
+        name: fullName(u),
+        avatar: initials(u),
+        avatarUrl: photo(u),
+        role: clanRole.get(u.id) || u.role
+      })),
+      pagination: {
+        limit: safeLimit,
+        offset: safeOffset,
+        totalItems,
+        hasMore: safeOffset + users.length < totalItems,
+      },
+    };
   }
 
   async getPeople(user, scopeType, scopeId) {
@@ -497,8 +572,24 @@ class CommunityService {
   }
 
   // ── moderation ────────────────────────────────────────────────────────
-  async report(user, { targetType, targetId, reason }) {
+  async report(user, { targetType, targetId, reason, category, details }) {
     if (!['post', 'comment'].includes(targetType)) throw new ValidationError('Invalid report target');
+    // A categorised report is stored as one readable line ("Spam — <details>")
+    // in the existing `reason` column, which is what the moderation queue
+    // already shows. A bare `reason` is still accepted from older clients.
+    let storedReason = typeof reason === 'string' ? reason.trim().slice(0, REPORT_DETAILS_MAX) : '';
+    if (category !== undefined && category !== null && category !== '') {
+      const label = REPORT_CATEGORIES[category];
+      if (!label) throw new ValidationError('Choose a reason for the report');
+      const note = typeof details === 'string' ? details.trim() : '';
+      if (note.length > REPORT_DETAILS_MAX) {
+        throw new ValidationError(`Keep the details under ${REPORT_DETAILS_MAX} characters`);
+      }
+      if (category === 'other' && !note) {
+        throw new ValidationError('Tell us what is wrong so a moderator knows what to look at');
+      }
+      storedReason = note ? `${label}${REPORT_SEPARATOR}${note}` : label;
+    }
     // Confirm the target exists and the reporter can see its space.
     if (targetType === 'post') {
       await this._loadPostWithAccess(user, targetId);
@@ -507,7 +598,7 @@ class CommunityService {
       if (!comment) throw new NotFoundError('Comment not found');
       await this._loadPostWithAccess(user, comment.postId);
     }
-    await models.CommunityReport.create({ targetType, targetId, reporterId: user.id, reason: reason || null });
+    await models.CommunityReport.create({ targetType, targetId, reporterId: user.id, reason: storedReason || null });
     return { reported: true };
   }
 
@@ -515,19 +606,70 @@ class CommunityService {
     const reports = await models.CommunityReport.findAll({
       where: status ? { status } : {},
       order: [['created_at', 'DESC']],
-      include: [{ model: models.User, as: 'reporter', attributes: ['id', 'firstName', 'lastName'] }]
+      include: [{ model: models.User, as: 'reporter', attributes: ['id', 'firstName', 'lastName', 'role', 'profilePictureUrl'] }]
     });
 
     // Attach a preview of each reported target so a moderator can judge without leaving the queue.
     const postIds = reports.filter((r) => r.targetType === 'post').map((r) => r.targetId);
     const commentIds = reports.filter((r) => r.targetType === 'comment').map((r) => r.targetId);
-    const authorInc = [{ model: models.User, as: 'author', attributes: ['id', 'firstName', 'lastName'] }];
+    const authorInc = [{ model: models.User, as: 'author', attributes: ['id', 'firstName', 'lastName', 'role', 'profilePictureUrl'] }];
     const [posts, comments] = await Promise.all([
       postIds.length ? models.CommunityPost.findAll({ where: { id: { [Op.in]: postIds } }, include: authorInc, paranoid: false }) : [],
       commentIds.length ? models.CommunityComment.findAll({ where: { id: { [Op.in]: commentIds } }, include: authorInc, paranoid: false }) : []
     ]);
     const postMap = new Map(posts.map((p) => [p.id, p]));
     const commentMap = new Map(comments.map((c) => [c.id, c]));
+
+    /**
+     * Where each report came from.
+     *
+     * The queue said what was reported and who reported it, and never which
+     * SPACE it happened in — so an admin running several programmes could not
+     * tell a report in one from a report in another, and had no way to work
+     * through their own. A post carries its scope; a comment carries a post,
+     * so its scope is one hop away.
+     */
+    const parentIds = [...new Set(comments.map((c) => c.postId).filter(Boolean))];
+    const parents = parentIds.length
+      ? await models.CommunityPost.findAll({
+        where: { id: { [Op.in]: parentIds } },
+        attributes: ['id', 'scopeType', 'scopeId'], paranoid: false, raw: true,
+      })
+      : [];
+    const parentMap = new Map(parents.map((p) => [p.id, p]));
+    const scopeOf = (target, type) => {
+      if (!target) return null;
+      if (type === 'post') return { scopeType: target.scopeType, scopeId: target.scopeId };
+      const parent = parentMap.get(target.postId);
+      return parent ? { scopeType: parent.scopeType, scopeId: parent.scopeId } : null;
+    };
+
+    // Names and owning programmes for every scope in the queue, in two queries.
+    const scopes = reports.map((r) => scopeOf(
+      r.targetType === 'post' ? postMap.get(r.targetId) : commentMap.get(r.targetId),
+      r.targetType,
+    )).filter(Boolean);
+    const clanIds = [...new Set(scopes.filter((s) => s.scopeType === 'clan').map((s) => s.scopeId).filter(Boolean))];
+    const programIds = [...new Set(scopes.filter((s) => s.scopeType === 'program').map((s) => s.scopeId).filter(Boolean))];
+    const [clanRows, programRows] = await Promise.all([
+      clanIds.length ? models.Clan.findAll({ where: { id: { [Op.in]: clanIds } }, attributes: ['id', 'name', 'programId'], raw: true }) : [],
+      programIds.length ? models.Program.findAll({ where: { id: { [Op.in]: programIds } }, attributes: ['id', 'name'], raw: true }) : [],
+    ]);
+    const clanById = new Map(clanRows.map((c) => [c.id, c]));
+    const programById = new Map(programRows.map((p) => [p.id, p]));
+    const describeScope = (scope) => {
+      if (!scope) return { scopeType: null, scopeId: null, scopeLabel: null, programId: null };
+      if (scope.scopeType === 'clan') {
+        const clan = clanById.get(scope.scopeId);
+        return { ...scope, scopeLabel: clan?.name || 'Clan', programId: clan?.programId || null };
+      }
+      if (scope.scopeType === 'program') {
+        return { ...scope, scopeLabel: programById.get(scope.scopeId)?.name || 'Program', programId: scope.scopeId };
+      }
+      // A cohort belongs to a programme too, but the queue only needs to group
+      // by programme — and global is the Lounge, which belongs to none.
+      return { ...scope, scopeLabel: scope.scopeType === 'global' ? 'Lounge' : 'Cohort', programId: null };
+    };
 
     return reports.map((r) => {
       const t = r.targetType === 'post' ? postMap.get(r.targetId) : commentMap.get(r.targetId);
@@ -537,12 +679,18 @@ class CommunityService {
         targetType: r.targetType,
         targetId: r.targetId,
         reason: r.reason,
+        // The same line, split for display: the picked reason and their words.
+        ...parseReportReason(r.reason),
         status: r.status,
         at: r.createdAt,
-        reporter: { id: r.reporter?.id, name: fullName(r.reporter) },
+        reporter: { id: r.reporter?.id, name: fullName(r.reporter), role: r.reporter?.role || null, avatarUrl: photo(r.reporter) },
         preview,
         targetAuthor: t ? fullName(t.author) : null,
-        targetDeleted: t ? Boolean(t.deletedAt) : true
+        targetAuthorId: t?.author?.id || null,
+        targetAuthorRole: t?.author?.role || null,
+        targetAuthorAvatarUrl: t ? photo(t.author) : null,
+        targetDeleted: t ? Boolean(t.deletedAt) : true,
+        ...describeScope(scopeOf(t, r.targetType))
       };
     });
   }

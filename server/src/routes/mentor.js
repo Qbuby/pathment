@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const cohortController = require('../controllers/cohortController');
+const menteeRecordController = require('../controllers/menteeRecordController');
 const cohortReviewController = require('../controllers/cohortReviewController');
 const reviewMeetingController = require('../controllers/reviewMeetingController');
 const reviewScheduleController = require('../controllers/reviewScheduleController');
@@ -12,7 +13,7 @@ const mentorshipPauseController = require('../controllers/mentorshipPauseControl
 const menteeTransferController = require('../controllers/menteeTransferController');
 const taskProgressController = require('../controllers/taskProgressController');
 const { authenticate, authorize } = require('../middlewares/auth');
-const { requirePermission } = require('../middlewares/authz');
+const { requirePermission, requirePermissionAnyScope } = require('../middlewares/authz');
 const { PERMISSIONS } = require('../config/permissions');
 
 const mentorOnly = [authenticate, authorize(['mentor', 'admin'])];
@@ -60,6 +61,22 @@ router.get('/tasks/:id/progress', mentorOnly, taskProgressController.forMentor);
 
 // Rich profile bundle for a single mentee.
 router.get('/mentee/:id', authenticate, authorize(['mentor', 'admin']), cohortController.getMenteeProfile);
+
+/**
+ * The mentee's record across EVERY clan in the org, and their open work
+ * elsewhere. Deliberately not clan-scoped — see menteeRecordController.
+ */
+// Reports for several mentees, and mailing them outward. Both are gated on
+// mentee.view, which a co-mentor holds by default and can have revoked - the
+// same permission that decides whether they can read the progress at all.
+router.post('/reports/batch', authenticate, requirePermissionAnyScope(PERMISSIONS.MENTEE_VIEW), cohortController.getMenteeReports);
+router.post('/reports/send', authenticate, requirePermissionAnyScope(PERMISSIONS.MENTEE_VIEW), cohortController.sendMenteeReports);
+
+// A period report for one mentee. Same audience as the profile it is a view
+// of; the per-mentee authorisation happens in the controller.
+router.get('/mentee/:id/report', authenticate, authorize(['mentor', 'admin']), cohortController.getMenteeReport);
+router.get('/mentee/:id/record', authenticate, authorize(['mentor', 'admin']), menteeRecordController.getRecord);
+router.get('/mentee/:id/open-work-elsewhere', authenticate, authorize(['mentor', 'admin']), menteeRecordController.getOpenWorkElsewhere);
 
 // Working-style (personality) + insight logging for a mentee.
 router.patch('/mentee/:id/personality', mentorOnly, cohortController.updatePersonality);

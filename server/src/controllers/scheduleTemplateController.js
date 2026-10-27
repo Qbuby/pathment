@@ -49,8 +49,14 @@ const updateSlot = catchAsync(async (req, res) => {
 
 const applySlotToAll = catchAsync(async (req, res) => {
   const menteeIds = req.body && Array.isArray(req.body.menteeIds) ? req.body.menteeIds : null;
-  const result = await svc.applySlotToAll(req.user.id, req.params.slotId, req.body, menteeIds);
-  res.status(200).json(successResponse('Slot applied to mentees', result));
+  // `force` has to be asked for by name. The default protects whoever has
+  // adapted this block to how they actually work.
+  const force = req.body?.force === true;
+  const result = await svc.applySlotToAll(req.user.id, req.params.slotId, req.body, menteeIds, { force });
+  const message = result.skipped?.length
+    ? `Applied to ${result.applied}. Left ${result.skipped.length} unchanged because they had made it their own.`
+    : `Applied to ${result.applied} mentee${result.applied === 1 ? '' : 's'}`;
+  res.status(200).json(successResponse(message, result));
 });
 
 const activateSlot = catchAsync(async (req, res) => {

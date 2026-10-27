@@ -12,6 +12,9 @@ export interface UseAdminActivityReturn {
   setDays: (d: number) => void;
   search: string;
   setSearch: (s: string) => void;
+  /** '' = every programme this admin may see. */
+  programId: string;
+  setProgramId: (id: string) => void;
   filtered: MenteeActivityStat[];
   refetch: () => void;
 }
@@ -19,11 +22,15 @@ export interface UseAdminActivityReturn {
 export function useAdminActivity(): UseAdminActivityReturn {
   const [days, setDays] = useState(7);
   const [search, setSearch] = useState('');
+  // Filtered on the server: a mentee belongs to a programme through their
+  // clan, which this payload does not carry, and narrowing there also keeps
+  // the four KPI tiles consistent with the table under them.
+  const [programId, setProgramId] = useState('');
 
   const { data, loading, refetch } = useApiQuery<AdminActivityOverview | null>({
-    queryKey: qk.admin.activity(days),
+    queryKey: qk.admin.activity(days, programId),
     queryFn: async () => {
-      const res = await activityApi.getAdminOverview(days) as unknown as { data: AdminActivityOverview };
+      const res = await activityApi.getAdminOverview(days, programId) as unknown as { data: AdminActivityOverview };
       return res?.data ?? null;
     },
     staleTime: STALE.short,
@@ -41,5 +48,5 @@ export function useAdminActivity(): UseAdminActivityReturn {
     );
   });
 
-  return { overview, loading, days, setDays, search, setSearch, filtered, refetch };
+  return { overview, loading, days, setDays, search, setSearch, programId, setProgramId, filtered, refetch };
 }

@@ -14,6 +14,9 @@ module.exports = {
       'any.required': 'Choose a completed program',
       'string.guid': 'Choose a completed program'
     }),
+    sourceClanId: Joi.string().uuid().optional().messages({
+      'string.guid': 'Choose the clan this continues'
+    }),
     name: Joi.string().trim().min(1).max(150).required().messages({
       'string.empty': 'Choose a clan name of 1–150 characters',
       'string.max': 'Choose a clan name of 1–150 characters',

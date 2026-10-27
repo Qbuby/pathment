@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { Video, VideoOff, Loader2, Check, Circle, Trophy, RotateCw, Users, Radio } from 'lucide-react';
 import { mentorApi } from '@/lib/services/mentor-api';
@@ -26,7 +27,7 @@ const fmtTalk = (s: number) => (s < 60 ? `${s}s` : `${Math.round(s / 60)}m`);
  * the contribution modal moved to the provider for the same reason: they have to
  * outlive this page.
  */
-export function ReviewMeetingPanel({ sessionId, isDraft, ensureSession, onAttendanceSync, onEnded, readOnly = false }: {
+export function ReviewMeetingPanel({ sessionId, isDraft, ensureSession, onAttendanceSync, onEnded, readOnly = false, buttonSlot }: {
   sessionId: string;
   isDraft?: boolean;
   /** Creates today's session on demand, so "Start meeting" works from a blank page. */
@@ -38,6 +39,16 @@ export function ReviewMeetingPanel({ sessionId, isDraft, ensureSession, onAttend
    *  the page can reload and show the "Finished" state. */
   onEnded?: () => void;
   readOnly?: boolean;
+  /**
+   * Where the Start button goes while there is no call.
+   *
+   * Idle, this panel is one button pretending to be a section: a heading, an
+   * explanation and a lot of horizontal rule, sitting above the mentee the
+   * mentor came here for. Given a slot in the page header it renders the button
+   * there instead and takes no vertical space at all — while keeping every bit
+   * of meeting state, so nothing has to be lifted or duplicated.
+   */
+  buttonSlot?: HTMLElement | null;
 }) {
   // The session id can arrive late (created by Start), so track it locally.
   const [liveSessionId, setLiveSessionId] = useState(sessionId);
@@ -267,37 +278,73 @@ export function ReviewMeetingPanel({ sessionId, isDraft, ensureSession, onAttend
 
   const presentCount = roster.filter((r) => r.attendance === 'present').length;
 
+  /**
+   * Idle, this is one line.
+   *
+   * Before a call starts there is nothing to look at — a heading, a button and
+   * a paragraph of explanation — and all of it sat at full width above the
+   * mentee, pushing the actual review below the fold. The explanation is now
+   * the line itself, so the card costs a row instead of a block, and only
+   * grows when there is a call in it.
+   */
+  const idleHint = meeting?.startedAt
+    ? (scored
+      ? `Review complete · ${presentCount}/${roster.length} attended · points awarded.`
+      : `Meeting ended${attendanceTracking ? ` · ${presentCount}/${roster.length} attended` : ''}.`)
+    : 'Mentees get a “Join review” banner when you start.';
+
+  if (!live) {
+    const restarting = scored || !!meeting?.endedAt;
+    const startButton = (
+      <button
+        onClick={start}
+        disabled={busy || readOnly}
+        title={readOnly ? 'Completed programs are read-only' : idleHint}
+        /**
+         * The snake runs only on the button that starts something.
+         *
+         * "New call" after a finished meeting is a quiet, second-thought
+         * action and gets no light; the one that opens the room everyone is
+         * waiting to join is the live thing on this screen, and looks it.
+         */
+        className={restarting
+          ? 'inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:border-brand-300 hover:text-brand-700 disabled:opacity-50 sm:px-3 sm:py-2 sm:text-sm'
+          : 'pm-snake inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-xs font-semibold text-brand-700 transition-transform hover:-translate-y-px hover:bg-brand-100 disabled:opacity-50 sm:px-3 sm:py-2 sm:text-sm dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300'}
+      >
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin sm:h-4 sm:w-4" /> : <Video className="h-3.5 w-3.5 sm:h-4 sm:w-4" />}
+        {restarting ? 'New call' : meeting?.startedAt ? 'Resume call' : 'Start meeting'}
+      </button>
+    );
+
+    // In the header when the page offers a slot; otherwise the old inline row,
+    // so this component still stands alone anywhere else.
+    if (buttonSlot) return createPortal(startButton, buttonSlot);
+    return (
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-slate-200 px-4 py-2.5">
+        <span className="inline-flex shrink-0 items-center gap-1.5 text-sm font-medium text-slate-900">
+          <Video className="h-4 w-4 text-brand-600" aria-hidden /> Live review
+        </span>
+        <span className="min-w-0 flex-1 truncate text-xs text-slate-500" title={idleHint}>{idleHint}</span>
+        {startButton}
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-xl border border-slate-200 p-4">
       <div className="flex items-center justify-between gap-2 mb-3">
         <h3 className="text-sm font-medium text-slate-900 flex items-center gap-1.5"><Video className="w-4 h-4 text-brand-600" /> Live review</h3>
-        {!live ? (
-          // A meeting that was scored OR ended (endedAt set, e.g. after a refresh)
-          // is done — offer a quiet "Start a new call", not a primary "Resume"
-          // that implies unfinished business. Only a never-started session shows
-          // the primary "Start meeting".
-          (scored || !!meeting?.endedAt) ? (
-            <button onClick={start} disabled={busy || readOnly} title={readOnly ? 'Completed programs are read-only' : undefined} className="text-xs font-medium text-slate-500 hover:text-brand-700 disabled:opacity-50">
-              {busy ? 'Starting…' : 'Start a new call'}
-            </button>
-          ) : (
-            <button onClick={start} disabled={busy || readOnly} title={readOnly ? 'Completed programs are read-only' : undefined} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
-              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Video className="w-3.5 h-3.5" />} {meeting?.startedAt ? 'Resume meeting' : 'Start meeting'}
-            </button>
-          )
-        ) : (
-          <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2">
             <button onClick={reloadCall} title="Rebuild the call if the video is stuck" className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:border-brand-300 hover:text-brand-700">
               <RotateCw className="w-3.5 h-3.5" /> Reload video
             </button>
             <button onClick={endHostCall} disabled={busy || readOnly} title={readOnly ? 'Completed programs are read-only' : undefined} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50">
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <VideoOff className="w-3.5 h-3.5" />} End &amp; score
             </button>
-          </div>
-        )}
+        </div>
       </div>
 
-      {live && meeting && (
+      {meeting && (
         <div className="grid gap-3 lg:grid-cols-[1fr_240px]">
           {/* Placeholder only — the call itself is rendered by CallProvider and
               positioned over this box. That's what lets it keep running when you
@@ -348,17 +395,6 @@ export function ReviewMeetingPanel({ sessionId, isDraft, ensureSession, onAttend
             </p>
           </div>
         </div>
-      )}
-
-      {!live && meeting?.startedAt && (
-        <p className="text-xs text-slate-500">
-          {scored
-            ? `Review complete · ${presentCount}/${roster.length} attended · points awarded.`
-            : `Meeting ended${attendanceTracking ? ` · ${presentCount}/${roster.length} attended` : ''}. Start a new call anytime.`}
-        </p>
-      )}
-      {!live && !meeting?.startedAt && (
-        <p className="text-xs text-slate-500">Start the call and your mentees get a “Join review” banner. Flip on “Track attendance” once you’re live to auto-mark joiners present.</p>
       )}
 
     </div>

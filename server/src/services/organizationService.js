@@ -2,6 +2,7 @@ const { Op } = require('sequelize');
 const { models, sequelize } = require('../db');
 const { getRequestContext } = require('../utils/auditContext');
 const { NotFoundError, ForbiddenError, ValidationError, ConflictError } = require('../utils/errors/errorTypes');
+const AppError = require('../utils/errors/AppError');
 const { orgLogoThumb } = require('../utils/imageUrl');
 const authz = require('./authzService');
 const { PERMISSIONS } = require('../config/permissions');
@@ -143,7 +144,6 @@ class OrganizationService {
         organizationId: organization.id, organizationSlug: organization.slug, userId,
       }, async () => {
         await models.AdminProfile.create({ userId }, { transaction });
-        await require('./gamificationService').createDefaultBadges({ transaction });
       });
       return serializeOrganization(organization, membership);
     };
@@ -164,7 +164,13 @@ class OrganizationService {
     const membership = await models.OrganizationMembership.findOne({
       where: { userId, organizationId, status: 'active' },
     });
-    if (!membership) throw new ForbiddenError('You do not have access to this organization');
+    if (!membership) {
+      throw new AppError(
+        'You no longer have access to this workspace. Choose one of your available workspaces.',
+        403,
+        'WORKSPACE_ACCESS_DENIED'
+      );
+    }
     return membership;
   }
 
@@ -195,10 +201,37 @@ class OrganizationService {
     });
     if (!subscription) throw new NotFoundError('Organization subscription not found');
     const plan = subscription.plan?.toJSON() || {};
+    const published = plan.limits || {};
+    const limits = { ...published, ...(subscription.overrides?.limits || {}) };
+
+    /**
+     * Say WHICH limits this workspace has had changed for it.
+     *
+     * The settings page reads the effective limits for the usage bars and the
+     * plan's own published limits for the plan cards, which is correct and
+     * reads as a contradiction: an overridden workspace saw "1089 / Unlimited"
+     * above a Growth card promising 1500 members, with nothing on the page
+     * explaining how both could be true. An admin can only conclude the
+     * numbers are broken.
+     *
+     * A key appears here only when the effective value actually differs from
+     * what the plan publishes, so a workspace with no overrides sends an empty
+     * list and nothing changes for it.
+     */
+    const overriddenLimits = Object.keys(limits)
+      .filter((key) => String(limits[key]) !== String(published[key]));
+
     return {
       ...subscription.toJSON(),
-      plan: { ...plan, limits: { ...(plan.limits || {}), ...(subscription.overrides?.limits || {}) },
-        features: { ...(plan.features || {}), ...(subscription.overrides?.features || {}) } },
+      plan: {
+        ...plan,
+        limits,
+        features: { ...(plan.features || {}), ...(subscription.overrides?.features || {}) },
+        /** What the plan itself promises, before anything was changed for this workspace. */
+        publishedLimits: published,
+        publishedFeatures: plan.features || {},
+      },
+      overriddenLimits,
     };
   }
 

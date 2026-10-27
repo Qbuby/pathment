@@ -156,7 +156,7 @@ export default function MenteeCertificatesPage() {
       {/* Body */}
       {loading ? (
         <div className="flex flex-col items-center justify-center min-h-[300px] gap-3">
-          <Loader2 className="animate-spin h-8 w-8 text-brand-500" />
+          <Loader2 className="animate-spin h-8 w-8 text-brand-600" />
           <span className="text-sm text-muted-foreground font-medium">
             Loading your certificates...
           </span>

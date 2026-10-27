@@ -27,9 +27,9 @@ const menteeState = catchAsync(async (req, res) => {
   res.status(200).json(successResponse('Pause state', state));
 });
 
-/** GET /api/mentor/paused — paused mentees across the requester's clans. */
+/** GET /api/mentor/paused?clanId= — paused mentees, optionally in one clan. */
 const listPaused = catchAsync(async (req, res) => {
-  const paused = await pauseService.listPaused(req.user);
+  const paused = await pauseService.listPaused(req.user, req.query.clanId || requestedClanId(req) || null);
   res.status(200).json(successResponse('Paused mentees', { paused }));
 });
 

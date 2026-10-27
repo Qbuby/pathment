@@ -45,7 +45,7 @@ const GUEST_TOOLBAR = [
 const HOST_TOOLBAR = [...GUEST_TOOLBAR, 'invite', 'security', 'mute-everyone', 'mute-video-everyone'];
 
 export function JitsiRoom({
-  domain, room, displayName, avatarUrl, role = 'guest', privateChat = false, polls = false, onJoined, onLeft, onReadyToClose, onParticipantJoined, onParticipantLeft, onDominantSpeaker, onSelfDominantChange, onError,
+  domain, room, displayName, avatarUrl, role = 'guest', privateChat = false, polls = false, startWithVideoMuted = false, onJoined, onLeft, onReadyToClose, onParticipantJoined, onParticipantLeft, onDominantSpeaker, onSelfDominantChange, onError,
 }: {
   domain: string;
   room: string;
@@ -71,6 +71,7 @@ export function JitsiRoom({
    *  Lets a mentee self-report their own talk time without name matching. */
   onSelfDominantChange?: (speaking: boolean) => void;
   onError?: (message: string) => void;
+  startWithVideoMuted?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<any>(null);
@@ -201,8 +202,35 @@ export function JitsiRoom({
             // which drives review talk-time/contribution — is a bridge feature and
             // is silent in a 2-person P2P call.
             p2p: { enabled: false },
+
+            /**
+             * What the bridge is asked to carry.
+             *
+             * Nothing here was set, so a review ran at Jitsi's defaults: every
+             * camera forwarded to everybody, up to 720p. The bridge sends
+             * N×(N-1) streams, so that scales with the SQUARE of the room —
+             * a 20-person clan at ~200 kbps a tile is ~76 Mbps of egress, and
+             * the largest clan on this workspace has 49 people. meet.pathment.me
+             * is one Oracle free-tier Ampere box (1 OCPU / 6 GB) also running
+             * prosody, jicofo, nginx and coturn. See docs/VIDEO-CAPACITY.md.
+             *
+             * `channelLastN` forwards only the most recent speakers' video.
+             * Audio is unaffected — everybody is still heard — and in a review,
+             * where one person talks at a time, nine video tiles is more than
+             * the conversation needs. This is the single biggest lever and it
+             * costs nothing.
+             */
+            channelLastN: 9,
+            // Keep simulcast ON: it is what lets the bridge send a small layer
+            // to a small tile instead of one big stream to everybody.
+            disableSimulcast: false,
+            // Start the grid in the low layer rather than negotiating down
+            // after everyone has already joined at full resolution.
+            startVideoQuality: 360,
+
             disableDeepLinking: true,
             startWithAudioMuted: false,
+            startWithVideoMuted: startWithVideoMuted ?? false,
             // ── Voice quality: stop the echo / noise the mentor reported. ──
             // Keep the full audio-processing chain ON (these flags DISABLE when
             // true, so false = enabled): acoustic echo cancellation, noise
@@ -227,6 +255,10 @@ export function JitsiRoom({
                 noiseSuppression: { ideal: true },
                 autoGainControl: { ideal: true },
               },
+              // 360p is plenty for a tile in a grid and about a quarter of
+              // 720p's bitrate. Capped at the camera so the bridge is never
+              // offered a layer it would only have to throw away.
+              video: { height: { ideal: 360, max: 360, min: 180 } },
             },
             // NOTE: do NOT set disableThirdPartyRequests — it also blocks loading
             // external avatar images (our Cloudinary profile photos), leaving only

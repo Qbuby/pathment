@@ -8,6 +8,7 @@ import { ActivityTrackerMount } from "@/components/shared/ActivityTrackerMount";
 import { TimezoneSync } from "@/components/shared/TimezoneSync";
 import { WalkthroughMount } from "@/components/onboarding/WalkthroughMount";
 import { ChangelogMount } from "@/components/shared/ChangelogMount";
+import { AdminScopeProvider } from "@/lib/context/AdminScopeContext";
 
 export default function AdminLayout({
   children,
@@ -25,8 +26,14 @@ export default function AdminLayout({
         <main className="lg:pl-64 pt-14 lg:pt-0">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <AdminAccessGate>
-              <AdminWorkspaceTabs />
-              {children}
+              {/* The programme (and clan) the admin screens are looking at.
+                  Shared, so choosing it on Mentees carries to Mentors,
+                  Enrolments and Clan requests rather than being re-picked on
+                  each one. */}
+              <AdminScopeProvider>
+                <AdminWorkspaceTabs />
+                {children}
+              </AdminScopeProvider>
             </AdminAccessGate>
           </div>
         </main>

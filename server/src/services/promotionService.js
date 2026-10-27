@@ -43,7 +43,7 @@ class PromotionService {
       ? await models.User.findByPk(candidate.nominatedBy, { attributes: ['firstName', 'lastName'] })
       : null;
     const clan = candidate.targetClanId
-      ? await models.Clan.findByPk(candidate.targetClanId, { attributes: ['id', 'name'] })
+      ? await models.Clan.findByPk(candidate.targetClanId, { attributes: ['id', 'name', 'programId'] })
       : null;
 
     return {
@@ -63,6 +63,14 @@ class PromotionService {
       avatar: row?.avatar || '?',
       avatarUrl: row?.profilePictureUrl || null,
       program: row?.program || null,
+      /**
+       * Which programme this nomination belongs to, for the admin filter.
+       * The clan the mentor nominated from is the better answer than the
+       * mentee's enrolment — a co-mentor seat is a seat in a clan — so it
+       * wins, and the enrolment is the fallback for a nomination made
+       * without one.
+       */
+      programId: clan?.programId || row?.programId || null,
       level: row?.level || null,
       absoluteProgress: row?.absoluteProgress ?? 0,
       onTimeRate: row?.onTimeRate ?? 0,

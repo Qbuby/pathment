@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useAdminScope } from '@/lib/context/AdminScopeContext';
 import { qk, useApiQuery } from '@/lib/query';
 import { enrollmentApi } from '@/lib/services/enrollment-api';
 import { usePagination } from '@/lib/hooks/shared/usePagination';
@@ -74,6 +75,8 @@ export function useEnrollmentList() {
   const [status, setStatus] = useState<EnrollmentStatus | 'all'>('all');
 
   const debouncedSearch = useDebounce(search, 400);
+  const { query: scope } = useAdminScope();
+  const scopeKey = `${scope.programId || ''}:${scope.clanId || ''}`;
 
   const statsQuery = useApiQuery<EnrollmentStats>({
     queryKey: qk.admin.enrollmentStats,
@@ -85,10 +88,11 @@ export function useEnrollmentList() {
 
   const { data, loading: isLoading, error, refetch } = useApiQuery<EnrollmentPage>({
     queryKey: qk.admin.enrollmentList({
-      page: pagination.page, limit: pagination.limit, search: debouncedSearch, status,
+      page: pagination.page, limit: pagination.limit, search: debouncedSearch, status, scopeKey,
     }),
     queryFn: async () => {
       const response = await enrollmentApi.getAll({
+        ...scope,
         page: pagination.page,
         limit: pagination.limit,
         ...(status !== 'all' && { status }),
@@ -116,7 +120,7 @@ export function useEnrollmentList() {
   useEffect(() => {
     pagination.reset();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, status]);
+  }, [debouncedSearch, status, scopeKey]);
 
   const hasActiveFilters = !!(debouncedSearch || status !== 'all');
 

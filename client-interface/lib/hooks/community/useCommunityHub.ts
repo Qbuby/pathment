@@ -1,11 +1,19 @@
 import { useState, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
-import { communityApi, type ScopeType, type PostType, type ReactionType, type CreatePostInput } from '@/lib/services/community-api';
+import { communityApi, type ScopeType, type PostType, type ReactionType, type CreatePostInput, type ReportCategory } from '@/lib/services/community-api';
+import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { qk, useApiQuery, STALE } from '@/lib/query';
 import { useClan, ALL_CLANS } from '@/lib/context/ClanContext';
 
 export interface CommunitySpace {
+  /** Reserved for a deliberate, admin-controlled archive. Nothing sets it today. */
   readOnly?: boolean;
+  /**
+   * The programme behind this space has finished, so its WORK is closed.
+   * The conversation is not: a space is a place for people, and people do not
+   * stop talking because a cohort ended.
+   */
+  workClosed?: boolean;
   key: string;
   type: ScopeType;
   id: string | null;
@@ -72,12 +80,17 @@ const NO_SPACES: CommunitySpace[] = [];
 const NO_PEOPLE: CommunityPerson[] = [];
 const NO_MEMBERS: CommunityMember[] = [];
 
+/** One page of the member list. A programme space can hold a thousand people. */
+const MEMBER_PAGE = 24;
+
 export function useCommunityHub() {
   const [spaceOverride, setActiveKey] = useState<string | null>(null);
   const [lbPeriod, setLbPeriod] = useState<'week' | 'all'>('all');
   const [typeFilter, setTypeFilter] = useState<PostType | null>(null);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [memberQuery, setMemberQuery] = useState('');
+  const [memberPages, setMemberPages] = useState(1);
 
   const spacesQuery = useApiQuery<CommunitySpace[]>({
     queryKey: qk.community.spaces,
@@ -131,10 +144,24 @@ export function useCommunityHub() {
     enabled: !!active,
   });
 
-  const membersQuery = useApiQuery<CommunityMember[]>({
-    queryKey: qk.community.members(scope.type, scope.id),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    queryFn: async () => ((await communityApi.members(active!.type, active!.id)) as any)?.data?.members ?? [],
+  /**
+   * Members, a page at a time.
+   *
+   * The whole scope used to arrive in one response — in a programme space that
+   * is the entire fellowship, a thousand rows the browser rendered as one
+   * endless column. Searching happens on the server for the same reason: a
+   * filter applied in the browser can only find people already downloaded.
+   */
+  const membersQuery = useApiQuery<{ members: CommunityMember[]; total: number }>({
+    queryKey: qk.community.members(scope.type, scope.id, `${memberQuery}:${memberPages}`),
+    queryFn: async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const r: any = await communityApi.members(active!.type, active!.id, {
+        limit: MEMBER_PAGE * memberPages,
+        q: memberQuery.trim() || null,
+      });
+      return { members: r?.data?.members ?? [], total: r?.data?.pagination?.totalItems ?? 0 };
+    },
     enabled: !!active,
   });
 
@@ -152,11 +179,19 @@ export function useCommunityHub() {
   const { feed, shoutouts, stats } = feedQuery.data ?? NO_FEED;
   const { leaderboard, me: myRank } = leaderboardQuery.data ?? NO_LEADERBOARD;
   const people = peopleQuery.data ?? NO_PEOPLE;
-  const members = membersQuery.data ?? NO_MEMBERS;
+  const members = membersQuery.data?.members ?? NO_MEMBERS;
+  const memberTotal = membersQuery.data?.total ?? 0;
+  const hasMoreMembers = members.length < memberTotal;
   const loadingFeed = feedQuery.loading;
   const error = spacesQuery.error ?? feedQuery.error;
   const fetchFeed = feedQuery.refetch;
   const fetchLeaderboard = leaderboardQuery.refetch;
+
+  const showMoreMembers = useCallback(() => setMemberPages((p) => p + 1), []);
+  const searchMembers = useCallback((value: string) => {
+    setMemberQuery(value);
+    setMemberPages(1);
+  }, []);
 
   const createPost = useCallback(async (input: Omit<CreatePostInput, 'scopeType' | 'scopeId'>) => {
     if (!active) return false;
@@ -187,8 +222,18 @@ export function useCommunityHub() {
     try { await communityApi.acceptAnswer(postId, commentId); toast.success('Answer accepted'); await fetchFeed(); } catch { toast.error('Could not accept'); }
   }, [fetchFeed]);
 
-  const report = useCallback(async (targetType: 'post' | 'comment', targetId: string, reason?: string) => {
-    try { await communityApi.report({ targetType, targetId, reason }); toast.success('Reported to moderators'); } catch { toast.error('Could not report'); }
+  /** Resolves true when the report was accepted, so the dialog knows to close. */
+  const report = useCallback(async (
+    targetType: 'post' | 'comment', targetId: string, reason: { category: ReportCategory; details?: string },
+  ): Promise<boolean> => {
+    try {
+      await communityApi.report({ targetType, targetId, category: reason.category, details: reason.details || undefined });
+      toast.success('Reported to moderators');
+      return true;
+    } catch (e) {
+      toast.error(extractApiErrorMessage(e, 'Could not report'));
+      return false;
+    }
   }, []);
 
   const refetch = useCallback(async () => {
@@ -198,7 +243,8 @@ export function useCommunityHub() {
 
   return {
     spaces, active, activeKey, setActiveKey,
-    feed, shoutouts, stats, people, members,
+    feed, shoutouts, stats, people,
+    members, memberTotal, hasMoreMembers, showMoreMembers, memberQuery, searchMembers,
     leaderboard, myRank, lbPeriod, setLbPeriod,
     typeFilter, setTypeFilter, tagFilter, setTagFilter, query, setQuery,
     loadingSpaces, loadingFeed, error,

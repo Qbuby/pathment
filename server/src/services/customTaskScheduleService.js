@@ -21,6 +21,7 @@ async function create(data, mentorId, clanId) {
       'interview',
       'quiz',
       'openSourceOrgIds',
+      'talkIds',
       'trackId',
     ]
       .filter((key) => data[key] !== undefined)

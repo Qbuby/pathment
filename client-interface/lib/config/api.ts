@@ -13,6 +13,9 @@ export const apiConfig = {
     logout: '/auth/logout',
     me: '/auth/me',
     verify2FALogin: '/auth/verify-2fa-login',
+    /** Ask for a one-time sign-in link, and spend the one in an email. */
+    signInLink: '/auth/sign-in-link',
+    verifySignInLink: '/auth/sign-in-link/verify',
     validateInvite: (token: string) => `/auth/invites/${encodeURIComponent(token)}`,
     acceptInvite: (token: string) => `/auth/invites/${encodeURIComponent(token)}/accept`,
     validateClanJoin: (token: string) => `/auth/clan-join/${encodeURIComponent(token)}`,

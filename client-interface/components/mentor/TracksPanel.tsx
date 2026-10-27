@@ -45,7 +45,7 @@ export function TracksPanel({ menteeId }: { menteeId: string }) {
       </div>
 
       {loading ? (
-        <div className="flex items-center gap-2 text-slate-400 text-sm py-4"><Loader2 className="w-4 h-4 animate-spin" /> Loading tracks…</div>
+        <div className="flex items-center gap-2 text-slate-400 text-sm py-4"><Loader2 className="w-4 h-4 animate-spin text-brand-600" /> Loading tracks…</div>
       ) : (
         <div className="space-y-2">
           {tracks.length === 0 && !creating && (

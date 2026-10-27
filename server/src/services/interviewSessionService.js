@@ -18,7 +18,7 @@ const clanLifecycleService = require('./clanLifecycleService');
 class InterviewSessionService {
   /** Load the assignment + kit for a task, asserting the mentee owns it. */
   async _loadContext(taskId, menteeId, { clanId = null } = {}) {
-    const task = await models.AssignedTask.findByPk(taskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     if (task.menteeId !== menteeId) throw new ForbiddenError('This interview is not assigned to you');
     if (clanId && task.clanId && task.clanId !== clanId) throw new NotFoundError('Task not found');
@@ -201,7 +201,7 @@ class InterviewSessionService {
     });
     if (latestSubmitted && (latestSubmitted.meta?.redoQuestionIds || []).length > 0) {
       await latestSubmitted.update({ status: 'in_progress' });
-      const task = await models.AssignedTask.findByPk(taskId);
+      const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
       if (task) await task.update({ status: 'in_progress' });
       return this._sessionShape(latestSubmitted);
     }
@@ -223,7 +223,8 @@ class InterviewSessionService {
     });
 
     // Mark the task in-progress the first time they begin.
-    await models.AssignedTask.update(
+    // withPoolWork: ownership was checked above, and pool work starts too.
+    await models.AssignedTask.scope('withPoolWork').update(
       { status: 'in_progress', startedAt: sequelize.literal('COALESCE(started_at, NOW())') },
       { where: { id: taskId, status: { [Op.in]: ['assigned', 'not_started'] } } }
     );
@@ -403,7 +404,7 @@ class InterviewSessionService {
    * can see "what he said"); reviewer power is required for anyone else.
    */
   async getForReview(taskId, requesterId) {
-    const task = await models.AssignedTask.findByPk(taskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     const isOwnerMentee = task.menteeId === requesterId;
     if (!isOwnerMentee) await this._assertReviewer(requesterId, task);
@@ -514,7 +515,7 @@ class InterviewSessionService {
   /** Save a per-answer grade (mentor). Creates the answer row if the mentee skipped it. */
   async gradeAnswer(taskId, mentorId, questionId, { pointsAwarded, scoreNote } = {}) {
     await clanLifecycleService.assertTaskWritable(taskId);
-    const task = await models.AssignedTask.findByPk(taskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     await this._assertReviewerCanWrite(mentorId, task);
 
@@ -546,7 +547,7 @@ class InterviewSessionService {
    *  and best-effort removes the files from Cloudinary; behavior flags are kept. */
   async deleteSnapshots(taskId, mentorId) {
     await clanLifecycleService.assertTaskWritable(taskId);
-    const task = await models.AssignedTask.findByPk(taskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     await this._assertReviewerCanWrite(mentorId, task);
 
@@ -571,7 +572,7 @@ class InterviewSessionService {
    *  the session meta so it survives and is visible on the review. */
   async setFlag(taskId, mentorId, { flagged, reason } = {}) {
     await clanLifecycleService.assertTaskWritable(taskId);
-    const task = await models.AssignedTask.findByPk(taskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     await this._assertReviewerCanWrite(mentorId, task);
 
@@ -602,7 +603,7 @@ class InterviewSessionService {
    */
   async requestRedo(taskId, mentorId, { questionIds = [], note } = {}) {
     await clanLifecycleService.assertTaskWritable(taskId);
-    const task = await models.AssignedTask.findByPk(taskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     await this._assertReviewerCanWrite(mentorId, task);
 
@@ -660,7 +661,7 @@ class InterviewSessionService {
    */
   async aiDraftAnswer(taskId, mentorId, questionId) {
     await clanLifecycleService.assertTaskWritable(taskId);
-    const task = await models.AssignedTask.findByPk(taskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     await this._assertReviewerCanWrite(mentorId, task);
 
@@ -738,7 +739,7 @@ class InterviewSessionService {
    */
   async aiDraftAll(taskId, mentorId, { questionIds } = {}) {
     await clanLifecycleService.assertTaskWritable(taskId);
-    const task = await models.AssignedTask.findByPk(taskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     await this._assertReviewerCanWrite(mentorId, task);
 
@@ -862,7 +863,7 @@ class InterviewSessionService {
    */
   async finalizeReview(taskId, mentorId, { overallNote } = {}) {
     await clanLifecycleService.assertTaskWritable(taskId);
-    const task = await models.AssignedTask.findByPk(taskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(taskId);
     if (!task) throw new NotFoundError('Task not found');
     await this._assertReviewerCanWrite(mentorId, task);
 
@@ -895,7 +896,7 @@ class InterviewSessionService {
   async submit(sessionId, menteeId) {
     const session = await this._openSession(sessionId, menteeId);
     await clanLifecycleService.assertTaskWritable(session.assignedTaskId);
-    const task = await models.AssignedTask.findByPk(session.assignedTaskId);
+    const task = await models.AssignedTask.scope('withPoolWork').findByPk(session.assignedTaskId);
     if (!task) throw new NotFoundError('Task not found');
 
     const answeredCount = await models.InterviewAnswer.count({ where: { sessionId } });
@@ -939,6 +940,11 @@ class InterviewSessionService {
 
       return { submissionId: submission.id, sessionId: session.id, version };
     }).then(async (out) => {
+      // Pool work → the pool's reviewers hear, not a mentor.
+      if (task.poolMemberId) {
+        await require('./poolWorkEvents').onSubmitted(task, { submissionId: out.submissionId, version: out.version, kind: 'interview' });
+        return out;
+      }
       // Notify the mentor — same deep link as normal submissions (Approvals + drawer).
       try {
         const submitter = await models.User.findByPk(menteeId, { attributes: ['firstName', 'lastName'] });

@@ -114,7 +114,15 @@ class AccessService {
    * not recipient-scoped (unlike the messaging search), so an admin can browse
    * the whole org. Includes the user themselves.
    */
-  async listDirectory({ search, role, status, page = 1, limit = 25 } = {}) {
+  /**
+   * @param {string} [programId] Narrow to the people connected to one
+   *   programme. On a workspace of a thousand, "all people" is a list nobody
+   *   can act on: finding the members of one fellowship meant knowing their
+   *   names already. Somebody counts as connected if they are enrolled in it,
+   *   belong to one of its clans in any capacity, or hold a role scoped to it,
+   *   because an admin looking for "the people on Qantara" means all three.
+   */
+  async listDirectory({ search, role, status, programId, page = 1, limit = 25 } = {}) {
     const { Op } = require('sequelize');
     const parsedLimit = Math.min(50, Math.max(1, Number(limit) || 25));
     const parsedPage = Math.max(1, Number(page) || 1);
@@ -124,6 +132,30 @@ class AccessService {
       where.status = status;
     }
     if (role && ['admin', 'mentor', 'mentee'].includes(role)) where.role = role;
+
+    if (programId) {
+      const clans = models.Clan
+        ? await models.Clan.findAll({ where: { programId }, attributes: ['id'], raw: true, paranoid: false })
+        : [];
+      const clanIds = clans.map((c) => c.id);
+      const [enrolled, members, granted] = await Promise.all([
+        models.Enrollment.findAll({ where: { programId }, attributes: ['menteeId'], raw: true }),
+        clanIds.length
+          ? models.ClanMembership.findAll({ where: { clanId: { [Op.in]: clanIds } }, attributes: ['userId'], raw: true })
+          : [],
+        models.RoleAssignment
+          ? models.RoleAssignment.findAll({ where: { scopeType: 'program', scopeId: programId }, attributes: ['userId'], raw: true })
+          : [],
+      ]);
+      const ids = new Set([
+        ...enrolled.map((e) => e.menteeId),
+        ...members.map((m) => m.userId),
+        ...granted.map((g) => g.userId),
+      ].filter(Boolean));
+      // An empty set has to mean "nobody", not "no filter".
+      where.id = { [Op.in]: ids.size ? [...ids] : ['00000000-0000-0000-0000-000000000000'] };
+    }
+
     const term = (search || '').trim();
     if (term) {
       const like = `%${term}%`;

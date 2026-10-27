@@ -78,7 +78,7 @@ export function UserProfileCard() {
             </div>
           ) : (
             <div className="flex-shrink-0">
-              <Loader2 className="w-3 h-3 animate-spin text-slate-400" />
+              <Loader2 className="w-3 h-3 animate-spin text-brand-600" />
             </div>
           )}
         </div>

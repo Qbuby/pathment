@@ -46,6 +46,8 @@ export const taskApi = {
     enrollmentId?: string; // Optional: server resolves active enrollment if omitted
     roadmapTaskId?: string; // Optional: assign existing roadmap task
     trackId?: string; // Optional: personal lane
+    /** Drop it straight into a block on the mentee's day. */
+    scheduleSlotId?: string;
     title?: string;
     description?: string;
     type?: string;

@@ -21,17 +21,10 @@ import {
 } from "@/lib/hooks/mentee";
 import { meetingsApi } from "@/lib/services/meetings-api";
 import { Drawer } from "@/components/shared/Drawer";
+import { Avatar } from "@/components/shared/Avatar";
 import { formatMeeting } from "@/lib/utils/datetime";
 import { useClan, isHistoricalCohortClan } from "@/lib/context/ClanContext";
 
-const initialsOf = (name: string) =>
-  name
-    .split(" ")
-    .filter(Boolean)
-    .map((w) => w[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase() || "?";
 
 const STATUS_CLASS: Record<string, string> = {
   done: "bg-emerald-50 text-emerald-700",
@@ -138,11 +131,18 @@ export default function MenteeMeetings() {
                       className="bg-card rounded-3xl border border-border p-6 shadow-sm"
                     >
                       <div className="flex flex-wrap items-start gap-4">
-                        <div className="w-14 h-14 rounded-full bg-brand-100 flex items-center justify-center shrink-0">
-                          <span className="text-brand-700 text-lg font-semibold">
-                            {initialsOf(b.mentor.name)}
-                          </span>
-                        </div>
+                        {/*
+                            This drew initials and nothing else — there was no
+                            <img> on the page at all, so a mentor's photo could
+                            never appear however well set up their profile was.
+                            The shared Avatar shows the photo, keeps initials as
+                            the fallback, and recovers if the URL is broken.
+                        */}
+                        <Avatar
+                          name={b.mentor.name}
+                          src={b.mentor.profilePictureUrl}
+                          size="lg"
+                        />
                         <div className="min-w-0 flex-1">
                           <p className="text-lg font-semibold text-slate-900">
                             {b.mentor.name}

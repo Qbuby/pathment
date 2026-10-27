@@ -246,7 +246,14 @@ class SchedulingService {
     for (const mentor of mentors) {
       const slots = await this.listOpenForMentor(mentor.id);
       result.push({
-        mentor: { id: mentor.id, name: `${mentor.firstName} ${mentor.lastName}`.trim() },
+        // profilePictureUrl was already being SELECTed and then dropped here,
+        // so "My mentor" drew initials for everybody however good their photo
+        // was. Sending it costs nothing; the column was already in the query.
+        mentor: {
+          id: mentor.id,
+          name: `${mentor.firstName} ${mentor.lastName}`.trim(),
+          profilePictureUrl: mentor.profilePictureUrl || null,
+        },
         slots
       });
     }

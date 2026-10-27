@@ -191,6 +191,22 @@ function requirePermissionMinScope(permission, minLevel = 'program') {
   };
 }
 
+/**
+ * Platform-level actions (e.g. the external app catalog) span every workspace,
+ * so no workspace role or permission may grant them. Until a platform
+ * super-admin role exists, the allow-list is PLATFORM_ADMIN_EMAILS
+ * (comma-separated). Unset = nobody, so the routes are closed by default.
+ */
+function requirePlatformAdmin(req, res, next) {
+  if (!req.user) return next(new AuthenticationError('You must be logged in to access this resource'));
+  const allowed = String(process.env.PLATFORM_ADMIN_EMAILS || '')
+    .split(',').map((email) => email.trim().toLowerCase()).filter(Boolean);
+  if (!allowed.includes(String(req.user.email || '').toLowerCase())) {
+    return next(new AuthorizationError('Platform admin access is required'));
+  }
+  next();
+}
+
 /** Common scope resolvers for route params (and a couple body-based ones). */
 const scope = {
   clan: (param = 'id') => async (req) => authzService.scopeOfClan(req.params[param]),
@@ -223,5 +239,6 @@ module.exports = {
   requireMenteeBodyAccess,
   requirePermissionAnyScope,
   requirePermissionMinScope,
+  requirePlatformAdmin,
   scope
 };

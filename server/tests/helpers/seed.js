@@ -59,9 +59,9 @@ async function cleanDb() {
     'points_history',
     'notifications',
     'user_badges',
-    // Stored AI keys. Nothing else seeds these, and leaving them behind meant a
-    // key added by one test was still resolvable in the next, so a test
-    // asserting "no key configured" passed or failed on run order.
+    'talk_category_links',
+    'talks',
+    'talk_categories',
     'ai_connections',
     'users',
   ];
@@ -264,8 +264,8 @@ async function createProgram({ createdBy, name = 'Test Program', status = 'publi
 // first assertion. They are gone rather than stubbed — a helper for a concept
 // the product no longer has would only invite the next test to depend on it.
 
-async function createRoadmap({ programId, createdBy } = {}) {
-  return models.Roadmap.create({ programId, createdBy, name: 'Test Roadmap', description: 'Test roadmap' });
+async function createRoadmap({ programId, createdBy, name = 'Test Roadmap' } = {}) {
+  return models.Roadmap.create({ programId, createdBy, name, description: 'Test roadmap' });
 }
 
 async function createRoadmapTask({ roadmapId, title = 'Build REST API', estimatedHours = 5, taskOrder = 1 } = {}) {

@@ -1,10 +1,18 @@
 const { catchAsync } = require('../middlewares/errorHandler');
 const { successResponse } = require('../utils/responses');
 const announcementService = require('../services/announcementService');
+const { portalOf, requestedClanId } = require('../middlewares/portalScope');
 
 const list = catchAsync(async (req, res) => {
   const { limit, offset } = req.query;
-  const { items, pagination } = await announcementService.list(req.user, { limit, offset });
+  // Which hat the caller has on, and the clan their sidebar is set to. Both
+  // only ever narrow — see middlewares/portalScope.
+  const { items, pagination } = await announcementService.list(req.user, {
+    limit,
+    offset,
+    portalRole: portalOf(req).role,
+    clanId: requestedClanId(req),
+  });
   // `announcements` stays an array at the same path, so existing callers that
   // ignore `pagination` keep working unchanged.
   res.status(200).json(

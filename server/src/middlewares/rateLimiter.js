@@ -196,8 +196,27 @@ const workspaceCreationLimiter = make({
   skipSuccessfulRequests: false,
 });
 
+// Owner activation is unauthenticated (it is how the first password gets set),
+// so it is paced per caller IP like other public auth endpoints.
+const platformActivationLimiter = make({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: 'Too many activation attempts. Please try again later.',
+  skipSuccessfulRequests: false,
+});
+
+// Public lead intake from the marketing site.
+const buyerLeadLimiter = make({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  message: 'Too many enquiries from this address. Please try again later.',
+  skipSuccessfulRequests: false,
+});
+
 module.exports = {
   workspaceCreationLimiter,
+  platformActivationLimiter,
+  buyerLeadLimiter,
   loginLimiter,
   passwordResetLimiter,
   signInLinkLimiter,

@@ -9,6 +9,7 @@ import {
   PopoverContent,
 } from '@/components/ui/popover';
 import type { ChatMessage } from '@/lib/types/messaging';
+import { Spinner } from '@/components/shared/LoadingSpinner';
 
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '🎉', '😢', '🙏'];
 const LONG_PRESS_MS = 420;
@@ -260,7 +261,7 @@ export default function MessageItem({
                     if (isTemp) {
                       return (
                         <span className="inline-flex" title="Sending...">
-                          <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin self-center" />
+                          <Spinner size="xs" className="h-3 w-3 self-center text-white" />
                         </span>
                       );
                     }
@@ -310,7 +311,16 @@ export default function MessageItem({
                 e.stopPropagation();
                 openReactions();
               }}
-              className={`absolute top-1/2 z-[1] -translate-y-1/2 inline-flex h-9 w-9 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm opacity-0 transition-opacity duration-150 motion-reduce:transition-none group-hover/msg:opacity-100 hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-brand-500 ${
+              /*
+                  Pinned to the TOP of the bubble, not its middle.
+                  The picker opens above the bubble — that is where WhatsApp
+                  puts it too — so a centred button on a four-line message
+                  left the two a hundred pixels apart: you clicked beside the
+                  third line and the keys appeared above the first, over the
+                  date divider. Top-aligned, the button and the keys it opens
+                  are always next to each other, whatever the message's height.
+              */
+              className={`absolute top-1.5 z-[1] inline-flex h-9 w-9 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm opacity-0 transition-opacity duration-150 motion-reduce:transition-none group-hover/msg:opacity-100 hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-brand-500 ${
                 isMine ? 'left-0' : 'right-0'
               } ${reactionsOpen ? 'opacity-100' : ''}`}
             >
@@ -362,12 +372,27 @@ export default function MessageItem({
             </div>
           )}
 
+          {/*
+              Positioned the way WhatsApp Web does it: a compact pill directly
+              above the bubble, aligned to the bubble's near edge, flipping
+              below when the message is at the very top of the thread.
+
+              It was translucent — bg-card/95 over a backdrop blur — and a
+              floating bar you can see through does not read as floating, it
+              reads as broken: the message behind it bled through the emoji
+              and the sender's name showed straight out of the middle of the
+              picker. It is opaque now, with a real shadow and a ring to lift
+              it off the thread, and the keys are 36px rather than 44 so it
+              covers less of the conversation while it is open.
+          */}
           <PopoverContent
             side="top"
             align={isMine ? 'end' : 'start'}
-            sideOffset={10}
+            sideOffset={4}
+            alignOffset={isMine ? -2 : 2}
+            collisionPadding={12}
             onOpenAutoFocus={(e) => e.preventDefault()}
-            className="w-auto max-w-[calc(100vw-2rem)] rounded-full border border-border/80 bg-card/95 p-1.5 shadow-lg backdrop-blur-md data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-90 data-[state=open]:slide-in-from-bottom-2 data-[state=open]:duration-200 motion-reduce:data-[state=open]:animate-none"
+            className="w-auto max-w-[calc(100vw-2rem)] rounded-full border border-border bg-card p-1 shadow-xl ring-1 ring-black/5 dark:ring-white/10 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-90 data-[side=top]:data-[state=open]:slide-in-from-bottom-1 data-[side=bottom]:data-[state=open]:slide-in-from-top-1 data-[state=open]:duration-150 motion-reduce:data-[state=open]:animate-none"
             aria-label="Choose a reaction"
           >
             <div className="flex items-center gap-0.5">
@@ -386,7 +411,7 @@ export default function MessageItem({
                       void react(emoji);
                     }}
                     style={{ animationDelay: `${i * 28}ms` }}
-                    className={`flex h-11 w-11 items-center justify-center rounded-full text-[1.45rem] leading-none transition-transform duration-200 ease-out motion-reduce:transition-none hover:scale-125 hover:bg-muted/80 active:scale-110 focus-visible:outline-2 focus-visible:outline-brand-500 animate-in fade-in zoom-in-75 duration-200 fill-mode-both motion-reduce:animate-none ${
+                    className={`flex h-10 w-10 items-center justify-center rounded-full text-[1.55rem] leading-none transition-transform duration-200 ease-out motion-reduce:transition-none hover:scale-125 hover:bg-muted active:scale-110 focus-visible:outline-2 focus-visible:outline-brand-500 animate-in fade-in zoom-in-75 duration-200 fill-mode-both motion-reduce:animate-none ${
                       mine ? 'bg-muted scale-110 ring-1 ring-brand-500/30' : ''
                     }`}
                   >

@@ -2,14 +2,15 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Loader2, LogOut, RefreshCw, ShieldCheck } from 'lucide-react';
+import { LogOut, RefreshCw, ShieldCheck } from 'lucide-react';
+import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { useAuth } from '@/lib/context/AuthContext';
 import { CreateWorkspaceDrawer } from '@/components/settings/OrganizationSettingsTab';
 import { WorkspaceChooser } from '@/components/shared/WorkspaceChooser';
 import { restoreAccessToken, SessionExpiredError } from '@/lib/services/auth-session';
 import { organizationsApi, OrganizationSummary, resolveWorkspaceEntry } from '@/lib/services/organizations-api';
 import { tokenStore } from '@/lib/services/token-store';
-import { activeWorkspaceSlug, switchWorkspace } from '@/lib/services/workspace-scope';
+import { rememberedWorkspaceSlug, switchWorkspace } from '@/lib/services/workspace-scope';
 import '@/styles/public-appearance.css';
 
 type GatewayState = 'checking' | 'opening' | 'choose' | 'error';
@@ -37,7 +38,7 @@ export default function HomePage() {
   const [canCreate, setCanCreate] = useState(false);
   const [creating, setCreating] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const recentSlug = activeWorkspaceSlug();
+  const recentSlug = rememberedWorkspaceSlug();
   const cachedUser = tokenStore.getUser<{ firstName?: string; email?: string }>();
 
   const loadAccount = useCallback(async () => {
@@ -49,7 +50,7 @@ export default function HomePage() {
       }
 
       const account = await organizationsApi.account();
-      const decision = resolveWorkspaceEntry(account.organizations, activeWorkspaceSlug());
+      const decision = resolveWorkspaceEntry(account.organizations, rememberedWorkspaceSlug());
       if (decision.kind === 'open') {
         setState('opening');
         switchWorkspace(decision.workspace.slug);
@@ -83,12 +84,10 @@ export default function HomePage() {
   if (state === 'checking' || state === 'opening') {
     return (
       <main data-public-appearance className="grid min-h-screen place-items-center bg-[var(--background)] px-6">
-        <div role="status" className="flex flex-col items-center gap-3 text-sm font-medium text-slate-600">
-          <span className="grid h-14 w-14 place-items-center rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
-            <Loader2 className="h-6 w-6 animate-spin text-brand-600" aria-hidden="true" />
-          </span>
-          <span>{state === 'opening' ? 'Opening your recent workspace…' : 'Checking your Pathment account…'}</span>
-        </div>
+        <LoadingSpinner
+          variant="page"
+          message={state === 'opening' ? 'Opening your recent workspace…' : 'Checking your Pathment account…'}
+        />
       </main>
     );
   }

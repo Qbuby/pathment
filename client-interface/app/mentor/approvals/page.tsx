@@ -22,6 +22,7 @@ import { todayInZone, dateInZone, addDaysToDateStr, zoneLabel } from '@/lib/util
 const TASK_TYPE_LABEL: Record<string, string> = {
   assignment: 'Assignment', project: 'Project', quiz: 'Quiz', reading: 'Reading',
   video: 'Video', discussion: 'Discussion', interview: 'Interview', custom: 'Custom',
+  open_source: 'Open Source', talk: 'Talk / Podcast',
 };
 
 function timeAgo(iso: string): string {
@@ -227,6 +228,14 @@ export default function MentorApprovals() {
   const nextWritable = filteredReview.find((i) => !itemLocked(i)) ?? null;
   const selectedAllWritable = selectedItems.length > 0 && selectedItems.every((i) => !itemLocked(i));
   const reviewingLocked = reviewing ? itemLocked(reviewing) : false;
+
+  // "Next" in the review drawer walks the To-review list in the order it is
+  // shown. Interviews and quizzes open their own drawers, so they are skipped.
+  const reviewOrder = useMemo(
+    () => (groupByTask ? groups.flatMap((g) => g.items) : filteredReview).filter((i) => i.type !== 'interview' && i.type !== 'quiz'),
+    [groupByTask, groups, filteredReview]
+  );
+  const reviewingIndex = reviewing ? reviewOrder.findIndex((i) => i.submissionId === reviewing.submissionId) : -1;
 
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -908,6 +917,16 @@ export default function MentorApprovals() {
         <ReviewDrawer
           item={reviewing}
           readOnly={reviewingLocked}
+          showMentee
+          next={reviewOrder.length > 1 && reviewingIndex >= 0 ? {
+            onClick: () => setReviewing(reviewOrder[reviewingIndex + 1] ?? reviewing),
+            disabled: reviewingIndex === reviewOrder.length - 1,
+            position: `${reviewingIndex + 1} of ${reviewOrder.length}`,
+          } : undefined}
+          prev={reviewOrder.length > 1 && reviewingIndex >= 0 ? {
+            onClick: () => setReviewing(reviewOrder[reviewingIndex - 1] ?? reviewing),
+            disabled: reviewingIndex === 0,
+          } : undefined}
           onClose={() => setReviewing(null)}
           onReviewed={() => { setSelected(new Set()); refetch(); }}
         />

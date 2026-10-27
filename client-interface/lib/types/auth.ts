@@ -4,11 +4,14 @@ export interface User {
   email: string;
   role: UserRole;
   /**
-   * Platform capabilities (role views the user can switch into). Always a
-   * superset that includes `role`. A user can be e.g. an admin who is also a
-   * mentee, or a mentee later elevated to mentor.
+   * What this account can do, as the server derives it.
+   *
+   * A superset of the portal roles the user can switch into, plus
+   * capabilities that are not a portal of their own — `candidate` means they
+   * are in a selection pool, which opens the learner workspace in pool scope
+   * rather than a fourth portal.
    */
-  capabilities?: UserRole[];
+  capabilities?: Capability[];
   /** Active clan memberships (clan-scoped roles), returned by /auth/me. */
   clanMemberships?: ClanMembership[];
   firstName: string;
@@ -26,6 +29,9 @@ export interface User {
 }
 
 export type UserRole = 'admin' | 'mentor' | 'mentee';
+
+/** A portal role, or a capability that is not a portal. */
+export type Capability = UserRole | 'candidate';
 
 /** Clan-scoped role (distinct from platform role/capabilities). */
 export type ClanRole = 'lead_mentor' | 'co_mentor' | 'mentee' | 'core_team';

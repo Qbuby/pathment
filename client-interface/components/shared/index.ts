@@ -10,7 +10,7 @@ export type { EmptyStateProps, EmptyStateAction } from './EmptyState';
 
 export { ErrorState } from './ErrorState';
 
-export { LoadingSpinner, LoadingDots } from './LoadingSpinner';
+export { LoadingSpinner, LoadingDots, Spinner } from './LoadingSpinner';
 
 export { TaskCard } from './TaskCard';
 export type { TaskCardProps } from './TaskCard';

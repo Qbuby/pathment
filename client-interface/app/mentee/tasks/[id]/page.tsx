@@ -1,8 +1,8 @@
 "use client";
 
 import { OpenSourceOrgAvatar } from "@/components/shared/OpenSourceOrgAvatar";
-import { use, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, use, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   CheckCircle2,
   Calendar,
@@ -21,6 +21,7 @@ import {
   Mic,
   ListChecks,
   Code2,
+  Video,
 } from "lucide-react";
 import { ResourceLink } from "@/components/shared/ResourceLink";
 import { SubmissionFileList } from "@/components/shared/SubmissionFileList";
@@ -33,7 +34,10 @@ import { TaskProgressTimeline } from "@/components/shared/TaskProgressTimeline";
 import { SubmitTaskDrawer } from "@/components/mentee/SubmitTaskDrawer";
 import { InterviewReviewDrawer } from "@/components/mentor/InterviewReviewDrawer";
 import { isMissingDescription } from "@/lib/utils/html";
+import { TalkReviewSection } from "@/components/mentee/TalkReviewSection";
+import { CourseProgressCard } from "@/components/shared/CourseProgressCard";
 import { useClan, isHistoricalCohortClan } from "@/lib/context/ClanContext";
+import { PoolTaskDetail } from "@/components/mentee/pool/PoolTaskDetail";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -41,6 +45,29 @@ interface PageProps {
 
 export default function TaskDetailsPage({ params }: PageProps) {
   const resolvedParams = use(params);
+  // `useSearchParams` needs a Suspense boundary above it to prerender.
+  return (
+    <Suspense fallback={<div className="flex justify-center py-24"><Loader2 className="h-6 w-6 animate-spin text-brand-600" /></div>}>
+      <TaskDetailsRoute id={resolvedParams.id} />
+    </Suspense>
+  );
+}
+
+function TaskDetailsRoute({ id }: { id: string }) {
+  /*
+   * `?pool=1` says this id is qualifying work, not clan work.
+   *
+   * It is a flag rather than a guess because the two live in the same table
+   * behind a fence: pool work is invisible to every ordinary task query, so
+   * asking the clan endpoint first would 404 before falling through. The
+   * links that get here all carry it (see `poolTaskHref`).
+   */
+  const isPoolWork = useSearchParams().get('pool') === '1';
+  return isPoolWork ? <PoolTaskDetail id={id} /> : <ClanTaskDetail id={id} />;
+}
+
+function ClanTaskDetail({ id }: { id: string }) {
+  const resolvedParams = { id };
   const router = useRouter();
   const { menteeClans, menteeActiveClanId } = useClan();
   const historical = isHistoricalCohortClan(
@@ -147,6 +174,9 @@ export default function TaskDetailsPage({ params }: PageProps) {
   // Quiz tasks run in the quiz runner (start/resume/retake/view) — never the submit drawer.
   const isQuiz = (task.roadmapTask?.type || task.type) === "quiz";
   const openQuiz = () => router.push(`/mentee/quizzes/${task.id}`);
+  const isTalk = (task.roadmapTask?.type || task.type) === "talk" || (task.talks && task.talks.length > 0);
+  // Course tasks are studied on Buildment and complete themselves from its progress.
+  const isCourse = (task.roadmapTask?.type || task.type) === "course";
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -166,6 +196,11 @@ export default function TaskDetailsPage({ params }: PageProps) {
               ) : (
                 <span className="px-2 py-1 bg-brand-100 text-brand-700 rounded text-xs font-medium flex items-center gap-1">
                   <BookOpen className="w-3 h-3" /> Roadmap
+                </span>
+              )}
+              {isTalk && (
+                <span className="px-2 py-1 bg-indigo-100 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 rounded text-xs font-medium flex items-center gap-1">
+                  <Video className="w-3 h-3" /> Talk / Podcast
                 </span>
               )}
             </div>
@@ -353,6 +388,8 @@ export default function TaskDetailsPage({ params }: PageProps) {
             </div>
           )
         )
+      ) : isCourse ? (
+        <CourseProgressCard taskId={task.id} viewer="mentee" onTaskStatusChange={refetch} />
       ) : (
         canSubmit && (
           <div className="flex flex-col items-end gap-1">
@@ -452,6 +489,10 @@ export default function TaskDetailsPage({ params }: PageProps) {
                 </div>
               )}
 
+            {task?.talks && task.talks.length > 0 && (
+              <TalkReviewSection talks={task.talks} />
+            )}
+
             {taskDeliverable && (
               <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
                 <p className="text-sm font-medium text-blue-900 mb-1">
@@ -507,12 +548,16 @@ export default function TaskDetailsPage({ params }: PageProps) {
             <div className="rounded-2xl border border-border bg-card p-8 text-center">
               <FileText className="h-8 w-8 mx-auto mb-3 text-brand-600" />
               <h2 className="font-semibold">
-                {isQuiz || isInterview
+                {isCourse
+                  ? "Your course"
+                  : isQuiz || isInterview
                   ? "Your assessment"
                   : "Your work will appear here"}
               </h2>
               <p className="text-sm text-muted-foreground mt-2">
-                {isQuiz || isInterview
+                {isCourse
+                  ? "There is nothing to hand in — this task completes automatically when you finish the course on Buildment."
+                  : isQuiz || isInterview
                   ? "Use the assessment button above to open your work or view your results."
                   : "Submit your work when it’s ready. Your files and mentor’s feedback will stay together here."}
               </p>
@@ -822,7 +867,7 @@ export default function TaskDetailsPage({ params }: PageProps) {
           )}
         </section>
       )}
-      {!isInterview && !isQuiz && (
+      {!isInterview && !isQuiz && !isCourse && (
         <SubmitTaskDrawer
           open={submitOpen}
           task={{

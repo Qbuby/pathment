@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Bot, Check, Wand2, Loader2, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Bot, Check, Wand2, Loader2, ChevronRight, ChevronLeft, Settings2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { messagingApi } from '@/lib/services/messaging-api';
@@ -17,6 +17,8 @@ import type { ChatMessage, ConversationSummary, MessageReaction, SearchableUser 
 
 import ConversationList from './ConversationList';
 import ChatWindow from './ChatWindow';
+import { ReplyAssistantDrawer } from '@/components/mentor/ReplyAssistantDrawer';
+import { useAutoReply } from '@/lib/hooks/mentor/useAutoReply';
 
 interface MessageCenterProps {
   role: 'admin' | 'mentor' | 'mentee';
@@ -48,6 +50,14 @@ export default function MessageCenter({ role }: MessageCenterProps) {
   const [isApprovingDraft, setIsApprovingDraft] = useState(false);
   const [isRejectingDraft, setIsRejectingDraft] = useState(false);
   const [isDraftsExpanded, setIsDraftsExpanded] = useState(false);
+  const [isAssistantSetupOpen, setIsAssistantSetupOpen] = useState(false);
+  /**
+   * Whether reply assistance is actually set up, asked here so the panel can
+   * say WHY there is nothing to show. "No pending drafts" is true whether the
+   * feature is humming along with nothing to say or was never switched on, and
+   * a mentor reading it had no way to tell which, nor anywhere to go.
+   */
+  const { status: assistantStatus } = useAutoReply();
   const [generatingConversationIds, setGeneratingConversationIds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'archived'>('all');
   const [hasMore, setHasMore] = useState(true);
@@ -773,9 +783,37 @@ export default function MessageCenter({ role }: MessageCenterProps) {
                 </div>
                 <div className="space-y-3">
                   {draftCount === 0 && !isGenerating && (
-                    <div className="py-4 text-center">
-                      <p className="text-xs text-muted-foreground">No pending drafts for this conversation.</p>
-                    </div>
+                    assistantStatus && (!assistantStatus.canEnable || !assistantStatus.enabled) ? (
+                      <div className="rounded-xl border border-border bg-muted/40 p-3">
+                        <p className="text-xs font-medium text-foreground">
+                          {assistantStatus.canEnable
+                            ? 'Reply assistance is ready, but switched off.'
+                            : 'Reply assistance is not set up yet.'}
+                        </p>
+                        <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+                          {assistantStatus.canEnable
+                            ? 'Turn it on and drafts will appear here as mentees write to you.'
+                            : 'It writes drafts in your own words, grounded in your own material. Three short steps, right here.'}
+                        </p>
+                        <button
+                          onClick={() => setIsAssistantSetupOpen(true)}
+                          className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 transition-colors"
+                        >
+                          <Settings2 className="w-3.5 h-3.5" />
+                          {assistantStatus.canEnable ? 'Turn it on' : 'Set it up'}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="py-4 text-center">
+                        <p className="text-xs text-muted-foreground">No pending drafts for this conversation.</p>
+                        <button
+                          onClick={() => setIsAssistantSetupOpen(true)}
+                          className="mt-1.5 text-[11px] font-medium text-brand-600 hover:underline"
+                        >
+                          Reply assistance settings
+                        </button>
+                      </div>
+                    )
                   )}
                   {conversationDrafts.map(draft => {
                     const isEditing = editingDraftId === draft.id;
@@ -849,7 +887,7 @@ export default function MessageCenter({ role }: MessageCenterProps) {
                   {/* Generating loader row — appears while RAG pipeline is running */}
                   {isGenerating && (
                     <div className="flex items-center gap-2.5 bg-brand-500/10 border border-brand-500/20 rounded-xl px-3 py-2.5">
-                      <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-500 shrink-0" />
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-600 shrink-0" />
                       <span className="text-xs text-brand-600 dark:text-brand-400 font-medium">Generating new draft…</span>
                     </div>
                   )}
@@ -871,6 +909,29 @@ export default function MessageCenter({ role }: MessageCenterProps) {
               </button>
             );
           })()}
+          {/*
+            * An admin has no drafts panel of their own - auto reply is a
+            * mentor's feature - but they are the only person who can add the
+            * workspace-wide key that clears step one for every mentor. A quiet
+            * pill rather than the mentor's brand button: it is a setup door,
+            * not something they use in the course of a conversation.
+            */}
+          {role === 'admin' && selectedConversationId && (
+            <button
+              onClick={() => setIsAssistantSetupOpen(true)}
+              className="absolute bottom-20 right-6 z-20 flex items-center gap-1.5 rounded-xl border border-border bg-card/95 px-3 py-2 text-xs font-medium text-muted-foreground shadow-lg backdrop-blur-xl transition-colors hover:text-foreground"
+            >
+              <Settings2 className="w-3.5 h-3.5" />
+              Reply assistance
+            </button>
+          )}
+          {(role === 'mentor' || role === 'admin') && (
+            <ReplyAssistantDrawer
+              open={isAssistantSetupOpen}
+              onClose={() => setIsAssistantSetupOpen(false)}
+              role={role === 'admin' ? 'admin' : 'mentor'}
+            />
+          )}
           <ChatWindow
             selectedConversation={selectedConversation}
             selectedTitle={selectedTitle}

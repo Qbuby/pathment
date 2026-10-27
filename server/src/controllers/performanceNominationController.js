@@ -1,6 +1,7 @@
 const { catchAsync } = require('../middlewares/errorHandler');
 const { successResponse } = require('../utils/responses');
 const service = require('../services/performanceNominationService');
+const { requestedClanId } = require('../middlewares/portalScope');
 
 /** The data's own ranking for a clan or a whole programme. */
 const evidence = catchAsync(async (req, res) => {
@@ -9,8 +10,11 @@ const evidence = catchAsync(async (req, res) => {
 
 const getRanking = catchAsync(async (req, res) => {
   const data = await service.ranking({
+    // The caller decides the scope. Without this the service ranked whatever
+    // clan the query string named, for anybody signed in.
+    user: req.user,
     programId: req.query.programId,
-    clanId: req.query.clanId || null,
+    clanId: req.query.clanId || requestedClanId(req) || null,
     limit: Number(req.query.limit) || 50
   });
   res.status(200).json(successResponse('Performance ranking', data));
@@ -20,7 +24,10 @@ const list = catchAsync(async (req, res) => {
   const data = await service.list({
     user: req.user,
     programId: req.query.programId || null,
-    status: req.query.status || null
+    status: req.query.status || null,
+    // An explicit clan wins; otherwise the portal's own selected clan, which
+    // is the one the mentor is looking at.
+    clanId: req.query.clanId || requestedClanId(req) || null
   });
   res.status(200).json(successResponse('Nominations retrieved', data));
 });

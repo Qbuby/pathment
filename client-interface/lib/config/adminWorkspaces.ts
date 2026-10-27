@@ -2,7 +2,13 @@ export interface AdminWorkspaceTab {
   href: string;
   label: string;
   permission?: string;
+  /** Shown when the user holds ANY of these (e.g. every pool.* permission). */
+  anyOf?: string[];
 }
+
+/** Any one of these opens Selection pools — operators and reviewers alike. */
+export const POOL_PERMISSION_KEYS = ["pool.manage", "pool.members", "pool.assign", "pool.review", "pool.select"];
+
 export const adminWorkspaces: { label: string; tabs: AdminWorkspaceTab[] }[] = [
   {
     label: "Admissions",
@@ -11,6 +17,11 @@ export const adminWorkspaces: { label: string; tabs: AdminWorkspaceTab[] }[] = [
         href: "/admin/cohorts",
         label: "Intake",
         permission: "intake.manage",
+      },
+      {
+        href: "/admin/pools",
+        label: "Selection pools",
+        anyOf: POOL_PERMISSION_KEYS,
       },
       {
         href: "/admin/assessments",
@@ -52,6 +63,11 @@ export const adminWorkspaces: { label: string; tabs: AdminWorkspaceTab[] }[] = [
         label: "Clan requests",
         permission: "mentee.manage",
       },
+      {
+        href: "/admin/pool",
+        label: "Handover pool",
+        permission: "mentee.transfer",
+      },
     ],
   },
   {
@@ -75,6 +91,10 @@ export const adminWorkspaces: { label: string; tabs: AdminWorkspaceTab[] }[] = [
       {
         href: "/admin/library",
         label: "Library",
+      },
+      {
+        href: "/admin/talks",
+        label: "Talks",
       },
       {
         href: "/admin/mentor-spec",
@@ -111,6 +131,11 @@ export const adminWorkspaces: { label: string; tabs: AdminWorkspaceTab[] }[] = [
     label: "Community",
     tabs: [
       {
+        href: "/admin/community",
+        label: "Conversations",
+        permission: "community.moderate",
+      },
+      {
         href: "/admin/announcements",
         label: "Announcements",
         permission: "community.moderate",
@@ -136,13 +161,16 @@ export const adminWorkspaces: { label: string; tabs: AdminWorkspaceTab[] }[] = [
     label: "Insights",
     tabs: [
       {
-        href: "/admin/insights",
-        label: "Overview",
-        permission: "analytics.view",
+        // Gated on mentee.view rather than analytics.view: this shows one
+        // person's work by name, which is a different thing from seeing the
+        // numbers in aggregate.
+        href: "/admin/reports",
+        label: "Reports",
+        permission: "mentee.view",
       },
       {
-        href: "/admin/review-records",
-        label: "Review records",
+        href: "/admin/insights",
+        label: "Overview",
         permission: "analytics.view",
       },
       {
@@ -168,11 +196,6 @@ export const adminWorkspaces: { label: string; tabs: AdminWorkspaceTab[] }[] = [
       {
         href: "/admin/emails",
         label: "Email queue",
-        permission: "system.settings",
-      },
-      {
-        href: "/admin/changelog",
-        label: "What's new",
         permission: "system.settings",
       },
     ],

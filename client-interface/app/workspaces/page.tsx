@@ -11,7 +11,7 @@ import { useApiQuery } from '@/lib/query/useApiQuery';
 import { CreateWorkspaceDrawer } from '@/components/settings/OrganizationSettingsTab';
 import { tokenStore } from '@/lib/services/token-store';
 import { WorkspaceChooser } from '@/components/shared/WorkspaceChooser';
-import { activeWorkspaceSlug } from '@/lib/services/workspace-scope';
+import { rememberedWorkspaceSlug } from '@/lib/services/workspace-scope';
 import '@/styles/public-appearance.css';
 
 export default function WorkspacesPage() {
@@ -43,7 +43,7 @@ export default function WorkspacesPage() {
         <p className="mt-3 leading-7 text-slate-600">Switch organizations without signing in again. Your people, programs, and roles stay separate.</p>
       </div>
       {!hasSession ? <div className="mt-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><p className="text-sm text-slate-600">Your session has ended. Sign in to see the organizations connected to your account.</p><Link href="/login" className="mt-4 inline-flex items-center gap-2 rounded-xl bg-brand-600 px-5 py-3 text-sm font-semibold text-white"><LogIn className="h-4 w-4" aria-hidden="true" />Sign in</Link></div> : <>
-        {loading ? <div role="status" className="mt-10 flex items-center gap-3 text-sm text-slate-600"><Loader2 className="h-5 w-5 animate-spin text-brand-600" />Loading your organizations…</div> : error ? <div role="alert" className="mt-8 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-950"><p>{error}</p><button onClick={() => void refetch()} className="mt-3 font-semibold text-brand-700">Try again</button></div> : <div className="mt-8"><WorkspaceChooser organizations={workspaces} recentSlug={activeWorkspaceSlug()} onOpen={switchWorkspace} canCreate={canCreate} onCreate={() => setCreating(true)} /></div>}
+        {loading ? <div role="status" className="mt-10 flex items-center gap-3 text-sm text-slate-600"><Loader2 className="h-5 w-5 animate-spin text-brand-600" />Loading your organizations…</div> : error ? <div role="alert" className="mt-8 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-950"><p>{error}</p><button onClick={() => void refetch()} className="mt-3 font-semibold text-brand-700">Try again</button></div> : <div className="mt-8"><WorkspaceChooser organizations={workspaces} recentSlug={rememberedWorkspaceSlug()} onOpen={switchWorkspace} canCreate={canCreate} onCreate={() => setCreating(true)} /></div>}
         {!loading && !error && !canCreate && <p className="mt-6 text-center text-xs text-slate-500">Only active organization memberships are shown.</p>}
         {creating && canCreate && <CreateWorkspaceDrawer onClose={() => setCreating(false)} onCreated={switchWorkspace} />}
       </>}

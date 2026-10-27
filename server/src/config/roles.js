@@ -27,10 +27,27 @@ const ROLES = {
       P.INTAKE_MANAGE, P.ASSESSMENT_AUTHOR, P.INVITE_CREATE,
       P.CLAN_CREATE, P.CLAN_MANAGE_MEMBERS,
       P.TASK_ASSIGN, P.TASK_REVIEW, P.MENTEE_VIEW, P.MENTEE_MANAGE, P.MENTEE_TRANSFER,
-      P.CERTIFICATE_VERIFY,
+      P.CERTIFICATE_VERIFY, P.SCHEDULE_PLAN, P.SCHEDULE_ASSIGN,
       P.LIBRARY_MANAGE, P.ANNOUNCEMENT_POST,
-      P.COMMUNITY_POST, P.COMMUNITY_MODERATE, P.ANALYTICS_VIEW, P.GAMIFICATION_MANAGE, P.FEEDBACK_MANAGE
+      P.COMMUNITY_POST, P.COMMUNITY_MODERATE, P.ANALYTICS_VIEW, P.GAMIFICATION_MANAGE, P.FEEDBACK_MANAGE,
+      P.POOL_MANAGE, P.POOL_MEMBERS, P.POOL_ASSIGN, P.POOL_REVIEW, P.POOL_SELECT
     ]
+  },
+  // ── System Pool (pre-clan selection) ───────────────────────────────────────
+  // Granted at PROGRAM scope. Neither is an admin-tier role: holding one opens
+  // the Selection pools area and nothing else — not the programme's mentees,
+  // cohorts or clans.
+  pool_operator: {
+    label: 'Pool operator',
+    scope: 'program',
+    description: 'Runs a programme\'s selection pools: candidates, work, shortlist and placement.',
+    permissions: [P.POOL_MANAGE, P.POOL_MEMBERS, P.POOL_ASSIGN, P.POOL_REVIEW, P.POOL_SELECT]
+  },
+  pool_reviewer: {
+    label: 'Pool reviewer',
+    scope: 'program',
+    description: 'Reviews pool candidates\' qualifying work. Does not make them their mentor.',
+    permissions: [P.POOL_REVIEW]
   },
   intake_manager: {
     label: 'Intake manager',
@@ -64,7 +81,7 @@ const ROLES = {
     description: 'Leads a clan - full mentoring plus member management.',
     permissions: [
       P.TASK_ASSIGN, P.TASK_REVIEW, P.MENTEE_VIEW, P.MENTEE_MANAGE, P.MENTEE_ADD, P.MENTEE_TRANSFER,
-      P.CERTIFICATE_VERIFY,
+      P.CERTIFICATE_VERIFY, P.SCHEDULE_PLAN, P.SCHEDULE_ASSIGN,
       P.CLAN_MANAGE_MEMBERS, P.CLAN_AVATAR, P.ROADMAP_PUBLISH_LOCAL, P.LIBRARY_MANAGE,
       P.ANNOUNCEMENT_POST, P.ANALYTICS_VIEW, P.COMMUNITY_POST
     ]
@@ -79,7 +96,7 @@ const ROLES = {
     // toggleable so a lead can revoke them per co-mentor.
     permissions: [
       P.TASK_ASSIGN, P.TASK_REVIEW, P.MENTEE_VIEW, P.MENTEE_MANAGE, P.MENTEE_ADD, P.MENTEE_TRANSFER,
-      P.CERTIFICATE_VERIFY, P.CLAN_AVATAR,
+      P.CERTIFICATE_VERIFY, P.SCHEDULE_PLAN, P.SCHEDULE_ASSIGN, P.CLAN_AVATAR,
       P.ROADMAP_PUBLISH_LOCAL, P.LIBRARY_MANAGE, P.ANNOUNCEMENT_POST,
       P.ANALYTICS_VIEW, P.COMMUNITY_POST
     ]
@@ -96,7 +113,8 @@ const ROLES = {
     label: 'Mentee',
     scope: 'self',
     description: 'A learner working their own roadmap.',
-    permissions: [P.COMMUNITY_POST]
+    // `schedule.plan` at SELF scope: arrange your own day, and nobody else's.
+    permissions: [P.COMMUNITY_POST, P.SCHEDULE_PLAN]
   }
 };
 

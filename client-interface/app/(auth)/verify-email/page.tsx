@@ -8,6 +8,7 @@ import { apiClient } from '@/lib/services/api-client';
 import { apiConfig } from '@/lib/config/api';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
 import { workspacePath } from '@/lib/services/workspace-scope';
+import { Spinner } from '@/components/shared/LoadingSpinner';
 
 export default function VerifyEmailPage() {
   const router = useRouter();
@@ -95,7 +96,7 @@ export default function VerifyEmailPage() {
           )}
           {status === 'verifying' && (
             <div className="w-20 h-20 bg-brand-100 rounded-full flex items-center justify-center">
-              <RotateCw className="w-10 h-10 text-brand-600 animate-spin" />
+              <Spinner size="lg" className="h-10 w-10" />
             </div>
           )}
           {status === 'success' && (

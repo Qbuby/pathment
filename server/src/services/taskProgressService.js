@@ -4,9 +4,29 @@ const { todayInZone } = require('../utils/timezone');
 const authzService = require('./authzService');
 const clanLifecycleService = require('./clanLifecycleService');
 
-/** How long after its day an entry stays editable. */
-const EDIT_WINDOW_HOURS = 48;
 const MAX_NOTE_LENGTH = 2000;
+/** How far back the log window ever reaches. Keeps an ancient assignment from drawing a hundred rows. */
+const MAX_DAYS = 30;
+
+/**
+ * While the work is still in the mentee's hands, the log is theirs to write:
+ * today's line, and any day they meant to write and did not.
+ *
+ * The moment it is handed over it freezes. That is the line this feature needs
+ * — not "today only", which makes an honest mentee's forgotten Tuesday
+ * unrecoverable, and not "always", which lets the week be composed the morning
+ * of the review. A record a mentor is reading is only worth reading if nobody
+ * can tidy it while they read it.
+ */
+const OPEN_STATUSES = ['assigned', 'in_progress', 'revision_needed'];
+const CLOSED_BECAUSE = {
+  submitted: 'Your mentor has this now, so the log is closed.',
+  completed: 'This task is finished, so its log is closed.',
+  cancelled: 'This task was cancelled, so its log is closed.',
+};
+const closedBecause = (status) => (OPEN_STATUSES.includes(status)
+  ? null
+  : CLOSED_BECAUSE[status] || 'This task is closed, so its log cannot change.');
 
 /**
  * taskProgressService - a mentee's day-by-day notes on one assigned task.
@@ -16,15 +36,74 @@ const MAX_NOTE_LENGTH = 2000;
  * days one and two IS the signal, so gaps are preserved and surfaced rather than
  * collapsed away.
  *
- * Writing progress also upserts the day's DailyLogEntry, so logging on the task
- * counts toward the streak. That is the point of putting it here: the daily log
- * stops being a chore on a separate page and happens where the work happens.
+ * Writing TODAY's progress also upserts the day's DailyLogEntry, so logging on
+ * the task counts toward the streak. That is the point of putting it here: the
+ * daily log stops being a chore on a separate page and happens where the work
+ * happens. Filling in an earlier day does not move the streak — see log().
  */
 class TaskProgressService {
+  /** The mentee's own timezone. Every day boundary in here is theirs, not UTC's and not the browser's. */
+  async _zoneFor(menteeId) {
+    const settings = await models.UserSettings.findOne({ where: { userId: menteeId }, attributes: ['timezone'] });
+    return settings?.timezone || 'UTC';
+  }
+
   /** Today's calendar day in the MENTEE's own timezone, never UTC and never the client's word. */
   async _todayFor(menteeId) {
-    const settings = await models.UserSettings.findOne({ where: { userId: menteeId }, attributes: ['timezone'] });
-    return todayInZone(settings?.timezone || 'UTC');
+    return todayInZone(await this._zoneFor(menteeId));
+  }
+
+  /**
+   * The span the log covers: the day work started through today, stretched to
+   * the deadline if that is further out, and capped at MAX_DAYS.
+   */
+  _window(task, today, firstEntryKey = null) {
+    const keyOf = (d) => new Date(d).toISOString().split('T')[0];
+    const started = task.startedAt ? keyOf(task.startedAt)
+      : (task.assignedAt ? keyOf(task.assignedAt) : today);
+    let from = firstEntryKey && firstEntryKey < started ? firstEntryKey : started;
+    let to = today;
+    if (task.dueDate) {
+      const due = keyOf(task.dueDate);
+      if (due > to) to = due;
+    }
+    if (this._daysBetween(from, to) > MAX_DAYS) from = this._shift(to, -MAX_DAYS);
+    return { from, to };
+  }
+
+  /**
+   * The earliest day a note may be attached to: the day the task reached this
+   * mentee, and never more than MAX_DAYS back.
+   *
+   * Deliberately NOT `startedAt`, which the reading window uses. The first
+   * save stamps `startedAt` with today, so a mentee catching up on three
+   * missed days would find the first two refused the moment they wrote the
+   * third. Assignment is the fact that does not move.
+   */
+  _writeFloor(task, today) {
+    const keyOf = (d) => new Date(d).toISOString().split('T')[0];
+    const landed = task.assignedAt ? keyOf(task.assignedAt)
+      : (task.startedAt ? keyOf(task.startedAt) : today);
+    const capped = this._shift(today, -MAX_DAYS);
+    return landed > capped ? landed : capped;
+  }
+
+  /**
+   * Which day a note belongs to.
+   *
+   * No date means today, which is almost always what is meant. A date is
+   * honoured only if this task has actually lived through it: you can fill in
+   * the Tuesday you forgot, you cannot write tomorrow, and you cannot write a
+   * day before the task existed.
+   */
+  _resolveDay(task, today, requested) {
+    if (!requested) return today;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(requested)) throw new ValidationError('That is not a date');
+    if (requested > today) throw new ValidationError('You cannot log a day that has not happened yet');
+    if (requested < this._writeFloor(task, today)) {
+      throw new ValidationError('That day is before this task started');
+    }
+    return requested;
   }
 
   /** Whole days between two 'YYYY-MM-DD' keys. Date arithmetic on a label, so UTC is correct here. */
@@ -50,12 +129,16 @@ class TaskProgressService {
   }
 
   /**
-   * Record or replace today's progress on a task.
+   * Record or replace one day's progress on a task.
    *
    * Upsert rather than append: several entries in one day turns a timeline into
    * a chat log and makes "logged 3 of 4 days" meaningless.
+   *
+   * `dateKey` is optional and means "this line belongs to that day". It is
+   * accepted while the task is still open and refused once it is not, which is
+   * the whole policy in one sentence.
    */
-  async log(menteeId, assignedTaskId, { note, minutesSpent = null } = {}) {
+  async log(menteeId, assignedTaskId, { note, minutesSpent = null, dateKey: requestedDay = null } = {}) {
     const text = typeof note === 'string' ? note.trim() : '';
     if (!text) throw new ValidationError('Write a line about what you did');
     if (text.length > MAX_NOTE_LENGTH) {
@@ -64,12 +147,12 @@ class TaskProgressService {
 
     const task = await this._ownedTask(menteeId, assignedTaskId);
     await clanLifecycleService.assertTaskWritable(task);
-    // Nothing to log on work that is already finished or was never started.
-    if (['completed', 'cancelled'].includes(task.status)) {
-      throw new ValidationError('This task is closed, so there is no progress to add');
-    }
+    const closed = closedBecause(task.status);
+    if (closed) throw new ValidationError(closed);
 
-    const dateKey = await this._todayFor(menteeId);
+    const zone = await this._zoneFor(menteeId);
+    const today = todayInZone(zone);
+    const dateKey = this._resolveDay(task, today, requestedDay);
     const minutes = minutesSpent == null ? null : Math.max(0, Math.min(24 * 60, parseInt(minutesSpent, 10) || 0));
 
     const existing = await models.TaskProgressEntry.findOne({ where: { assignedTaskId, dateKey } });
@@ -87,13 +170,20 @@ class TaskProgressService {
     // what lets the streak count it, and is the reason this lives on the task
     // rather than on a separate page.
     //
+    // Only today, though. Filling in a day you missed is honest bookkeeping on
+    // the task; it is not retroactively having shown up. Crediting it would let
+    // a fortnight's streak be assembled in one sitting, which is exactly why
+    // the daily log stopped taking a date from the client in the first place.
+    //
     // Deliberately not fatal: a streak is worth less than the note it counts,
     // and refusing to save somebody's progress because a badge check threw would
     // be the wrong way round.
-    try {
-      await this._creditDay(menteeId, dateKey, task.clanId);
-    } catch (error) {
-      console.error('[taskProgress] Could not credit the day:', error.message);
+    if (dateKey === today) {
+      try {
+        await this._creditDay(menteeId, dateKey, task.clanId);
+      } catch (error) {
+        console.error('[taskProgress] Could not credit the day:', error.message);
+      }
     }
 
     // A task with progress on it is in progress, whatever it said before.
@@ -101,7 +191,7 @@ class TaskProgressService {
       await task.update({ status: 'in_progress', startedAt: task.startedAt || new Date() });
     }
 
-    return this._shape(entry);
+    return this._shape(entry, zone);
   }
 
   /**
@@ -138,23 +228,12 @@ class TaskProgressService {
       order: [['dateKey', 'ASC']],
     });
 
-    const today = await this._todayFor(menteeId || task.menteeId);
-    const keyOf = (d) => new Date(d).toISOString().split('T')[0];
+    const zone = await this._zoneFor(menteeId || task.menteeId);
+    const today = todayInZone(zone);
 
     // The window: from the first thing that happened, to today or the deadline.
     const firstEntry = entries.length ? entries[0].dateKey : null;
-    const started = task.startedAt ? keyOf(task.startedAt) : (task.assignedAt ? keyOf(task.assignedAt) : today);
-    let from = firstEntry && firstEntry < started ? firstEntry : started;
-    let to = today;
-    if (task.dueDate) {
-      const due = keyOf(task.dueDate);
-      if (due > to) to = due;
-    }
-    // Guard against a silly span if assignedAt is far in the past.
-    const MAX_DAYS = 30;
-    if (this._daysBetween(from, to) > MAX_DAYS) {
-      from = this._shift(to, -MAX_DAYS);
-    }
+    const { from, to } = this._window(task, today, firstEntry);
 
     const byDate = new Map(entries.map((e) => [e.dateKey, e]));
     const days = [];
@@ -164,14 +243,20 @@ class TaskProgressService {
         dateKey: cursor,
         isToday: cursor === today,
         isFuture: cursor > today,
-        entry: entry ? this._shape(entry) : null,
+        entry: entry ? this._shape(entry, zone) : null,
       });
     }
 
     const loggedDays = entries.length;
     const elapsed = days.filter((d) => !d.isFuture).length;
+    const closed = closedBecause(task.status);
     return {
       days,
+      // Whether the mentee may still write here, and the reason if not. The
+      // client draws its edit affordances from this rather than re-deriving
+      // the rule and drifting from it.
+      canLog: !closed,
+      closedBecause: closed,
       summary: {
         loggedDays,
         elapsedDays: elapsed,
@@ -200,22 +285,21 @@ class TaskProgressService {
   }
 
   /**
-   * Remove one entry, within the edit window.
+   * Drop one day from the log.
    *
-   * Frozen after 48 hours on purpose: long enough to fix a typo or backfill
-   * yesterday, short enough that it stays a log rather than a document somebody
-   * tidies up before review. The honesty is the value.
+   * Same line as writing: while the task is still the mentee's, any day in it
+   * can be corrected or taken back; once it is with the mentor the log is what
+   * it is. Deleting is not more dangerous than rewriting, so it would be odd
+   * to let one through and not the other.
    */
   async remove(menteeId, assignedTaskId, dateKey) {
     const task = await this._ownedTask(menteeId, assignedTaskId);
     await clanLifecycleService.assertTaskWritable(task);
+    const closed = closedBecause(task.status);
+    if (closed) throw new ValidationError(closed);
+
     const entry = await models.TaskProgressEntry.findOne({ where: { assignedTaskId, dateKey } });
     if (!entry) throw new NotFoundError('No progress logged for that day');
-
-    const today = await this._todayFor(menteeId);
-    if (this._daysBetween(entry.dateKey, today) * 24 > EDIT_WINDOW_HOURS) {
-      throw new ValidationError('That day is locked. Progress can only be changed for about two days.');
-    }
     await entry.destroy();
     return { removed: true, dateKey };
   }
@@ -278,7 +362,7 @@ class TaskProgressService {
     });
   }
 
-  _shape(entry) {
+  _shape(entry, zone = null) {
     return {
       id: entry.id,
       dateKey: entry.dateKey,
@@ -286,6 +370,11 @@ class TaskProgressService {
       minutesSpent: entry.minutesSpent,
       loggedAt: entry.createdAt,
       updatedAt: entry.updatedAt,
+      // Written on the day, or filled in afterwards. Backfilling is allowed,
+      // so the honest thing is to let a mentor see which is which rather than
+      // let a gap quietly close itself.
+      addedLate: Boolean(zone && entry.createdAt
+        && todayInZone(zone, new Date(entry.createdAt)) !== entry.dateKey),
     };
   }
 }

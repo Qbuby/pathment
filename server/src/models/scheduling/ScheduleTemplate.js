@@ -20,6 +20,15 @@ module.exports = (sequelize, DataTypes) => {
     ownerMentorId: { type: DataTypes.UUID, allowNull: true, field: 'owner_mentor_id' },
     blocks: { type: DataTypes.JSONB, allowNull: false, defaultValue: [] },
     createdBy: { type: DataTypes.UUID, allowNull: true, field: 'created_by' },
+    /**
+     * An org template a mentee may take for themselves, without asking.
+     *
+     * Off by default: some templates are the programme's shape and should only
+     * ever arrive from a mentor. Applying one MERGES into the mentee's day, so
+     * choosing a template can never wipe out blocks a mentor set. See
+     * migration 129.
+     */
+    menteeSelectable: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false, field: 'mentee_selectable' },
     // Recurring blocks are wall-clock-in-a-zone; this is the zone they're read in.
     timezone: { type: DataTypes.STRING(50), allowNull: true }
   }, {

@@ -5,6 +5,8 @@ export function validWorkspaceSlug(value: unknown): value is string {
 
 const KEY = 'pathment-active-workspace';
 const PATH = /^\/w\/([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?=\/|$)/i;
+const ACCOUNT_PATHS = new Set(['/', '/login', '/register', '/reset-password', '/verify-email', '/workspaces']);
+let recoveringAccess = false;
 
 export function workspaceSlugFromPathname(pathname: string): string | null {
   const slug = pathname.match(PATH)?.[1]?.toLowerCase();
@@ -30,6 +32,17 @@ export function activeWorkspaceSlug(): string | null {
   if (window.location.pathname.startsWith('/w/')) return workspaceSlugFromPathname(window.location.pathname);
   const legacy = legacyWorkspaceFromHostname(window.location.hostname.toLowerCase());
   if (legacy) return legacy;
+  // Account entry pages are deliberately tenant-neutral. A stale workspace
+  // cookie is useful as a *recent choice*, but it must never scope API calls
+  // made by the chooser/login bootstrap or it can bounce a removed member back
+  // into the revoked workspace forever.
+  if (ACCOUNT_PATHS.has(window.location.pathname)) return null;
+  return rememberedWorkspaceSlug();
+}
+
+/** Last workspace visited, for ranking the account chooser only. */
+export function rememberedWorkspaceSlug(): string | null {
+  if (typeof window === 'undefined') return null;
   // Match the workspace selected by the routing proxy. Old unscoped links can
   // otherwise resurrect a stale localStorage choice after an explicit visit.
   if (typeof document !== 'undefined') {
@@ -48,30 +61,70 @@ export function workspacePath(path: string, slug = activeWorkspaceSlug()): strin
   return `/w/${slug}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
+type PortalRole = 'admin' | 'mentor' | 'mentee';
 type WorkspaceUser = {
-  role: 'admin' | 'mentor' | 'mentee';
-  capabilities?: Array<'admin' | 'mentor' | 'mentee'>;
+  role: PortalRole;
+  capabilities?: Array<PortalRole | 'candidate'>;
 };
 
-/** Resolve the first authenticated screen without bouncing through `/`. */
+const PORTALS: PortalRole[] = ['admin', 'mentor', 'mentee'];
+const isPortal = (value: unknown): value is PortalRole => PORTALS.includes(value as PortalRole);
+
+/**
+ * Resolve the first authenticated screen without bouncing through `/`.
+ *
+ * A selection-pool candidate has no portal of their own: they land in the
+ * learner workspace, where their round appears in the scope picker beside any
+ * clans they are in. That used to be a separate `/candidate` area, which split
+ * one person's work across two shells.
+ */
 export function workspaceLandingPath(user: WorkspaceUser): string {
   const capabilities = user.capabilities ?? [user.role];
-  let stored: WorkspaceUser['role'] | null = null;
+  let stored: PortalRole | null = null;
   try {
     const value = localStorage.getItem('activeRole');
-    if (value === 'admin' || value === 'mentor' || value === 'mentee') stored = value;
+    if (isPortal(value)) stored = value;
   } catch { /* The user's account role remains a safe fallback. */ }
-  const role = stored && capabilities.includes(stored)
+  const portals = capabilities.filter(isPortal);
+  const role = stored && portals.includes(stored)
     ? stored
-    : capabilities.includes(user.role)
+    : isPortal(user.role) && portals.includes(user.role)
       ? user.role
-      : capabilities[0];
-  return workspacePath(role ? `/${role}/dashboard` : '/workspaces');
+      : portals[0];
+  if (role) return workspacePath(`/${role}/dashboard`);
+  // Only a pool candidate reaches this: the learner workspace in pool scope.
+  if (capabilities.includes('candidate')) return workspacePath('/mentee/dashboard');
+  return workspacePath('/workspaces');
 }
 
 export function workspaceScopeHeaders(): Record<string, string> {
   const slug = activeWorkspaceSlug();
   return slug ? { 'X-Pathment-Workspace': slug } : {};
+}
+
+/**
+ * A workspace membership can be suspended or removed while a tab is open.
+ * Keep the global account session, discard only the stale workspace choice,
+ * and let `/` resolve the remaining memberships. This prevents an old URL or
+ * cookie from repeatedly reopening a workspace the account can no longer use.
+ */
+export function recoverFromWorkspaceAccessDenied(code: unknown, requestWorkspace: unknown): boolean {
+  if (code !== 'WORKSPACE_ACCESS_DENIED' || typeof window === 'undefined') return false;
+  const active = activeWorkspaceSlug();
+  // A denial only proves that the workspace explicitly attached to THIS
+  // request is no longer accessible. Never let an unscoped/global request (or
+  // a late response from a previous workspace) evict the current selection.
+  if (!active || typeof requestWorkspace !== 'string' || requestWorkspace.toLowerCase() !== active) return false;
+  try { localStorage.removeItem(KEY); } catch { /* URL redirect is sufficient */ }
+  if (typeof document !== 'undefined') {
+    document.cookie = 'pathment-workspace=; Max-Age=0; Path=/; SameSite=Lax';
+    document.cookie = 'pathment-workspace=; Max-Age=0; Path=/; SameSite=Lax; Secure';
+  }
+  if (!recoveringAccess) {
+    recoveringAccess = true;
+    window.location.replace('/');
+  }
+  return true;
 }
 
 export function switchWorkspace(slug: string): void {

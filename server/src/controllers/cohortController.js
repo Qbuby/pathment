@@ -1,6 +1,7 @@
 const { catchAsync } = require('../middlewares/errorHandler');
 const { successResponse } = require('../utils/responses');
 const cohortService = require('../services/cohortService');
+const menteeReportService = require('../services/menteeReportService');
 const submissionService = require('../services/submissionService');
 const mentorshipPauseService = require('../services/mentorshipPauseService');
 const authzService = require('../services/authzService');
@@ -34,6 +35,86 @@ const getCohortReportSummary = catchAsync(async (req, res) => {
   const period = req.body?.period === 'month' ? 'month' : 'week';
   const result = await cohortService.generateReportSummary(req.user.id, period, { clanId: requestedClanId(req) });
   res.status(200).json(successResponse('Report summary generated', result));
+});
+
+/**
+ * POST /api/mentor/reports/batch  { menteeIds?|clanId?|programId?, from?, to? }
+ *
+ * Several mentees at once, for the screen that shows a whole clan's month.
+ * The audience is resolved from the caller's access rather than from the ids
+ * the browser sent.
+ */
+const getMenteeReports = catchAsync(async (req, res) => {
+  const clanId = requestedClanId(req) || req.body.clanId || null;
+  const audience = await menteeReportService.resolveAudience(req.user, {
+    menteeIds: req.body.menteeIds,
+    clanId,
+    programId: req.body.programId,
+  });
+  const reports = await menteeReportService.buildMany(audience.menteeIds, {
+    from: req.body.from, to: req.body.to, clanId,
+  });
+  res.status(200).json(successResponse('Mentee reports', {
+    reports, refused: audience.refused, capped: audience.capped,
+  }));
+});
+
+/**
+ * POST /api/mentor/reports/send
+ *   { recipients[], menteeIds?|clanId?|programId?, from?, to?, note? }
+ *
+ * Mails the reports to people who do not have Pathment accounts - typically
+ * the organisation funding the fellowship, which needs to see that the people
+ * it is paying for are progressing.
+ */
+const sendMenteeReports = catchAsync(async (req, res) => {
+  const clanId = requestedClanId(req) || req.body.clanId || null;
+  const result = await menteeReportService.sendReports(req.user, {
+    recipients: req.body.recipients,
+    menteeIds: req.body.menteeIds,
+    clanId,
+    programId: req.body.programId,
+    from: req.body.from,
+    to: req.body.to,
+    note: req.body.note,
+    // One line for everybody, plus whatever the sender wrote about particular
+    // people. Keyed by mentee id; ids outside the audience are dropped.
+    notes: req.body.notes,
+  });
+  res.status(200).json(successResponse('Reports sent', result));
+});
+
+/**
+ * GET /api/mentor/mentee/:id/report?from=&to=
+ *
+ * One mentee, one period. Defaults to the current month, because that is the
+ * report somebody actually wants nine times out of ten and making them pick
+ * two dates first is a tax on the common case.
+ *
+ * Authorised through `canViewMentee`, the same check the profile uses, so a
+ * mentor sees their own clan's people, a co-mentor the clans they help with,
+ * and a programme admin only their programmes. A report is strictly a
+ * different VIEW of data the caller can already read, so it must not be a
+ * different answer to "may I".
+ */
+const getMenteeReport = catchAsync(async (req, res) => {
+  const clanId = requestedClanId(req) || req.query.clanId || null;
+  const allowed = await authzService.canViewMentee(req.user, req.params.id, {
+    assignments: req.loadAssignments ? await req.loadAssignments() : undefined,
+    clanId,
+  });
+  if (!allowed) throw new AuthorizationError('You do not have access to this mentee');
+
+  const report = await menteeReportService.build({
+    menteeId: req.params.id,
+    from: req.query.from,
+    to: req.query.to,
+    clanId,
+  });
+  if (!report) {
+    return res.status(404).json({ success: false, message: 'Mentee not found', statusCode: 404 });
+  }
+  res.status(200).json(successResponse('Mentee report', { report }));
 });
 
 /**
@@ -211,4 +292,4 @@ const getMenteeAttendanceHistory = catchAsync(async (req, res) => {
   res.status(200).json(successResponse('Attendance history', { history }));
 });
 
-module.exports = { getCohort, getCohortActivity, getCohortReportSummary, getMenteeProfile, getApprovals, getApprovalsCount, getChangesRequested, getReviewed, bulkApprove, bulkReview, nudge, getMyProgress, updatePersonality, addInsight, logMeetingNote, addCollaborator, removeCollaborator, setAttendance, getReviewAttendance, getMenteeAttendanceHistory };
+module.exports = { getCohort, getCohortActivity, getCohortReportSummary, getMenteeReport, getMenteeReports, sendMenteeReports, getMenteeProfile, getApprovals, getApprovalsCount, getChangesRequested, getReviewed, bulkApprove, bulkReview, nudge, getMyProgress, updatePersonality, addInsight, logMeetingNote, addCollaborator, removeCollaborator, setAttendance, getReviewAttendance, getMenteeAttendanceHistory };

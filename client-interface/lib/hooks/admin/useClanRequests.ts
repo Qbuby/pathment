@@ -8,6 +8,10 @@ export interface ChangeRequest {
   mentee: string | null;
   fromClan: string | null;
   toClan: string | null;
+  /** For the admin programme/clan filter. */
+  fromClanId?: string | null;
+  toClanId?: string | null;
+  programId?: string | null;
   reason: string | null;
   status: 'pending' | 'approved' | 'denied' | 'cancelled';
   resolutionNote: string | null;
@@ -23,6 +27,10 @@ export interface CrossClanItem {
   user: string | null;
   fromClan: string | null;
   toClan: string | null;
+  /** For the admin programme/clan filter. */
+  fromClanId?: string | null;
+  toClanId?: string | null;
+  programId?: string | null;
   note: string | null;
   status?: string;
   at: string;

@@ -117,7 +117,12 @@ class ProgramService {
   /**
    * Get all programs with filters
    */
-  async getPrograms(filters = {}, userId = null, userRole = null) {
+  /**
+   * @param {string[]|null} programScope  null = unrestricted (an org-tier
+   *   admin); an array = the only programme ids this admin may see. An empty
+   *   array means they administer no programme and must list none.
+   */
+  async getPrograms(filters = {}, userId = null, userRole = null, programScope = null) {
     const {
       status,
       type,
@@ -133,14 +138,48 @@ class ProgramService {
 
     const where = {};
 
+    /**
+     * An admin of SOME programmes is still an admin.
+     *
+     * `userRole` is 'admin' only for an org-wide super admin — `loadWorkspaceRole`
+     * says so explicitly, and it is right to: a programme role must not become
+     * workspace administration. But this test then treated a programme admin as
+     * a member of the public and served them the published-and-public view, so
+     * somebody granted a DRAFT programme could not see the one programme they
+     * had been given. Which is what happened: a program_admin on a draft
+     * fellowship opened Programs to an empty list, and then could not create a
+     * clan in it either, because the clan form's programme picker reads this.
+     *
+     * A non-empty scope means admin rights over exactly those ids, and the
+     * `where.id` filter below is what keeps it to those.
+     */
+    const scopedAdmin = Array.isArray(programScope) && programScope.length > 0;
+
     // Filter by status - admins and creators can see all, others only public+published.
     // Privacy is enforced here at the API: a non-admin/non-creator can never list
     // a private program, regardless of any query params they send.
-    if (userRole === 'admin' || (createdBy && createdBy === userId)) {
+    if (userRole === 'admin' || scopedAdmin || (createdBy && createdBy === userId)) {
       if (status) where.status = status;
     } else {
       where.status = 'published';
       where.visibility = 'public';
+    }
+
+    /**
+     * An admin bound to one programme sees one programme.
+     *
+     * The status rule above asks "is this an admin", which is the wrong
+     * question once admin rights can be granted at programme scope: somebody
+     * given Fellowship 2026 and nothing else passed it and was handed the
+     * whole catalogue, every other programme's name, dates and private drafts
+     * included. The scope the role was granted at has to narrow the rows too,
+     * not just unlock them.
+     *
+     * Applied last and intersected with any `programScope` already implied, so
+     * it can only ever remove rows.
+     */
+    if (Array.isArray(programScope)) {
+      where.id = { [Op.in]: programScope };
     }
 
     if (type) where.type = type;
@@ -210,7 +249,7 @@ class ProgramService {
   /**
    * Get program by ID
    */
-  async getProgramById(programId, userId = null, userRole = null) {
+  async getProgramById(programId, userId = null, userRole = null, programScope = null) {
     const program = await models.Program.findByPk(programId, {
       include: [
         {
@@ -231,11 +270,24 @@ class ProgramService {
       throw new NotFoundError('Program not found');
     }
 
-    // Visibility check. Admins and the creator always see it. Everyone else
-    // may view it only if it's public+published OR they have a real relationship
-    // to it (mentee enrolled / mentor leading or co-mentoring a clan in it, or a
-    // legacy active 1:1 match). Private programs never leak via direct id.
-    const isPrivileged = userRole === 'admin' || program.createdBy === userId;
+    /**
+     * Visibility check. Admins and the creator always see it. Everyone else
+     * may view it only if it's public+published OR they have a real relationship
+     * to it (mentee enrolled / mentor leading or co-mentoring a clan in it, or a
+     * legacy active 1:1 match). Private programs never leak via direct id.
+     *
+     * "Admin" here means an admin OF THIS PROGRAMME. Hiding a programme from
+     * somebody's list and then serving it whole on a guessed id would be no
+     * privacy at all, so a programme-scoped admin outside their scope drops
+     * through to the ordinary relationship checks below like anybody else.
+     */
+    const outOfScope = Array.isArray(programScope) && !programScope.includes(program.id);
+    // …and an admin of THIS programme sees it whatever its status, which is
+    // the whole point of granting somebody a draft one to set up.
+    const scopedAdminHere = Array.isArray(programScope) && programScope.includes(program.id);
+    const isPrivileged = (userRole === 'admin' && !outOfScope)
+      || scopedAdminHere
+      || program.createdBy === userId;
     if (!isPrivileged) {
       let allowed = program.status === 'published' && program.visibility === 'public';
 
@@ -542,6 +594,11 @@ class ProgramService {
     if (!sourceProgram) {
       throw new NotFoundError('Source program not found');
     }
+
+    // A clone is a programme. `createProgram` counts against the plan's cap
+    // and this did not, so a workspace on its last Starter slot could fill the
+    // catalogue by pressing Duplicate.
+    await organizationService.assertLimit(sourceProgram.organizationId, 'programs');
 
     // Create cloned program
     const clonedData = {

@@ -60,11 +60,4 @@ router.post(
   gamificationController.awardBadgeManual
 );
 
-router.post(
-  '/setup-badges',
-  authenticate,
-  requirePermissionMinScope(PERMISSIONS.GAMIFICATION_MANAGE),
-  gamificationController.setupDefaultBadges
-);
-
 module.exports = router;

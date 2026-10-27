@@ -1,5 +1,7 @@
 const { models, sequelize } = require('../../src/db');
-const { cleanDb, createAdmin, createMentor, createMentee, createProgram } = require('../helpers/seed');
+const {
+  cleanDb, createAdmin, createMentor, createMentee, createProgram, createRoadmap, createRoadmapTask,
+} = require('../helpers/seed');
 const { runWithRequestContext } = require('../../src/utils/auditContext');
 const lifecycle = require('../../src/services/programLifecycleService');
 const standing = require('../../src/services/standingClanService');
@@ -7,6 +9,7 @@ const clans = require('../../src/services/clanService');
 const tasks = require('../../src/services/taskService');
 const performance = require('../../src/services/performanceService');
 const community = require('../../src/services/communityService');
+const roadmaps = require('../../src/services/linearRoadmapService');
 
 describe('formal completion and independent standing clans', () => {
   let organization, admin, mentor, sara, bilal, alpha, beta, cohort, original, other, template;
@@ -87,11 +90,22 @@ describe('formal completion and independent standing clans', () => {
       .rejects.toMatchObject({ code: 'CLAN_FROZEN' });
     await expect(require('../../src/services/taskProgressService').log(sara.id, historicalTask.id, { note: 'After close', minutesSpent: 10 }))
       .rejects.toMatchObject({ code: 'CLAN_FROZEN' });
+    /**
+     * The community is the exception, and deliberately so.
+     *
+     * Freezing a clan closes the WORK — nothing may be assigned, submitted,
+     * logged or blocked against a programme that has ended, because all of it
+     * would land in a closed report. The people are not the work. A cohort
+     * that finishes together is exactly when its members have most to say to
+     * each other, and locking the only room they share the week they graduate
+     * is how a community dies. So posting and commenting stay open on a frozen
+     * clan while everything below stays shut.
+     */
     await expect(community.createPost(sara, { scopeType: 'clan', scopeId: original.id, body: 'After close' }))
-      .rejects.toMatchObject({ code: 'CLAN_FROZEN' });
+      .resolves.toBeTruthy();
     await expect(community.listComments(sara, historicalPost.id)).resolves.toEqual([]);
     await expect(community.addComment(sara, historicalPost.id, { body: 'After close' }))
-      .rejects.toMatchObject({ code: 'CLAN_FROZEN' });
+      .resolves.toBeTruthy();
     await expect(require('../../src/services/frictionService').createBlocker({ menteeId: sara.id, clanId: original.id, title: 'After close' }, sara.id, sara))
       .rejects.toMatchObject({ code: 'CLAN_FROZEN' });
     await expect(require('../../src/services/dailyLogService').upsert(sara.id, { clanId: original.id, dateKey: '2026-10-04', note: 'After close' }))
@@ -99,7 +113,7 @@ describe('formal completion and independent standing clans', () => {
     await expect(community.createPost(sara, { scopeType: 'program', scopeId: alpha.id, body: 'Still open' })).resolves.toBeTruthy();
   }));
 
-  it('approves one fresh empty clan and adds cross-program mentees without transfers or enrollments', () => within(async () => {
+  it('approves one fresh clan and adds cross-program mentees without transfers or enrollments', () => within(async () => {
     await lifecycle.closeProgram(alpha.id, admin);
     const request = await standing.request({ programId: alpha.id, name: 'Ongoing mentoring' }, mentor);
     const [first, retry] = await Promise.all([standing.decide(request.id, 'approved', '', admin), standing.decide(request.id, 'approved', '', admin)]);
@@ -108,7 +122,15 @@ describe('formal completion and independent standing clans', () => {
     const fresh = await models.Clan.findByPk(first.createdClanId);
     expect(fresh.kind).toBe('standing');
     expect(fresh.frozenAt).toBeNull();
-    expect(await models.ClanMembership.count({ where: { clanId: fresh.id, role: 'mentee' } })).toBe(0);
+    /**
+     * It opens with the source clan's roster — sara, and only sara, because
+     * bilal is a mentee of a clan on a different programme. This used to
+     * assert an EMPTY clan; carrying the roster across is now the default, so
+     * that the first thing a mentor does with a continuation is not retyping
+     * a list the system already had.
+     */
+    expect((await models.ClanMembership.findAll({ where: { clanId: fresh.id, role: 'mentee' }, raw: true }))
+      .map((m) => m.userId)).toEqual([sara.id]);
     const enrollmentCount = await models.Enrollment.count();
     await standing.addMenteesToStandingClan(fresh.id, [sara.id, bilal.id], mentor);
     await standing.addMenteesToStandingClan(fresh.id, [sara.id], mentor);
@@ -129,6 +151,39 @@ describe('formal completion and independent standing clans', () => {
     expect(report.mentees.find(m => m.id === bilal.id).tasksCompleted).toBe(1);
     const scores = await performance.scoreMentees([bilal.id], { programId: beta.id });
     expect(scores.mentees[0].evidence.tasksCompleted).toBe(0);
+  }));
+
+  it('assigns the same roadmap afresh in a standing clan without changing historical work', () => within(async () => {
+    const roadmap = await createRoadmap({ programId: alpha.id, createdBy: admin.id });
+    const step = await createRoadmapTask({ roadmapId: roadmap.id, title: 'Continue the roadmap' });
+    const historicalProgress = await roadmaps.assignToMentee(
+      mentor.id, roadmap.id, sara.id, 0, null, null, null, null, original.id,
+    );
+    const historicalTask = await models.AssignedTask.findOne({
+      where: { roadmapTaskId: step.id, menteeId: sara.id, clanId: original.id },
+    });
+
+    await lifecycle.closeProgram(alpha.id, admin);
+    const request = await standing.request({ programId: alpha.id, name: 'Roadmap continuation' }, mentor);
+    const approved = await standing.decide(request.id, 'approved', '', admin);
+    await standing.addMenteesToStandingClan(approved.createdClanId, [sara.id], mentor);
+
+    const assignmentResults = await roadmaps.bulkAssign(
+      mentor.id, roadmap.id, [sara.id], 0, null, null, null, approved.createdClanId,
+    );
+    const standingProgress = await models.RoadmapProgress.findOne({
+      where: { roadmapId: roadmap.id, menteeId: sara.id, clanId: approved.createdClanId },
+    });
+    const standingTask = await models.AssignedTask.findOne({
+      where: { roadmapTaskId: step.id, menteeId: sara.id, clanId: approved.createdClanId },
+    });
+
+    expect(assignmentResults).toEqual([{ menteeId: sara.id, ok: true }]);
+    expect(standingProgress.id).not.toBe(historicalProgress.id);
+    expect(standingProgress.enrollmentId).toBeNull();
+    expect(standingTask).toMatchObject({ clanId: approved.createdClanId, enrollmentId: null, status: 'assigned' });
+    expect(standingTask.id).not.toBe(historicalTask.id);
+    expect(await historicalTask.reload()).toMatchObject({ clanId: original.id, enrollmentId: expect.any(String) });
   }));
 
   it('rejects without creating a clan, and rejects non-admin decisions', () => within(async () => {
@@ -175,6 +230,95 @@ describe('formal completion and independent standing clans', () => {
     await expect(reviews.createSchedule(mentor.id, { ...recurrence, clanId: original.id }))
       .rejects.toMatchObject({ code: 'CLAN_FROZEN' });
   }));
+
+  describe('approval carries the roster across', () => {
+    /**
+     * An approved standing clan used to contain the mentor team and nobody
+     * else, so the first thing a mentor did with their continuation was retype
+     * a roster the system already knew — every active mentee of the clan they
+     * had just asked to continue.
+     */
+    it('moves the source clan\'s active mentees in automatically', () => within(async () => {
+      await lifecycle.closeProgram(alpha.id, admin);
+      const request = await standing.request({ programId: alpha.id, name: 'Carried over' }, mentor);
+      const approved = await standing.decide(request.id, 'approved', '', admin);
+
+      const members = await models.ClanMembership.findAll({
+        where: { clanId: approved.createdClanId, role: 'mentee' }, raw: true,
+      });
+      expect(members.map((m) => m.userId)).toEqual([sara.id]);
+      // bilal is a mentee of a clan on a DIFFERENT programme: not this roster.
+      expect(members.map((m) => m.userId)).not.toContain(bilal.id);
+      expect(approved.getDataValue('roster')).toMatchObject({ moved: 1, skipped: [] });
+    }));
+
+    /**
+     * Their work stays where it happened. Re-pointing it would empty the
+     * completed programme's record and break the certificate awarded on it,
+     * which reads those rows live.
+     */
+    it('leaves their finished work in the clan it was done in', () => within(async () => {
+      const task = await tasks.createCustomTask(
+        { menteeId: sara.id, clanId: original.id, title: 'Week 1', type: 'exercise' }, mentor.id,
+      );
+      await lifecycle.closeProgram(alpha.id, admin);
+      const request = await standing.request({ programId: alpha.id, name: 'Carried over' }, mentor);
+      await standing.decide(request.id, 'approved', '', admin);
+
+      expect((await models.AssignedTask.findByPk(task.id)).clanId).toBe(original.id);
+    }));
+
+    /** A paused mentee is a judgement for their mentor, not a default. */
+    it('leaves a paused mentee behind, to be added by name', () => within(async () => {
+      await models.ClanMembership.update({ status: 'paused' }, { where: { clanId: original.id, userId: sara.id } });
+      await lifecycle.closeProgram(alpha.id, admin);
+      const request = await standing.request({ programId: alpha.id, name: 'Carried over' }, mentor);
+      const approved = await standing.decide(request.id, 'approved', '', admin);
+
+      expect(await models.ClanMembership.count({
+        where: { clanId: approved.createdClanId, role: 'mentee' },
+      })).toBe(0);
+    }));
+
+    /**
+     * The decision is recorded and the clan exists. A roster that could not be
+     * copied is a smaller problem than an approval that half-happened, so one
+     * person who cannot be added must not cost the others their place or fail
+     * the approval.
+     */
+    it('still approves when a mentee cannot be carried', () => within(async () => {
+      const extra = await createMentee({ email: 'extra-completion@test.com' });
+      await clans.addMember(original.id, { userId: extra.id, role: 'mentee' });
+      await models.User.update({ status: 'suspended' }, { where: { id: extra.id } });
+      await lifecycle.closeProgram(alpha.id, admin);
+      const request = await standing.request({ programId: alpha.id, name: 'Carried over' }, mentor);
+
+      const approved = await standing.decide(request.id, 'approved', '', admin);
+
+      expect(approved.status).toBe('approved');
+      expect(approved.createdClanId).toBeTruthy();
+      const roster = approved.getDataValue('roster');
+      expect(roster.moved).toBe(1);
+      expect(roster.skipped).toHaveLength(1);
+      expect(roster.skipped[0]).toMatchObject({ menteeId: extra.id });
+      // The one who could be carried is in; the suspended one is not.
+      const members = await models.ClanMembership.findAll({
+        where: { clanId: approved.createdClanId, role: 'mentee' }, raw: true,
+      });
+      expect(members.map((m) => m.userId)).toEqual([sara.id]);
+    }));
+
+    it('adds nobody when the request names no source clan', () => within(async () => {
+      await lifecycle.closeProgram(alpha.id, admin);
+      const request = await standing.request({ programId: alpha.id, name: 'Orphan' }, mentor);
+      await request.update({ sourceClanId: null });
+
+      const approved = await standing.decide(request.id, 'approved', '', admin);
+
+      expect(approved.status).toBe('approved');
+      expect(approved.getDataValue('roster')).toMatchObject({ moved: 0, sourceClanId: null });
+    }));
+  });
 
   it('retains a recorded dropped outcome for enrollments already marked dropped', () => within(async () => {
     await models.Enrollment.update({ status: 'dropped', droppedAt: new Date() }, { where: { menteeId: sara.id, programId: alpha.id } });

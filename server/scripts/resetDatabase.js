@@ -24,7 +24,21 @@ async function resetDatabase() {
 
     // Drop all tables
     console.log('Dropping all tables...');
-    await sequelize.drop();
+    /**
+     * `cascade` is doing two jobs, and the options object itself is doing a
+     * third.
+     *
+     * Dropping with no argument crashes: Sequelize's Postgres `dropTable`
+     * guards `!options` when it builds the enum name and then writes
+     * `options.supportsSearchPath = false` on the next line, so the first model
+     * carrying an ENUM column throws "Cannot set properties of undefined".
+     * `ExternalApp` is that model, which is why this started failing only once
+     * external apps were added. Passing any options object avoids it.
+     *
+     * `cascade` then removes the need to drop in dependency order, which a
+     * schema with this many foreign keys would otherwise require.
+     */
+    await sequelize.drop({ cascade: true });
     console.log('✓ All tables dropped\n');
 
     // Recreate all tables

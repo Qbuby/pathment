@@ -19,6 +19,7 @@ const gamificationRoutes = require('./gamification');
 const activityRoutes = require('./activity');
 const clanRoutes = require('./clans');
 const mentorAreaRoutes = require('./mentor');
+const handoverPoolRoutes = require('./handoverPool');
 const menteeAreaRoutes = require('./mentee');
 const frictionRoutes = require('./friction');
 const meetingRoutes = require('./meetings');
@@ -83,6 +84,11 @@ router.use('/auto-reply', autoReplyRoutes);
 router.use('/mentors', mentorRoutes);
 router.use('/mentees', menteeRoutes);
 
+// System Pool (pre-clan selection): operators/reviewers, and candidates' own work
+const poolRoutes = require('./pools');
+router.use('/pools', poolRoutes.pools);
+router.use('/candidate', poolRoutes.candidate);
+
 // Task routes
 router.use('/tasks', taskRoutes);
 router.use('/interviews', interviewRoutes);
@@ -109,6 +115,11 @@ router.use('/mentor', mentorAreaRoutes);
 // Mentee-area routes (logged-in mentee's own progress, etc.)
 router.use('/mentee', menteeAreaRoutes);
 
+// The handover pool: mentees offered out of one clan and taken into another.
+// Named apart from /pools (the candidate selection pools) on purpose — they are
+// different features and the two paths must not read as the same one.
+router.use('/handover-pool', handoverPoolRoutes);
+
 // Blockers & delay events (friction / fairness inputs)
 router.use('/', frictionRoutes);
 
@@ -133,6 +144,9 @@ router.use('/rewards', rewardsRoutes);
 // Mentor Library (org documents)
 router.use('/library', libraryRoutes);
 
+// Talks library (shared talks with categories)
+router.use('/talks', require('./talks'));
+
 // Schedule engine (templates + per-mentee slot schedules)
 router.use('/schedules', scheduleRoutes);
 
@@ -154,11 +168,23 @@ router.use('/assessments', assessmentRoutes);
 // Public, unauthenticated intake - program catalog + apply + applicant status
 router.use('/public', publicRoutes);
 
+// Reference geography - countries, regions, cities, and a country's timezones
+router.use('/geo', require('./geo'));
+
 // IAM - scoped role grants + effective-permission lookup
 router.use('/access', accessRoutes);
 
 // AI connections - admin BYO provider keys + feature routing
 router.use('/ai-connections', aiConnectionRoutes);
+
+// Platform console - operator surface spanning every workspace
+router.use('/platform', require('./platform'));
+
+// External apps - platform catalog + per-workspace connections
+router.use('/apps', require('./externalApps'));
+
+// External courses (Buildment) - assignable catalog + per-task enrollment/progress
+router.use('/courses', require('./courses'));
 
 // Program reviews - anonymous mentee→mentor feedback at completion
 router.use('/program-reviews', programReviewRoutes);

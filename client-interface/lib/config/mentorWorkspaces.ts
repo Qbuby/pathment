@@ -3,6 +3,7 @@ export const mentorWorkspaces = [
   { label: 'My mentees', tabs: [
     { href: '/mentor/mentees', label: 'My mentees' },
     { href: '/mentor/clan-team', label: 'Clan team' },
+    { href: '/mentor/pool', label: 'Handover pool' },
   ] },
   { label: 'Curriculum', tabs: [
     { href: '/mentor/roadmaps', label: 'Roadmaps' },
@@ -10,6 +11,9 @@ export const mentorWorkspaces = [
     { href: '/mentor/quizzes', label: 'Quizzes' },
     { href: '/mentor/programs', label: 'Programs' },
     { href: '/mentor/library', label: 'Library' },
+    { href: '/mentor/talks', label: 'Talks' },
+    // Shown only while the workspace's course provider (Buildment) is connected.
+    { href: '/mentor/courses', label: 'Courses', requires: 'courses' },
   ] },
   { label: 'Recognition', tabs: [
     { href: '/mentor/top-performers', label: 'Top performers' },

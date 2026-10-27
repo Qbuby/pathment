@@ -1,6 +1,8 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
+import { AdminScopeFilter } from '@/components/admin/AdminScopeFilter';
+import { useAdminScope, ALL_PROGRAMS, ALL_CLANS_IN_SCOPE } from '@/lib/context/AdminScopeContext';
 import { useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { GitPullRequest, Loader2, Check, X, Plus, Trash2, ArrowRight, Search } from 'lucide-react';
@@ -90,7 +92,28 @@ function AdminClanRequestsInner() {
     } catch (e: any) { toast.error(e?.response?.data?.message || 'Could not add'); } finally { setBusy(null); }
   };
 
-  const pendingCount = requests.filter((r) => r.status === 'pending').length;
+  /**
+   * The queue, narrowed to the programme (and clan) the admin is working in.
+   *
+   * With forty-odd clans in a workspace this list is unreadable whole, and
+   * "which of these belong to the programme I am running" was not a question
+   * it could answer. Filtered in the browser because the whole queue is one
+   * small read; a row with no clan on either side is never hidden, because
+   * hiding what cannot be classified is how a request goes missing.
+   */
+  const { programId: scopeProgram, clanId: scopeClan } = useAdminScope();
+  const inScope = <T extends { programId?: string | null; fromClanId?: string | null; toClanId?: string | null }>(row: T) => {
+    if (scopeClan !== ALL_CLANS_IN_SCOPE) {
+      if (!row.fromClanId && !row.toClanId) return true;
+      return row.fromClanId === scopeClan || row.toClanId === scopeClan;
+    }
+    if (scopeProgram !== ALL_PROGRAMS) return !row.programId || row.programId === scopeProgram;
+    return true;
+  };
+  const visibleRequests = requests.filter(inScope);
+  const visibleCrossClan = crossClan.filter(inScope);
+
+  const pendingCount = visibleRequests.filter((r) => r.status === 'pending').length;
   const field = 'border border-slate-300 rounded-lg px-3 py-2 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-brand-500';
 
   const TABS: { key: Tab; label: string; count?: number }[] = [
@@ -105,6 +128,10 @@ function AdminClanRequestsInner() {
         <h1 className="text-slate-900 mb-2">Clan requests</h1>
         <p className="text-slate-600">Mentee move requests, temporary cross-clan support, and standing clan requests (also actionable from the notification bell).</p>
       </div>
+
+      {/* The programme this queue is about. Shared with the other People
+          screens, so it is chosen once. */}
+      <AdminScopeFilter showClan />
 
       <div className="flex flex-wrap items-center gap-0 border-b border-slate-200">
         {TABS.map((t) => (
@@ -126,7 +153,7 @@ function AdminClanRequestsInner() {
         <>
           {/* Change requests */}
           {tab === 'requests' && (
-            requests.length === 0 ? (
+            visibleRequests.length === 0 ? (
               <div className="bg-card rounded-2xl border border-slate-200 py-12 px-6 text-center">
                 <GitPullRequest className="w-10 h-10 text-slate-300 mx-auto mb-3" />
                 <p className="text-slate-600 font-medium">No clan-change requests</p>
@@ -134,7 +161,7 @@ function AdminClanRequestsInner() {
               </div>
             ) : (
               <div className="space-y-2">
-                {requests.map((r) => (
+                {visibleRequests.map((r) => (
                   <div key={r.id} className="bg-card rounded-2xl border border-slate-200 p-4 flex items-center gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -179,20 +206,20 @@ function AdminClanRequestsInner() {
               {/* Current assignments first - this is what people come to see. */}
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-sm font-semibold text-slate-700">
-                  Cross-clan support {crossClan.length > 0 && <span className="text-slate-400 font-normal">· {crossClan.length}</span>}
+                  Cross-clan support {visibleCrossClan.length > 0 && <span className="text-slate-400 font-normal">· {visibleCrossClan.length}</span>}
                 </h2>
                 <button onClick={() => setShowCcForm(true)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700">
                   <Plus className="w-4 h-4" />Grant access
                 </button>
               </div>
 
-              {crossClan.length === 0 ? (
+              {visibleCrossClan.length === 0 ? (
                 <div className="bg-card rounded-2xl border border-dashed border-slate-200 py-10 text-center text-sm text-slate-500">
                   No cross-clan support yet. Use <span className="font-medium">Grant access</span> to bring a mentor into another clan.
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {crossClan.map((c) => (
+                  {visibleCrossClan.map((c) => (
                     <div key={c.id} className="bg-card rounded-2xl border border-slate-200 p-4 flex items-center gap-3">
                       <span className="px-2 py-0.5 rounded-full bg-brand-50 text-brand-700 text-xs font-medium shrink-0">{CROSS_KINDS.find((k) => k.key === c.kind)?.label ?? c.kind}</span>
                       <div className="min-w-0 flex-1">

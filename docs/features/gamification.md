@@ -12,7 +12,7 @@ leaderboards add friendly competition; gifts give XP tangible value.
 (costXp, stock) + `Redemption` (mentee spends XP). See [DATABASE.md §9](../DATABASE.md). Migration 021/034.
 
 ## Backend
-- **`/api/gamification`:** public `GET /leaderboard`, `/badges`, `/challenges`; per-user `GET /user/:id/stats|badges|points-history`, `/challenges/user/:id`; `POST /challenges/:id/join` (mentee/mentor); admin `POST /badges`, `/badges/award`, `/setup-badges` (`gamification.manage`).
+- **`/api/gamification`:** public `GET /leaderboard`, `/badges`, `/challenges`; per-user `GET /user/:id/stats|badges|points-history`, `/challenges/user/:id`; `POST /challenges/:id/join` (mentee/mentor); admin `POST /badges` and `/badges/award` (`gamification.manage`). Workspaces start with an empty badge catalog; admins create the badges and criteria their program uses.
 - **Rewards (`/api/rewards`):** `GET /` catalog + `POST /redeem` + `GET /balance/:menteeId` (mentor/admin); gift catalog management `POST/PATCH/DELETE /gifts` + `/gifts/upload` (`gamification.manage`).
 - Points are awarded by `gamificationService` from task completions etc. (`AssignedTask.pointsAwarded`, `RoadmapTask.pointsBase`); badge unlocks bump counters via model hooks.
 

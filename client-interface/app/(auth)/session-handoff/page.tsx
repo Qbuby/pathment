@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { runDomainHandoff, HandoffAccountConflictError } from '@/lib/services/domain-handoff';
 import { workspacePath } from '@/lib/services/workspace-scope';
+import { Spinner } from '@/components/shared/LoadingSpinner';
 
 export default function SessionHandoffPage() {
   const [error, setError] = useState('');
@@ -21,7 +22,7 @@ export default function SessionHandoffPage() {
       <section className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
         {!error ? (
           <>
-            <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-brand-100 border-t-brand-600" />
+            <Spinner size="md" className="mx-auto mb-4" />
             <h1 className="text-xl font-bold text-slate-900 dark:text-white">Opening your workspace</h1>
             <p className="mt-2 text-sm text-slate-500">Securely transferring your existing session…</p>
           </>

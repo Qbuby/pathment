@@ -26,6 +26,39 @@ const clanFollowUps = catchAsync(async (req, res) => {
   res.status(200).json(successResponse('Follow-ups retrieved', data));
 });
 
+/**
+ * POST /api/clans/follow-ups/nudge  (admin)
+ *
+ * Nudge everybody the follow-up filters currently match.
+ *
+ * The queue existed to tell an admin who needed chasing and then gave them no
+ * way to chase anyone — the whole page was a table and a paginator. The
+ * filters are re-run on the server rather than trusting a list of ids from
+ * the browser, so "nudge everyone showing" cannot be turned into "message
+ * anyone", and the admin's programme scope still applies.
+ */
+const nudgeFollowUps = catchAsync(async (req, res) => {
+  const { risk, programId, clanId, search, message } = req.body || {};
+  const programScope = await authzService.adminProgramScope(req.user);
+  const { ids, total, capped } = await clanHealthService.followUpRecipients(
+    { risk, programId, clanId, search }, programScope,
+  );
+  if (!ids.length) throw new ValidationError('Nobody matches these filters right now');
+
+  const cohortService = require('../services/cohortService');
+  // One failure must not swallow the rest: a mentee in a frozen clan is a
+  // legitimate skip, not a reason to abandon the other twenty-nine.
+  const results = await Promise.allSettled(
+    ids.map((menteeId) => cohortService.sendNudge(req.user.id, menteeId, message, clanId || null)),
+  );
+  const sent = results.filter((r) => r.status === 'fulfilled').length;
+
+  res.status(200).json(successResponse(
+    sent === 1 ? 'Nudge sent to 1 mentee' : `Nudge sent to ${sent} mentees`,
+    { sent, skipped: ids.length - sent, matched: total, capped },
+  ));
+});
+
 const clanInsights = catchAsync(async (req, res) => {
   const insights = await clanHealthService.orgInsights(await authzService.adminProgramScope(req.user));
   res.status(200).json(successResponse('Clan insights retrieved', insights));
@@ -97,7 +130,9 @@ const getClan = catchAsync(async (req, res) => {
  * POST /api/clans  (admin)
  */
 const createClan = catchAsync(async (req, res) => {
-  const clan = await clanService.createClan(req.body, req.user.id);
+  // `actor` travels so the service can tell an admin making a standing clan
+  // directly from a mentor trying to skip the request flow.
+  const clan = await clanService.createClan(req.body, req.user.id, { actor: req.user });
   res.status(201).json(successResponse('Clan created', { clan }, 201));
 });
 
@@ -115,6 +150,18 @@ const updateClan = catchAsync(async (req, res) => {
  */
 const addMember = catchAsync(async (req, res) => {
   const membership = await clanService.addMember(req.params.id, req.body, req.user);
+  /**
+   * A mentee joining a standing clan brings their work with them, whichever
+   * screen added them. This is the admin's door into the same event the
+   * mentor's "add mentees" flow handles; `carryWorkOnJoin` decides whether the
+   * clan carries work at all and never throws, so the add itself is unaffected.
+   *
+   * Deliberately after `addMember` returned — the membership row has to exist
+   * and be committed before anything reads it.
+   */
+  if (membership && (req.body?.role || 'mentee') === 'mentee') {
+    await standingClanService.carryWorkOnJoin(req.params.id, membership.userId, req.user);
+  }
   res.status(201).json(successResponse('Member added', { membership }, 201));
 });
 
@@ -450,7 +497,53 @@ const getStandingActivity = catchAsync(async (req, res) => {
   res.status(200).json(successResponse('Clan activity', activity));
 });
 
+/**
+ * GET /api/clans/:id/prior-record
+ *
+ * What each mentee did before this standing clan. Read-only: their work stays
+ * in the completed programme, where the final report and their certificate
+ * still account for it.
+ */
+const getStandingPriorRecord = catchAsync(async (req, res) => {
+  const record = await standingClanService.priorRecord(req.params.id, req.user);
+  res.status(200).json(successResponse('Prior record', record));
+});
+
+/** GET /api/clans/:id/mentees/:menteeId/unfinished-prior-work */
+const getUnfinishedPriorWork = catchAsync(async (req, res) => {
+  const tasks = await standingClanService.unfinishedPriorWork(req.params.id, req.params.menteeId, req.user);
+  res.status(200).json(successResponse('Unfinished work from the completed program', tasks));
+});
+
+/** POST /api/clans/:id/mentees/:menteeId/carry-forward */
+const carryForwardWork = catchAsync(async (req, res) => {
+  const tasks = await standingClanService.carryForward(
+    req.params.id, req.params.menteeId, req.body?.taskIds, req.user,
+  );
+  res.status(201).json(successResponse(`Carried ${tasks.length} task(s) forward as new work`, tasks, 201));
+});
+
+/** GET /api/clans/:id/mentees/:menteeId/continuation-preview */
+const getContinuationPreview = catchAsync(async (req, res) => {
+  const preview = await standingClanService.continuationPreview(req.params.id, req.params.menteeId, req.user);
+  res.status(200).json(successResponse('Work available to continue', preview));
+});
+
+/** POST /api/clans/:id/mentees/:menteeId/continue-work */
+const continueWork = catchAsync(async (req, res) => {
+  const result = await standingClanService.continueWork(
+    req.params.id, req.params.menteeId, req.body || {}, req.user,
+  );
+  res.status(201).json(successResponse('Work continued in this plan', result, 201));
+});
+
 module.exports = {
+  nudgeFollowUps,
+  getStandingPriorRecord,
+  getUnfinishedPriorWork,
+  carryForwardWork,
+  getContinuationPreview,
+  continueWork,
   listClanInvites,
   resendClanInvite,
   revokeClanInvite,

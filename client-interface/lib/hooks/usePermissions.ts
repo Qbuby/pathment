@@ -6,9 +6,9 @@ import { accessApi } from '@/lib/services/access-api';
 import { qk, useApiQuery, STALE } from '@/lib/query';
 import type { Permission } from '@/lib/config/permissions';
 
-interface PermState { permissions: string[]; canAccessAdmin: boolean }
+interface PermState { permissions: string[]; canAccessAdmin: boolean; canAccessPools?: boolean }
 
-const EMPTY: PermState = { permissions: [], canAccessAdmin: false };
+const EMPTY: PermState = { permissions: [], canAccessAdmin: false, canAccessPools: false };
 
 /**
  * The current user's permission UNION (across all scopes) + a `canAccessAdmin`
@@ -39,6 +39,8 @@ export function usePermissions() {
   return {
     permissions: state.permissions,
     canAccessAdmin: state.canAccessAdmin,
+    /** May enter Selection pools (any pool.* permission). A pool reviewer is not an admin. */
+    canAccessPools: Boolean(state.canAccessPools),
     can,
     canAny,
     loading: !!user && loading,

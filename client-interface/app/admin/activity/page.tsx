@@ -2,7 +2,9 @@
 
 import { Search, Loader2, Users, Clock, CalendarCheck, Flame } from 'lucide-react';
 import { Avatar } from '@/components/shared/Avatar';
-import { useEffect } from 'react';
+import { SelectMenu } from '@/components/shared/SelectMenu';
+import { useEffect, useState } from 'react';
+import { programsApi } from '@/lib/services/program-api';
 import { useAdminActivity } from '@/lib/hooks/admin';
 import { usePagination } from '@/lib/hooks/shared/usePagination';
 import { TablePagination } from '@/components/shared/TablePagination';
@@ -41,14 +43,36 @@ export default function AdminActivityPage() {
     setDays,
     search,
     setSearch,
+    programId,
+    setProgramId,
     filtered,
   } = useAdminActivity();
+
+  /**
+   * The programme list for the filter.
+   *
+   * `programsApi.getAll` is already scoped to the programmes this admin may
+   * see, so an admin bound to one programme gets a one-option menu rather
+   * than a list of names they have no business reading.
+   */
+  const [programs, setPrograms] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => {
+    let live = true;
+    programsApi.getAll()
+      .then((r: unknown) => {
+        const body = r as { data?: unknown };
+        const list = (Array.isArray(body?.data) ? body.data : (body?.data as { programs?: unknown })?.programs ?? []) as { id: string; name: string }[];
+        if (live) setPrograms(list.map((p) => ({ id: p.id, name: p.name })));
+      })
+      .catch(() => { if (live) setPrograms([]); });
+    return () => { live = false; };
+  }, []);
 
   // Client-side pagination: the list is already loaded and filtered in-memory,
   // so we just page the displayed slice (606 mentees was rendering as one wall).
   const pagination = usePagination({ initialPage: 1, initialLimit: 25 });
   useEffect(() => { pagination.setTotal(filtered.length); }, [filtered.length]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { pagination.reset(); }, [search, days]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { pagination.reset(); }, [search, days, programId]); // eslint-disable-line react-hooks/exhaustive-deps
   const pageItems = filtered.slice((pagination.page - 1) * pagination.limit, pagination.page * pagination.limit);
 
   return (
@@ -78,7 +102,7 @@ export default function AdminActivityPage() {
 
       {loading && !overview ? (
         <div className="flex items-center justify-center py-16">
-          <Loader2 className="w-7 h-7 animate-spin text-brand-500" />
+          <Loader2 className="w-7 h-7 animate-spin text-brand-600" />
         </div>
       ) : (
         <>
@@ -134,7 +158,19 @@ export default function AdminActivityPage() {
                   className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
-              <span className="text-xs text-slate-400">{filtered.length} mentees</span>
+              {/* Programme narrows the whole page, KPI tiles included — it is
+                  a server-side filter, not a search over the loaded rows. */}
+              {programs.length > 1 && (
+                <div className="w-56 max-w-full">
+                  <SelectMenu
+                    value={programId}
+                    onChange={setProgramId}
+                    ariaLabel="Filter by program"
+                    options={[{ value: '', label: 'All programs' }, ...programs.map((p) => ({ value: p.id, label: p.name }))]}
+                  />
+                </div>
+              )}
+              <span className="ml-auto text-xs text-slate-400">{filtered.length} mentees</span>
             </div>
 
             {filtered.length === 0 ? (

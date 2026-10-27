@@ -6,6 +6,7 @@ import { Award, Crown, Info, Loader2, Trophy } from 'lucide-react';
 import { useClanPerformance } from '@/lib/hooks/mentor';
 import { useClan, ALL_CLANS } from '@/lib/context/ClanContext';
 import type { RankedMentee, UnrankedMentee } from '@/lib/services/performance-api';
+import { Avatar } from '@/components/shared/Avatar';
 
 /**
  * Cohort standings.
@@ -41,24 +42,6 @@ function badgesOf(m: RankedMentee): string[] {
   if ((part('consistency') ?? 0) >= 80) b.push('Steady hand');
   if ((part('attendance') ?? 0) >= 95) b.push('Always there');
   return b;
-}
-
-function Avatar({
-  m,
-  size = 'md',
-}: {
-  m: { name: string; avatar: string; profilePictureUrl: string | null };
-  size?: 'md' | 'lg';
-}) {
-  const dim = size === 'lg' ? 'w-14 h-14 text-base' : 'w-9 h-9 text-xs';
-  return m.profilePictureUrl ? (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={m.profilePictureUrl} alt={m.name} className={`${dim} rounded-full object-cover shrink-0`} />
-  ) : (
-    <div className={`${dim} bg-brand-100 rounded-full flex items-center justify-center shrink-0`}>
-      <span className="text-brand-700 font-semibold">{m.avatar}</span>
-    </div>
-  );
 }
 
 export default function MentorLeaderboard() {
@@ -150,7 +133,7 @@ function LiveLeaderboard({
           {leader && (
             <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 dark:from-amber-500/10 to-card p-5 flex items-center gap-4">
               <div className="relative shrink-0">
-                <Avatar m={leader} size="lg" />
+                <Avatar name={leader.name} src={leader.profilePictureUrl} initials={leader.avatar} size="lg" />
                 <span className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-amber-400 flex items-center justify-center ring-2 ring-white">
                   <Crown className="w-3.5 h-3.5 text-white" />
                 </span>
@@ -190,7 +173,7 @@ function LiveLeaderboard({
                     href={`/mentor/mentees/${m.id}`}
                     className="shrink-0 rounded-full transition-opacity hover:opacity-90"
                   >
-                    <Avatar m={m} />
+                    <Avatar name={m.name} src={m.profilePictureUrl} initials={m.avatar} size="md" />
                   </Link>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -245,7 +228,7 @@ function LiveLeaderboard({
               <div className="space-y-2">
                 {notRanked.map((m: UnrankedMentee) => (
                   <div key={m.id} className="flex items-center gap-3">
-                    <Avatar m={m} />
+                    <Avatar name={m.name} src={m.profilePictureUrl} initials={m.avatar} size="md" />
                     <div className="min-w-0">
                       <p className="text-sm text-slate-800 truncate">{m.name}</p>
                       <p className="text-xs text-slate-500">

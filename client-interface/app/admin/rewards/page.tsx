@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Award, Gift as GiftIcon, Plus, Trash2, Pencil, Loader2, X, Search, Check } from 'lucide-react';
+import { Award, Gift as GiftIcon, Plus, Trash2, Pencil, Loader2, Search, Check } from 'lucide-react';
 import { useRewards, type Gift } from '@/lib/hooks/mentor';
 import { rewardsApi } from '@/lib/services/rewards-api';
 import {
@@ -14,6 +14,7 @@ import { messagingApi } from '@/lib/services/messaging-api';
 import type { SearchableUser } from '@/lib/types/messaging';
 import { useConfirm } from '@/lib/context/ConfirmContext';
 import { extractApiErrorMessage } from '@/lib/utils/api-error';
+import { Drawer } from '@/components/shared/Drawer';
 
 /** Default path-journey badges admins can pick when they have no custom upload. */
 const BADGE_PRESETS = [
@@ -359,190 +360,190 @@ function BadgeDrawer({ badge, onClose, onSaved }: { badge: Badge | null; onClose
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative w-full max-w-md h-full bg-card border-l border-slate-200 shadow-2xl flex flex-col">
-        <div className="px-6 py-5 border-b border-slate-200 flex items-center justify-between">
-          <h2 className="font-semibold text-slate-900">{badge ? 'Edit badge' : 'New badge'}</h2>
-          <button onClick={onClose} aria-label="Close" className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-          <label className="block space-y-1">
-            <span className="text-sm font-medium text-slate-700">Name</span>
-            <input className={field} value={name} onChange={(e) => setName(e.target.value)} />
-          </label>
-          <label className="block space-y-1">
-            <span className="text-sm font-medium text-slate-700">Description</span>
-            <textarea className={`${field} resize-none`} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
-          </label>
-          <label className="block space-y-1">
-            <span className="text-sm font-medium text-slate-700">Role</span>
-            <select
-              className={field}
-              value={targetRole}
-              disabled={rulesFrozen}
-              onChange={(e) => {
-                const next = e.target.value as 'mentee' | 'mentor';
-                setTargetRole(next);
-                setCriteriaType(next === 'mentor' ? 'reviews_given' : 'tasks_completed');
-                if (next === 'mentor') setEarningScope(0);
-              }}
-            >
-              <option value="mentee">Mentee</option>
-              <option value="mentor">Mentor</option>
-            </select>
-          </label>
-          {targetRole === 'mentee' && (
-            <label className="block space-y-1">
-              <span className="text-sm font-medium text-slate-700">Earning scope</span>
-              <select
-                className={field}
-                value={earningScope}
-                disabled={rulesFrozen}
-                onChange={(e) => {
-                  const next = Number(e.target.value) as 0 | 1 | 2;
-                  setEarningScope(next);
-                  if (next !== 0) setCriteriaType('tasks_completed');
-                }}
-              >
-                <option value={0}>Workspace</option>
-                <option value={1}>Program</option>
-                <option value={2}>Clan</option>
-              </select>
-              <p className="text-xs text-slate-500">
-                {earningScope === 0 && 'Counts all approved tasks in this workspace.'}
-                {earningScope === 1 && 'Counts once per program (standing-clan work excluded).'}
-                {earningScope === 2 && 'Counts once per clan.'}
-              </p>
-            </label>
-          )}
-          <label className="block space-y-1">
-            <span className="text-sm font-medium text-slate-700">Requirement</span>
-            {targetRole === 'mentee' && earningScope !== 0 ? (
-              <div className={`${field} text-slate-800`}>Approved tasks count</div>
-            ) : (
-              <select
-                className={field}
-                value={criteriaType}
-                disabled={rulesFrozen}
-                onChange={(e) => setCriteriaType(e.target.value as BadgeCriteriaType)}
-              >
-                {targetRole === 'mentee' ? (
-                  <>
-                    <option value="tasks_completed">Approved tasks count</option>
-                    <option value="coins_earned">Lifetime coins earned</option>
-                    <option value="points_milestone">XP total</option>
-                    <option value="streak_days">Streak days</option>
-                    <option value="level_reached">Level reached</option>
-                    <option value="custom">Manual award only</option>
-                  </>
-                ) : (
-                  <>
-                    <option value="reviews_given">Reviews given</option>
-                    <option value="tasks_approved">Tasks approved</option>
-                    <option value="meetings_logged">Meetings logged</option>
-                    <option value="mentees_guided">Mentees guided</option>
-                    <option value="clans_led">Clans led</option>
-                    <option value="mentor_avg_rating">Avg mentor rating (min 3 reviews)</option>
-                    <option value="custom">Manual award only</option>
-                  </>
-                )}
-              </select>
-            )}
-          </label>
-          {criteriaType !== 'custom' && (
-            <label className="block space-y-1">
-              <span className="text-sm font-medium text-slate-700">
-                {criteriaType === 'mentor_avg_rating' ? 'Minimum rating' : 'Threshold'}
-              </span>
-              <input
-                type="number"
-                min={criteriaType === 'mentor_avg_rating' ? 1 : 1}
-                step={criteriaType === 'mentor_avg_rating' ? 0.1 : 1}
-                max={criteriaType === 'mentor_avg_rating' ? 5 : undefined}
-                className={field}
-                value={threshold}
-                disabled={rulesFrozen}
-                onChange={(e) => setThreshold(Number(e.target.value) || 1)}
-              />
-            </label>
-          )}
-          {rulesFrozen && (
-            <p className="text-xs text-amber-700 rounded-lg bg-amber-50 border border-amber-100 p-3">
-              Criteria and scope are frozen after creation. Create a new badge to change requirements.
-            </p>
-          )}
-          {criteriaType === 'custom' && (
-            <p className="text-xs text-slate-500 rounded-lg bg-slate-50 border border-slate-100 p-3">
-              This badge is only given via <span className="font-medium">Award manually</span>. Never auto-unlocked.
-            </p>
-          )}
-          {targetRole === 'mentor' && criteriaType !== 'custom' && (
-            <p className="text-xs text-slate-500 rounded-lg bg-slate-50 border border-slate-100 p-3">
-              Auto-awarded from live mentor activity (reviews, meetings, clan roster, program ratings). You can still award manually anytime.
-            </p>
-          )}
-          <label className="block space-y-1">
-            <span className="text-sm font-medium text-slate-700">XP bonus on unlock (optional)</span>
-            <input type="number" min={0} className={field} value={pointsReward} onChange={(e) => setPointsReward(Number(e.target.value) || 0)} />
-          </label>
-          <div>
-            <span className="text-sm font-medium text-slate-700">Badge image</span>
-            <p className="mt-0.5 text-xs text-slate-400">Pick a preset or upload your own.</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {BADGE_PRESETS.map((p) => {
-                const selected = iconUrl === p.src;
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => setIconUrl(p.src)}
-                    className={`w-14 h-14 rounded-xl border-2 overflow-hidden bg-white transition ${
-                      selected ? 'border-brand-600 ring-2 ring-brand-200' : 'border-slate-200 hover:border-slate-300'
-                    }`}
-                    aria-label={`Use ${p.label} badge`}
-                    aria-pressed={selected}
-                    title={p.label}
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={p.src} alt={p.label} className="w-full h-full object-contain bg-white" />
-                  </button>
-                );
-              })}
-            </div>
-            <div className="mt-3 flex items-center gap-3">
-              <div className="w-16 h-16 rounded-xl border border-slate-200 bg-white overflow-hidden flex items-center justify-center">
-                {iconUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={iconUrl} alt="" className="w-full h-full object-contain bg-white" />
-                ) : (
-                  <Award className="w-6 h-6 text-slate-300" />
-                )}
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 text-sm cursor-pointer hover:bg-slate-50">
-                  {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                  Upload
-                  <input type="file" accept="image/*" className="hidden" onChange={(e) => void onPickImage(e.target.files?.[0])} />
-                </label>
-                {iconUrl && (
-                  <button type="button" onClick={() => setIconUrl(null)} className="text-xs text-slate-400 hover:text-red-600 text-left">
-                    Clear image
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-        <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 border border-slate-200 rounded-xl text-sm">Cancel</button>
+    <Drawer
+      open
+      onClose={onClose}
+      width="sm"
+      title={badge ? 'Edit badge' : 'New badge'}
+      footer={(dismiss) => (
+        <>
+          <button onClick={dismiss} className="px-4 py-2 border border-slate-200 rounded-xl text-sm">Cancel</button>
           <button onClick={() => void submit()} disabled={saving} className="px-4 py-2 bg-brand-600 text-white rounded-xl text-sm inline-flex items-center gap-2 disabled:opacity-50">
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
             {badge ? 'Save' : 'Create'}
           </button>
+        </>
+      )}
+    >
+      <div className="space-y-4">
+        <label className="block space-y-1">
+          <span className="text-sm font-medium text-slate-700">Name</span>
+          <input className={field} value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label className="block space-y-1">
+          <span className="text-sm font-medium text-slate-700">Description</span>
+          <textarea className={`${field} resize-none`} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
+        </label>
+        <label className="block space-y-1">
+          <span className="text-sm font-medium text-slate-700">Role</span>
+          <select
+            className={field}
+            value={targetRole}
+            disabled={rulesFrozen}
+            onChange={(e) => {
+              const next = e.target.value as 'mentee' | 'mentor';
+              setTargetRole(next);
+              setCriteriaType(next === 'mentor' ? 'reviews_given' : 'tasks_completed');
+              if (next === 'mentor') setEarningScope(0);
+            }}
+          >
+            <option value="mentee">Mentee</option>
+            <option value="mentor">Mentor</option>
+          </select>
+        </label>
+        {targetRole === 'mentee' && (
+          <label className="block space-y-1">
+            <span className="text-sm font-medium text-slate-700">Earning scope</span>
+            <select
+              className={field}
+              value={earningScope}
+              disabled={rulesFrozen}
+              onChange={(e) => {
+                const next = Number(e.target.value) as 0 | 1 | 2;
+                setEarningScope(next);
+                if (next !== 0) setCriteriaType('tasks_completed');
+              }}
+            >
+              <option value={0}>Workspace</option>
+              <option value={1}>Program</option>
+              <option value={2}>Clan</option>
+            </select>
+            <p className="text-xs text-slate-500">
+              {earningScope === 0 && 'Counts all approved tasks in this workspace.'}
+              {earningScope === 1 && 'Counts once per program (standing-clan work excluded).'}
+              {earningScope === 2 && 'Counts once per clan.'}
+            </p>
+          </label>
+        )}
+        <label className="block space-y-1">
+          <span className="text-sm font-medium text-slate-700">Requirement</span>
+          {targetRole === 'mentee' && earningScope !== 0 ? (
+            <div className={`${field} text-slate-800`}>Approved tasks count</div>
+          ) : (
+            <select
+              className={field}
+              value={criteriaType}
+              disabled={rulesFrozen}
+              onChange={(e) => setCriteriaType(e.target.value as BadgeCriteriaType)}
+            >
+              {targetRole === 'mentee' ? (
+                <>
+                  <option value="tasks_completed">Approved tasks count</option>
+                  <option value="coins_earned">Lifetime coins earned</option>
+                  <option value="points_milestone">XP total</option>
+                  <option value="streak_days">Streak days</option>
+                  <option value="level_reached">Level reached</option>
+                  <option value="custom">Manual award only</option>
+                </>
+              ) : (
+                <>
+                  <option value="reviews_given">Reviews given</option>
+                  <option value="tasks_approved">Tasks approved</option>
+                  <option value="meetings_logged">Meetings logged</option>
+                  <option value="mentees_guided">Mentees guided</option>
+                  <option value="clans_led">Clans led</option>
+                  <option value="mentor_avg_rating">Avg mentor rating (min 3 reviews)</option>
+                  <option value="custom">Manual award only</option>
+                </>
+              )}
+            </select>
+          )}
+        </label>
+        {criteriaType !== 'custom' && (
+          <label className="block space-y-1">
+            <span className="text-sm font-medium text-slate-700">
+              {criteriaType === 'mentor_avg_rating' ? 'Minimum rating' : 'Threshold'}
+            </span>
+            <input
+              type="number"
+              min={criteriaType === 'mentor_avg_rating' ? 1 : 1}
+              step={criteriaType === 'mentor_avg_rating' ? 0.1 : 1}
+              max={criteriaType === 'mentor_avg_rating' ? 5 : undefined}
+              className={field}
+              value={threshold}
+              disabled={rulesFrozen}
+              onChange={(e) => setThreshold(Number(e.target.value) || 1)}
+            />
+          </label>
+        )}
+        {rulesFrozen && (
+          <p className="text-xs text-amber-700 rounded-lg bg-amber-50 border border-amber-100 p-3">
+            Criteria and scope are frozen after creation. Create a new badge to change requirements.
+          </p>
+        )}
+        {criteriaType === 'custom' && (
+          <p className="text-xs text-slate-500 rounded-lg bg-slate-50 border border-slate-100 p-3">
+            This badge is only given via <span className="font-medium">Award manually</span>. Never auto-unlocked.
+          </p>
+        )}
+        {targetRole === 'mentor' && criteriaType !== 'custom' && (
+          <p className="text-xs text-slate-500 rounded-lg bg-slate-50 border border-slate-100 p-3">
+            Auto-awarded from live mentor activity (reviews, meetings, clan roster, program ratings). You can still award manually anytime.
+          </p>
+        )}
+        <label className="block space-y-1">
+          <span className="text-sm font-medium text-slate-700">XP bonus on unlock (optional)</span>
+          <input type="number" min={0} className={field} value={pointsReward} onChange={(e) => setPointsReward(Number(e.target.value) || 0)} />
+        </label>
+        <div>
+          <span className="text-sm font-medium text-slate-700">Badge image</span>
+          <p className="mt-0.5 text-xs text-slate-400">Pick a preset or upload your own.</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {BADGE_PRESETS.map((p) => {
+              const selected = iconUrl === p.src;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setIconUrl(p.src)}
+                  className={`w-14 h-14 rounded-xl border-2 overflow-hidden bg-white transition ${
+                    selected ? 'border-brand-600 ring-2 ring-brand-200' : 'border-slate-200 hover:border-slate-300'
+                  }`}
+                  aria-label={`Use ${p.label} badge`}
+                  aria-pressed={selected}
+                  title={p.label}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={p.src} alt={p.label} className="w-full h-full object-contain bg-white" />
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-3 flex items-center gap-3">
+            <div className="w-16 h-16 rounded-xl border border-slate-200 bg-white overflow-hidden flex items-center justify-center">
+              {iconUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={iconUrl} alt="" className="w-full h-full object-contain bg-white" />
+              ) : (
+                <Award className="w-6 h-6 text-slate-300" />
+              )}
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 text-sm cursor-pointer hover:bg-slate-50">
+                {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                Upload
+                <input type="file" accept="image/*" className="hidden" onChange={(e) => void onPickImage(e.target.files?.[0])} />
+              </label>
+              {iconUrl && (
+                <button type="button" onClick={() => setIconUrl(null)} className="text-xs text-slate-400 hover:text-red-600 text-left">
+                  Clear image
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
-    </div>
+    </Drawer>
   );
 }
 
@@ -601,101 +602,14 @@ function ManualAwardDrawer({ badge, onClose }: { badge: Badge; onClose: () => vo
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative w-full max-w-md h-full bg-card border-l border-slate-200 shadow-2xl flex flex-col">
-        <div className="px-6 py-5 border-b border-slate-200 flex items-center justify-between">
-          <h2 className="font-semibold text-slate-900">Award “{badge.name}”</h2>
-          <button onClick={onClose} aria-label="Close" className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-          <div className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50/80 p-3">
-            <div className="h-12 w-12 rounded-xl border border-slate-200 bg-white overflow-hidden flex items-center justify-center shrink-0">
-              {badge.iconUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={badge.iconUrl} alt="" className="h-full w-full object-contain bg-white" />
-              ) : (
-                <Award className="w-5 h-5 text-brand-400" />
-              )}
-            </div>
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-slate-900 truncate">{badge.name}</p>
-              <p className="text-xs text-slate-500 capitalize">{targetRole} badge · once per person</p>
-            </div>
-          </div>
-
-          {selected ? (
-            <div className="rounded-xl border border-brand-200 bg-brand-50/50 p-3 flex items-center gap-3">
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-slate-900 truncate">
-                  {`${selected.firstName} ${selected.lastName}`.trim() || 'User'}
-                </p>
-                <p className="text-xs text-slate-500 truncate">{selected.email}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelected(null)}
-                className="text-xs text-slate-500 hover:text-slate-800 shrink-0"
-              >
-                Change
-              </button>
-            </div>
-          ) : (
-            <>
-              <label className="block space-y-1">
-                <span className="text-sm font-medium text-slate-700">
-                  Find {targetRole}
-                </span>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input
-                    className={`${field} pl-9`}
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder={`Search by name or email…`}
-                    autoFocus
-                  />
-                </div>
-              </label>
-              <div className="rounded-xl border border-slate-200 divide-y divide-slate-100 max-h-72 overflow-y-auto">
-                {searching && (
-                  <div className="flex items-center justify-center gap-2 py-8 text-sm text-slate-500">
-                    <Loader2 className="w-4 h-4 animate-spin" /> Searching…
-                  </div>
-                )}
-                {!searching && query.trim().length < 2 && (
-                  <p className="px-4 py-8 text-center text-sm text-slate-400">
-                    Type at least 2 characters to search.
-                  </p>
-                )}
-                {!searching && query.trim().length >= 2 && results.length === 0 && (
-                  <p className="px-4 py-8 text-center text-sm text-slate-400">
-                    No {targetRole}s matched “{query.trim()}”.
-                  </p>
-                )}
-                {!searching && results.map((u) => {
-                  const name = `${u.firstName} ${u.lastName}`.trim() || u.email;
-                  return (
-                    <button
-                      key={u.id}
-                      type="button"
-                      onClick={() => { setSelected(u); setQuery(''); setResults([]); }}
-                      className="w-full text-left px-4 py-3 hover:bg-slate-50 flex items-center gap-3"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-slate-900 truncate">{name}</p>
-                        <p className="text-xs text-slate-500 truncate">{u.email}</p>
-                      </div>
-                      <Check className="w-4 h-4 text-transparent" aria-hidden />
-                    </button>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </div>
-        <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 border border-slate-200 rounded-xl text-sm">Cancel</button>
+    <Drawer
+      open
+      onClose={onClose}
+      width="sm"
+      title={`Award “${badge.name}”`}
+      footer={(dismiss) => (
+        <>
+          <button onClick={dismiss} className="px-4 py-2 border border-slate-200 rounded-xl text-sm">Cancel</button>
           <button
             onClick={() => void submit()}
             disabled={saving || !selected}
@@ -703,9 +617,96 @@ function ManualAwardDrawer({ badge, onClose }: { badge: Badge; onClose: () => vo
           >
             {saving ? 'Awarding…' : 'Award badge'}
           </button>
+        </>
+      )}
+    >
+      <div className="space-y-4">
+        <div className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50/80 p-3">
+          <div className="h-12 w-12 rounded-xl border border-slate-200 bg-white overflow-hidden flex items-center justify-center shrink-0">
+            {badge.iconUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={badge.iconUrl} alt="" className="h-full w-full object-contain bg-white" />
+            ) : (
+              <Award className="w-5 h-5 text-brand-400" />
+            )}
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-slate-900 truncate">{badge.name}</p>
+            <p className="text-xs text-slate-500 capitalize">{targetRole} badge · once per person</p>
+          </div>
         </div>
+
+        {selected ? (
+          <div className="rounded-xl border border-brand-200 bg-brand-50/50 p-3 flex items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-slate-900 truncate">
+                {`${selected.firstName} ${selected.lastName}`.trim() || 'User'}
+              </p>
+              <p className="text-xs text-slate-500 truncate">{selected.email}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelected(null)}
+              className="text-xs text-slate-500 hover:text-slate-800 shrink-0"
+            >
+              Change
+            </button>
+          </div>
+        ) : (
+          <>
+            <label className="block space-y-1">
+              <span className="text-sm font-medium text-slate-700">
+                Find {targetRole}
+              </span>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  className={`${field} pl-9`}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={`Search by name or email…`}
+                  autoFocus
+                />
+              </div>
+            </label>
+            <div className="rounded-xl border border-slate-200 divide-y divide-slate-100 max-h-72 overflow-y-auto">
+              {searching && (
+                <div className="flex items-center justify-center gap-2 py-8 text-sm text-slate-500">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Searching…
+                </div>
+              )}
+              {!searching && query.trim().length < 2 && (
+                <p className="px-4 py-8 text-center text-sm text-slate-400">
+                  Type at least 2 characters to search.
+                </p>
+              )}
+              {!searching && query.trim().length >= 2 && results.length === 0 && (
+                <p className="px-4 py-8 text-center text-sm text-slate-400">
+                  No {targetRole}s matched “{query.trim()}”.
+                </p>
+              )}
+              {!searching && results.map((u) => {
+                const name = `${u.firstName} ${u.lastName}`.trim() || u.email;
+                return (
+                  <button
+                    key={u.id}
+                    type="button"
+                    onClick={() => { setSelected(u); setQuery(''); setResults([]); }}
+                    className="w-full text-left px-4 py-3 hover:bg-slate-50 flex items-center gap-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-slate-900 truncate">{name}</p>
+                      <p className="text-xs text-slate-500 truncate">{u.email}</p>
+                    </div>
+                    <Check className="w-4 h-4 text-transparent" aria-hidden />
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
       </div>
-    </div>
+    </Drawer>
   );
 }
 
@@ -744,65 +745,65 @@ function GiftDrawer({ gift, onClose, onSaved }: { gift: Gift | null; onClose: ()
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <div className="absolute inset-0 bg-black/40 dark:bg-black/70" onClick={onClose} />
-      <div role="dialog" aria-modal="true" aria-label={gift ? 'Edit gift' : 'New gift'} className="relative w-full max-w-md h-full bg-card border-l border-slate-200 dark:border-slate-700 shadow-2xl dark:shadow-[-8px_0_30px_rgba(0,0,0,0.6)] flex flex-col">
-        <div className="px-6 py-5 border-b border-slate-200 flex items-center justify-between">
-          <h2 className="font-semibold text-slate-900">{gift ? 'Edit gift' : 'New gift'}</h2>
-          <button onClick={onClose} aria-label="Close" className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Name <span className="text-red-500">*</span></label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Swag pack" className={field} />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Image / GIF</label>
-            <div className="flex items-center gap-3">
-              <div className="w-20 h-20 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden shrink-0">
-                {imageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={imageUrl} alt="Gift preview" className="w-full h-full object-cover" />
-                ) : (
-                  <GiftIcon className="w-7 h-7 text-slate-300" />
-                )}
-              </div>
-              <div className="space-y-1.5">
-                <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 text-sm text-slate-700 hover:bg-slate-50 cursor-pointer">
-                  {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                  {imageUrl ? 'Replace' : 'Upload'} image
-                  <input type="file" accept="image/*,image/gif" className="hidden" onChange={(e) => onPickImage(e.target.files?.[0])} />
-                </label>
-                {imageUrl && <button onClick={() => setImageUrl(null)} className="block text-xs text-slate-400 hover:text-red-600">Remove image</button>}
-              </div>
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
-            <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className={`${field} resize-none`} />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Cost (coins)</label>
-            <input type="number" min={0} value={costXp} onChange={(e) => setCostXp(Number(e.target.value) || 0)} className={field} />
-            <p className="mt-1 text-xs text-slate-400">Spent from the mentee’s coin balance (task earnings − redemptions).</p>
-          </div>
-          <div>
-            <label className="flex items-center gap-2 text-sm text-slate-700 mb-2">
-              <input type="checkbox" checked={unlimited} onChange={(e) => setUnlimited(e.target.checked)} className="rounded border-slate-300 text-brand-600 focus:ring-brand-500" />
-              Unlimited stock
-            </label>
-            {!unlimited && (
-              <input type="number" min={0} value={stock} onChange={(e) => setStock(Number(e.target.value) || 0)} className={field} placeholder="Units in stock" />
-            )}
-          </div>
-        </div>
-        <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 border border-slate-200 text-slate-700 rounded-xl text-sm hover:bg-slate-50">Cancel</button>
+    <Drawer
+      open
+      onClose={onClose}
+      width="sm"
+      title={gift ? 'Edit gift' : 'New gift'}
+      footer={(dismiss) => (
+        <>
+          <button onClick={dismiss} className="px-4 py-2 border border-slate-200 text-slate-700 rounded-xl text-sm hover:bg-slate-50">Cancel</button>
           <button onClick={submit} disabled={saving} className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm inline-flex items-center gap-2 disabled:opacity-50">
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}{gift ? 'Save' : 'Add gift'}
           </button>
+        </>
+      )}
+    >
+      <div className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Name <span className="text-red-500">*</span></label>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Swag pack" className={field} />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Image / GIF</label>
+          <div className="flex items-center gap-3">
+            <div className="w-20 h-20 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden shrink-0">
+              {imageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={imageUrl} alt="Gift preview" className="w-full h-full object-cover" />
+              ) : (
+                <GiftIcon className="w-7 h-7 text-slate-300" />
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 text-sm text-slate-700 hover:bg-slate-50 cursor-pointer">
+                {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                {imageUrl ? 'Replace' : 'Upload'} image
+                <input type="file" accept="image/*,image/gif" className="hidden" onChange={(e) => onPickImage(e.target.files?.[0])} />
+              </label>
+              {imageUrl && <button onClick={() => setImageUrl(null)} className="block text-xs text-slate-400 hover:text-red-600">Remove image</button>}
+            </div>
+          </div>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
+          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className={`${field} resize-none`} />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Cost (coins)</label>
+          <input type="number" min={0} value={costXp} onChange={(e) => setCostXp(Number(e.target.value) || 0)} className={field} />
+          <p className="mt-1 text-xs text-slate-400">Spent from the mentee’s coin balance (task earnings − redemptions).</p>
+        </div>
+        <div>
+          <label className="flex items-center gap-2 text-sm text-slate-700 mb-2">
+            <input type="checkbox" checked={unlimited} onChange={(e) => setUnlimited(e.target.checked)} className="rounded border-slate-300 text-brand-600 focus:ring-brand-500" />
+            Unlimited stock
+          </label>
+          {!unlimited && (
+            <input type="number" min={0} value={stock} onChange={(e) => setStock(Number(e.target.value) || 0)} className={field} placeholder="Units in stock" />
+          )}
         </div>
       </div>
-    </div>
+    </Drawer>
   );
 }

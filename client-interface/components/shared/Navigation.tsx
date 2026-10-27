@@ -21,11 +21,15 @@ import {
   MessageSquarePlus,
   ShieldCheck,
   Search,
+  TerminalSquare,
 } from 'lucide-react';
 import { NavLink } from '@/lib/config/navigation';
 import { useNavPreferences } from '@/lib/hooks/shared';
+import { qk, useApiQuery, STALE } from '@/lib/query';
+import { platformApi } from '@/lib/services/platform-api';
 import { usePermissions } from '@/lib/hooks/usePermissions';
-import { useClan, ALL_CLANS } from '@/lib/context/ClanContext';
+import { useClan, ALL_CLANS, poolScope, type ClanLite, type PoolLite } from '@/lib/context/ClanContext';
+import { useMenteeScope } from '@/lib/hooks/mentee';
 import { useNavBadges } from '@/lib/hooks/shared/useNavBadges';
 import { SelectMenu } from './SelectMenu';
 import { ClanAvatar } from './ClanAvatar';
@@ -54,12 +58,39 @@ export default function Navigation({ role }: NavigationProps) {
   const pathname = logicalPathname(usePathname());
   const router = useRouter();
   const { logout, user, availableRoles, setActiveRole } = useAuth();
-  const { clans, activeClanId, setActiveClanId, menteeClans, menteeActiveClanId, setMenteeActiveClanId } = useClan();
+  const { clans, activeClanId, setActiveClanId, menteeClans, menteePools, menteeScope, setMenteeScope, menteeActiveClanId } = useClan();
+  const scope = useMenteeScope();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   const { links, pinned, isEditing, toggleEdit, togglePin, moveUp, moveDown, reset, recordUsage, adaptive, toggleAdaptive } = useNavPreferences(role);
-  const { can, canAny, canAccessAdmin, loading: permsLoading } = usePermissions();
+  const { can, canAny, canAccessAdmin, canAccessPools, loading: permsLoading } = usePermissions();
+
+  // Platform console entry: shown only to platform operators (platform_admins
+  // rows / env bootstrap), resolved once and cached. Workspace roles never
+  // grant it, and for everyone else the sidebar simply never mentions it.
+  const { data: platformMe } = useApiQuery({
+    queryKey: qk.platform.me,
+    queryFn: platformApi.me,
+    enabled: Boolean(user?.id),
+    staleTime: STALE.long,
+  });
+  const isPlatformAdmin = Boolean(platformMe?.isPlatformAdmin);
+
+  const renderPlatformConsoleLink = (onNavigate?: () => void) => isPlatformAdmin ? (
+    <Link
+      href="/platform"
+      onClick={onNavigate}
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors text-left group ${
+        pathname.startsWith('/platform')
+          ? 'bg-brand-600 text-white shadow-sm shadow-brand-200'
+          : 'text-slate-500 hover:text-brand-700 hover:bg-brand-50'
+      }`}
+    >
+      <TerminalSquare className="w-4 h-4 text-slate-400 group-hover:text-brand-500" />
+      <span className="text-sm font-medium">Platform console</span>
+    </Link>
+  ) : null;
 
   // Permission-filtered nav: hide items the user can't use, drop empty groups,
   // and surface an "Admin area" entry for org/program admins in their own nav.
@@ -71,7 +102,7 @@ export default function Navigation({ role }: NavigationProps) {
           .map((link) => {
             if (link.requiresAdminArea && !canAccessAdmin) return null;
             if (link.children) {
-              const kids = link.children.filter((c) => !c.permission || can(c.permission));
+              const kids = link.children.filter((c) => (!c.permission || can(c.permission)) && (!c.anyOf || canAny(c.anyOf)));
               if (!kids.length) return null;
               if (link.workspace) return { ...link, preferenceKey: link.path, path: kids[0].path, activePaths: kids.map((child) => child.path), children: undefined };
               return { ...link, children: kids };
@@ -85,8 +116,49 @@ export default function Navigation({ role }: NavigationProps) {
     if (role !== 'admin' && canAccessAdmin) {
       return [...base, { path: '/admin', icon: ShieldCheck, label: 'Admin area', requiresAdminArea: true }];
     }
+    // A pool reviewer/operator who is not an admin: their one way into the
+    // admin area is Selection pools, and that is all it shows them.
+    if (role !== 'admin' && canAccessPools) {
+      return [...base, { path: '/admin/pools', icon: ShieldCheck, label: 'Selection pools' }];
+    }
     return base;
-  }, [links, permsLoading, canAccessAdmin, can, canAny, role]);
+  }, [links, permsLoading, canAccessAdmin, canAccessPools, can, canAny, role]);
+
+  /**
+   * What a candidate in a selection pool actually has.
+   *
+   * In pool scope there is no mentor, no roadmap, no clan and no cohort, so
+   * progress, meetings, roadblocks, the community and the message centre are
+   * not empty screens — they are screens about things that do not exist until
+   * they are placed. Hiding them is the difference between a product that is
+   * clear about where somebody is and one that looks broken.
+   *
+   * It is the SCOPE that decides, not the account: somebody in a clan who is
+   * also in a second round gets the full workspace back by switching scope.
+   */
+  const navLinks = React.useMemo<NavLink[]>(() => {
+    if (role !== 'mentee' || !scope.inPool) return visibleLinks;
+    const KEEP = new Set(['/mentee/dashboard', '/mentee/tasks', '/mentee/settings']);
+    return visibleLinks
+      .map((link) => {
+        if (!link.children) {
+          if (!KEEP.has(link.path)) return null;
+          // The learner groups arrive flattened, so "My learning" is a single
+          // link at /mentee/tasks that still claims the roadmap and library as
+          // its own. In a round there are neither, and it is qualifying work
+          // rather than a curriculum, so it is named for what it is.
+          return link.path === '/mentee/tasks'
+            ? { ...link, label: 'My work', activePaths: ['/mentee/tasks'] }
+            : link;
+        }
+        const kids = link.children.filter((c) => KEEP.has(c.path));
+        if (!kids.length) return null;
+        return link.workspace
+          ? { ...link, preferenceKey: link.path, path: kids[0].path, activePaths: kids.map((c) => c.path), children: undefined }
+          : { ...link, children: kids };
+      })
+      .filter((l): l is NavLink => Boolean(l));
+  }, [visibleLinks, role, scope.inPool]);
 
   // ── Collapsible group state ───────────────────────────────────────────────
   // Initialise with any group that contains the current path already open
@@ -148,7 +220,10 @@ export default function Navigation({ role }: NavigationProps) {
   const renderRoleSwitcher = () => {
     if (!availableRoles || availableRoles.length <= 1) return null;
     const order: UserRole[] = ['admin', 'mentor', 'mentee'];
+    // Only the three portal roles switch; other capabilities (a selection-pool
+    // candidate) have their own area and never appear here.
     const roles = order.filter((r) => availableRoles.includes(r));
+    if (roles.length <= 1) return null;
     return (
       <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl">
         {roles.map((r) => (
@@ -168,39 +243,104 @@ export default function Navigation({ role }: NavigationProps) {
     );
   };
 
-  // ── Clan scope (multi-clan mentors) ───────────────────────────────────────
-  // Only meaningful in the mentor view, and only when the user mentors 2+ clans.
+  // ── Clan scope (multi-clan mentors / mentees) ─────────────────────────────
+  /**
+   * One row per clan, grouped by what the clan IS rather than sorted by it.
+   *
+   * A clan from a closed programme stays in this list on purpose. It is the
+   * only way to scope the rest of the app — Approvals, Mentees, Review — to
+   * that clan, which is exactly how somebody looks back at what happened
+   * there, and the app already enforces read-only on that scope
+   * (`isHistoricalCohortClan`). Taking it out of the picker would not archive
+   * the work, it would just make it unreachable.
+   *
+   * What it must not do is sit in the same list as live work with no visible
+   * difference. So it goes under its own heading, below everything current,
+   * marked read-only.
+   */
+  const clanGroupOf = (c: ClanLite) => (
+    c.kind === 'standing' ? 'Standing clans'
+      : c.frozenAt ? 'Past programmes'
+        : 'Active programme'
+  );
+  // Current work first, history last; alphabetical inside each group.
+  const GROUP_ORDER = ['Active programme', 'Standing clans', 'Past programmes'];
+  const clanOptions = (list: ClanLite[]) => [...list]
+    .sort((a, b) => GROUP_ORDER.indexOf(clanGroupOf(a)) - GROUP_ORDER.indexOf(clanGroupOf(b))
+      || a.name.localeCompare(b.name))
+    .map((c) => ({
+      value: c.id,
+      // The clan's own name owns the full width. Everything that qualifies it
+      // moves to the second line, where it no longer competes for room.
+      label: c.name,
+      description: c.kind === 'standing'
+        ? `Standing${c.programName ? ` · ${c.programName}` : ''}`
+        : c.frozenAt
+          ? `${c.programName || 'Programme'} · finished`
+          : c.programName || 'Active programme',
+      group: clanGroupOf(c),
+      meta: c.kind !== 'standing' && c.frozenAt ? 'Read-only' : undefined,
+      icon: <ClanAvatar name={c.name} src={c.avatarUrl} size="sm" />,
+    }));
+
+  /**
+   * The pools, as picker rows. Decided rounds sit below live ones and say so,
+   * for the same reason a finished programme stays in a mentor's picker: it is
+   * the only way back to what happened there.
+   */
+  const poolOptions = (list: PoolLite[]) => [...list]
+    .sort((a, b) => Number(a.decided) - Number(b.decided) || a.name.localeCompare(b.name))
+    .map((p) => ({
+      value: poolScope(p.id),
+      label: p.name,
+      description: p.decided
+        ? `${p.programName || 'Selection'} · decided`
+        : p.status === 'closed'
+          ? `${p.programName || 'Selection'} · closed`
+          : p.programName || 'Qualifying round',
+      group: 'Selection pool',
+      meta: p.decided || p.status === 'closed' ? 'Read-only' : undefined,
+      icon: <ClanAvatar name={p.name} src={p.avatarUrl} size="sm" />,
+    }));
+
   const renderClanScope = () => {
     if (role === 'mentor' && clans.length >= 2) {
-      const options = [
-        { value: ALL_CLANS, label: 'All clans' },
-        ...clans.map((c) => ({
-          value: c.id,
-          label: `${c.name}${c.kind === 'standing' ? ' · Standing clan' : c.frozenAt ? ' · Completed history' : ' · Active program'}`,
-          icon: <ClanAvatar name={c.name} src={c.avatarUrl} size="sm" />,
-        })),
-      ];
       return (
         <SelectMenu
           value={activeClanId}
           onChange={setActiveClanId}
-          options={options}
+          options={[
+            { value: ALL_CLANS, label: 'All clans', description: 'Everything you mentor' },
+            ...clanOptions(clans),
+          ]}
           ariaLabel="Filter by clan"
           className="w-full"
         />
       );
     }
-    if (role === 'mentee' && menteeClans.length >= 2) {
+    if (role === 'mentee') {
+      /*
+       * A learner's picker holds their clans AND the selection pools they are
+       * a candidate in, under a heading of its own.
+       *
+       * They are not the same kind of thing, which is exactly why the pool
+       * needs its own group rather than a row that looks like a clan: the
+       * workspace behaves differently in it (no mentor, no roadmap, fewer
+       * tabs), and the heading is what tells somebody that before they click.
+       *
+       * Shown from one row, not two, when that row is a pool: a candidate with
+       * no clan still needs to see where they are, and a pool is not the
+       * obvious default the way a single clan is.
+       */
+      const options = [...clanOptions(menteeClans), ...poolOptions(menteePools)];
+      if (options.length < 2 && !menteePools.length) return null;
+      if (!options.length) return null;
       return (
         <SelectMenu
-          value={menteeActiveClanId || menteeClans[0].id}
-          onChange={setMenteeActiveClanId}
-          options={menteeClans.map((c) => ({
-            value: c.id,
-            label: `${c.name}${c.kind === 'standing' ? ' · Standing clan' : c.frozenAt ? ' · Completed history' : ' · Active program'}`,
-            icon: <ClanAvatar name={c.name} src={c.avatarUrl} size="sm" />,
-          }))}
-          ariaLabel="Switch clan"
+          value={menteeScope || options[0].value}
+          onChange={setMenteeScope}
+          options={options}
+          ariaLabel={menteePools.length ? 'Switch clan or selection pool' : 'Switch clan'}
           className="w-full"
         />
       );
@@ -328,7 +468,7 @@ export default function Navigation({ role }: NavigationProps) {
   const renderNavItems = (onNavigate?: () => void) =>
     isEditing
       ? links.map((link) => renderEditRow(link))
-      : visibleLinks.map((link) =>
+      : navLinks.map((link) =>
           link.children
             ? renderGroupLink(link, onNavigate)
             : renderFlatLink(link, onNavigate)
@@ -415,7 +555,7 @@ export default function Navigation({ role }: NavigationProps) {
           {/* Role switcher (only for users who hold more than one role view) */}
           <div className="px-3 pt-3"><WorkspaceSwitcher /></div>
 
-          {availableRoles && availableRoles.length > 1 && (
+          {renderRoleSwitcher() && (
             <div className="px-3 pt-3">{renderRoleSwitcher()}</div>
           )}
 
@@ -442,6 +582,7 @@ export default function Navigation({ role }: NavigationProps) {
 
           {/* Bottom Section */}
           <div className="px-3 py-4 border-t border-slate-100 space-y-1">
+            {renderPlatformConsoleLink()}
             <UserProfileCard />
             <button
               onClick={handleLogout}
@@ -500,11 +641,12 @@ export default function Navigation({ role }: NavigationProps) {
           <div className="border-t border-slate-100 bg-card">
             <nav className="px-3 py-3 space-y-0.5">
               <div className="pb-3"><WorkspaceSwitcher compact onNavigate={() => setMobileMenuOpen(false)} /></div>
-              {availableRoles && availableRoles.length > 1 && (
+              {renderRoleSwitcher() && (
                 <div className="pb-2">{renderRoleSwitcher()}</div>
               )}
               {renderClanScope() && <div className="pb-2">{renderClanScope()}</div>}
               {renderNavItems(() => setMobileMenuOpen(false))}
+              {renderPlatformConsoleLink(() => setMobileMenuOpen(false))}
               <button
                 onClick={handleLogout}
                 className="flex items-center gap-3 px-3 py-2.5 w-full text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors text-left"

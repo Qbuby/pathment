@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { User, AuthResponse, LoginCredentials, RegisterData, TwoFactorLoginResponse, UserRole } from '../types';
+import { User, AuthResponse, LoginCredentials, RegisterData, TwoFactorLoginResponse, UserRole, Capability } from '../types';
 import { isAxiosError } from 'axios';
 import { activeWorkspaceSlug } from '../services/workspace-scope';
 import { apiClient } from '../services/api-client';
@@ -10,14 +10,24 @@ import { apiConfig } from '../config/api';
 import { tokenStore } from '../services/token-store';
 import { SessionExpiredError, startAuthSession, resetAuthSession, restoreAccessToken } from '../services/auth-session';
 
-/** Keep in sync with ClanContext storage keys (avoid importing ClanContext here — circular). */
-const MENTOR_CLAN_STORAGE_KEY = 'pathment-active-clan';
-const MENTEE_CLAN_STORAGE_KEY = 'pathment-active-mentee-clan';
+const PORTAL_ROLES: UserRole[] = ['admin', 'mentor', 'mentee'];
 
 /** An explicit empty capability list grants no role views. */
-function getCapabilities(user: User | null): UserRole[] {
+function getCapabilities(user: User | null): Capability[] {
   if (!user) return [];
   return user.capabilities ?? [user.role];
+}
+
+/**
+ * Only the capabilities that are a portal of their own.
+ *
+ * `candidate` is not: a selection-pool candidate works in the learner
+ * workspace, with their round in the scope picker. Keeping it out of
+ * `availableRoles` is what stops it appearing in the role switcher as a
+ * fourth portal that does not exist.
+ */
+function getPortalRoles(user: User | null): UserRole[] {
+  return getCapabilities(user).filter((c): c is UserRole => PORTAL_ROLES.includes(c as UserRole));
 }
 
 interface RegistrationResult {
@@ -40,6 +50,8 @@ interface AuthContextType {
   /** Switch the active role view (no-op if not one of the user's capabilities). */
   setActiveRole: (role: UserRole) => void;
   login: (credentials: LoginCredentials, rememberMe?: boolean) => Promise<{ requiresTwoFactor: boolean; user?: User }>;
+  /** Spend a one-time sign-in link from an email. Same outcome as a password. */
+  signInWithLink: (token: string, rememberMe?: boolean) => Promise<{ requiresTwoFactor: boolean; user?: User }>;
   verify2FA: (code: string, rememberMe?: boolean) => Promise<User>;
   register: (data: RegisterData) => Promise<RegistrationResult>;
   logout: () => Promise<void>;
@@ -53,13 +65,16 @@ const getHttpStatus = (error: unknown): number | undefined => {
   return (error as { response?: { status?: number } })?.response?.status;
 };
 
+/**
+ * Drop everything cached for the account that was signed in.
+ *
+ * The clan choice is deliberately NOT dropped. It is stored per account
+ * (`lib/services/clan-choice`), so it cannot leak to whoever signs in next —
+ * and deleting it here was the reason a mentor's or mentee's selected clan
+ * never survived coming back.
+ */
 function clearUserScopedClientState(queryClient: ReturnType<typeof useQueryClient>) {
   queryClient.clear();
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.removeItem(MENTOR_CLAN_STORAGE_KEY);
-    localStorage.removeItem(MENTEE_CLAN_STORAGE_KEY);
-  } catch { /* ignore */ }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -87,13 +102,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setActiveRoleState(null);
       return;
     }
-    const caps = getCapabilities(user);
+    const caps = getPortalRoles(user);
     const stored = (typeof window !== 'undefined'
       ? (localStorage.getItem('activeRole') as UserRole | null)
       : null);
+    // A pool candidate with no portal role still lands in the learner
+    // workspace (see `workspaceLandingPath`), so 'mentee' is the view there.
+    const fallback = caps.length ? null : (getCapabilities(user).includes('candidate') ? 'mentee' as UserRole : null);
     const next = stored && caps.includes(stored)
       ? stored
-      : (caps.includes(user.role) ? user.role : (caps[0] ?? null));
+      : (caps.includes(user.role) ? user.role : (caps[0] ?? fallback));
     setActiveRoleState(next);
     if (typeof window !== 'undefined') {
       if (next) localStorage.setItem('activeRole', next);
@@ -218,6 +236,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  /**
+   * Signing in by link.
+   *
+   * The server has issued these for a long time and nothing in the browser
+   * ever spent one, so the link in the email landed on this page and the
+   * person was asked for the password they had just avoided typing.
+   *
+   * It ends exactly where `login` ends, two factor included: the link proves
+   * the address, a second factor is a separate question, and an account that
+   * has one still has to answer it.
+   */
+  const signInWithLink = async (token: string, rememberMe = true) => {
+    const response = await apiClient.post<{ data: AuthResponse & Partial<TwoFactorLoginResponse> }>(
+      apiConfig.endpoints.verifySignInLink,
+      { token, client: 'web' }
+    );
+
+    const responseData = response.data;
+
+    if (responseData?.requiresTwoFactor) {
+      setRequiresTwoFactor(true);
+      setTemporaryToken(responseData?.temporaryToken ?? null);
+      setUser(responseData?.user);
+      setPendingRemember(rememberMe);
+      return { requiresTwoFactor: true };
+    }
+
+    const linkedUser = responseData?.user;
+    const accessToken = responseData?.tokens?.accessToken;
+    const refreshToken = responseData?.tokens?.refreshToken;
+
+    if (!linkedUser || !accessToken || !refreshToken) {
+      throw new Error('Invalid sign-in link response structure');
+    }
+
+    tokenStore.setSession({ token: accessToken, refreshToken, user: linkedUser }, rememberMe);
+    resetAuthSession();
+    clearUserScopedClientState(queryClient);
+    setUser(linkedUser);
+    setRequiresTwoFactor(false);
+    setTemporaryToken(null);
+    return { requiresTwoFactor: false, user: linkedUser };
+  };
+
   const verify2FA = async (code: string, rememberMe = pendingRemember) => {
     if (!temporaryToken) {
       throw new Error('No temporary token available. Please login first.');
@@ -306,9 +368,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     requiresTwoFactor,
     temporaryToken,
     activeRole: activeRole && getCapabilities(user).includes(activeRole) ? activeRole : null,
-    availableRoles: getCapabilities(user),
+    availableRoles: getPortalRoles(user),
     setActiveRole,
     login,
+    signInWithLink,
     verify2FA,
     register,
     logout,

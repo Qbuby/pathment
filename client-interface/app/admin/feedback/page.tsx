@@ -21,6 +21,17 @@ const STATUS_OPTS = [
   { value: 'planned', label: 'Planned' }, { value: 'fixed', label: 'Fixed' },
   { value: 'added', label: 'Added' }, { value: 'declined', label: 'Declined' },
 ];
+/**
+ * What a WORKSPACE admin may set, on the lane they own.
+ *
+ * "Planned", "Fixed" and "Added" are claims about the software and the server
+ * refuses them from here, so offering them would be offering a 403. Open, in
+ * review and declined are the honest set for "I am looking at this" and "there
+ * is nothing to do".
+ */
+const WORKSPACE_STATUS_OPTS = STATUS_OPTS.filter(
+  (option) => !['planned', 'fixed', 'added'].includes(option.value),
+);
 const TYPE_ICON: Record<string, typeof Bug> = { bug: Bug, suggestion: Lightbulb, other: MessageSquarePlus };
 
 /**
@@ -61,6 +72,12 @@ export default function AdminFeedbackPage() {
   const [reports, setReports] = useState<FeedbackReport[]>([]);
   const [openCount, setOpenCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  /**
+   * Which lane. Default 'all', because the board is still the one place an
+   * admin sees everything their own people have reported - what changes is
+   * that only one lane is theirs to answer.
+   */
+  const [laneFilter, setLaneFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
   const [selected, setSelected] = useState<FeedbackReport | null>(null);
@@ -91,6 +108,7 @@ export default function AdminFeedbackPage() {
       const r = await feedbackApi.listAll({
         status: statusFilter === 'all' ? undefined : statusFilter,
         type: typeFilter === 'all' ? undefined : typeFilter,
+        lane: laneFilter === 'all' ? undefined : (laneFilter as 'product' | 'workspace'),
         page: pagination.page, limit: pagination.limit,
       });
       setReports(r?.data?.reports ?? []);
@@ -98,16 +116,22 @@ export default function AdminFeedbackPage() {
       pagination.setTotal(r?.data?.total ?? 0);
     } catch (e) { toast.error(extractApiErrorMessage(e, 'Could not load feedback')); }
     finally { setLoading(false); }
-  }, [statusFilter, typeFilter, pagination.page, pagination.limit]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [statusFilter, typeFilter, laneFilter, pagination.page, pagination.limit]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { pagination.reset(); }, [statusFilter, typeFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { pagination.reset(); }, [statusFilter, typeFilter, laneFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Feedback" subtitle={`${openCount} open · user-reported bugs & suggestions`} backHref="/admin/dashboard" backLabel="Back to Dashboard" />
+      <PageHeader title="Feedback" subtitle={`${openCount} open · what your people have reported`} backHref="/admin/dashboard" backLabel="Back to Dashboard" />
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
+        <SelectMenu value={laneFilter} onChange={setLaneFilter} ariaLabel="Filter by who owns it" className="w-48"
+          options={[
+            { value: 'all', label: 'Everything' },
+            { value: 'workspace', label: 'Yours to answer' },
+            { value: 'product', label: 'With Pathment' },
+          ]} />
         <SelectMenu value={statusFilter} onChange={setStatusFilter} ariaLabel="Filter by status" className="w-44"
           options={[{ value: 'all', label: 'All statuses' }, ...STATUS_OPTS]} />
         <SelectMenu value={typeFilter} onChange={setTypeFilter} ariaLabel="Filter by type" className="w-40"
@@ -145,6 +169,14 @@ export default function AdminFeedbackPage() {
                     </div>
                     <p className="text-xs text-slate-500 truncate">{r.reporter?.name || 'Unknown'}{r.reporter?.role ? ` (${r.reporter.role})` : ''} · {new Date(r.createdAt).toLocaleDateString()}</p>
                   </div>
+                  {r.lane === 'product' && (
+                    <span
+                      title="A bug or suggestion about the software — the Pathment team owns it"
+                      className="hidden sm:inline-flex text-[11px] font-medium px-2 py-0.5 rounded-full shrink-0 bg-slate-100 text-slate-500"
+                    >
+                      With Pathment
+                    </span>
+                  )}
                   <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full shrink-0 ${STATUS_CLS[r.status] || ''}`}>{r.statusLabel}</span>
                 </button>
               );
@@ -166,6 +198,21 @@ function FeedbackDetail({ report, onClose, onSaved }: { report: FeedbackReport; 
   const [note, setNote] = useState(report.resolutionNote ?? '');
   const [saving, setSaving] = useState(false);
 
+  /**
+   * A product report is read-only here.
+   *
+   * Everything this drawer collects - the platform, the app version, the
+   * screenshot - and every status it offers - planned, fixed, added - is a
+   * statement about the software. A workspace admin cannot make any of them
+   * true, so the only thing they could ever do was reply and close it, and the
+   * reporter got an email saying their bug was resolved when nothing had been.
+   * It now belongs to the Pathment team, and what stays here is the reading:
+   * what your people reported, and what has been done about it.
+   *
+   * The server refuses the write too; this only keeps the UI honest about it.
+   */
+  const readOnly = report.lane === 'product';
+
   const save = async () => {
     setSaving(true);
     try {
@@ -181,9 +228,11 @@ function FeedbackDetail({ report, onClose, onSaved }: { report: FeedbackReport; 
       footer={
         <div className="flex justify-end gap-2">
           <button onClick={onClose} className="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 text-sm">Close</button>
-          <button onClick={save} disabled={saving} className="px-4 py-2 rounded-lg bg-brand-600 text-white text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2">
-            {saving && <Loader2 className="w-4 h-4 animate-spin" />}Save & notify
-          </button>
+          {!readOnly && (
+            <button onClick={save} disabled={saving} className="px-4 py-2 rounded-lg bg-brand-600 text-white text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2">
+              {saving && <Loader2 className="w-4 h-4 animate-spin" />}Save & notify
+            </button>
+          )}
         </div>
       }>
       <div className="space-y-5">
@@ -222,17 +271,43 @@ function FeedbackDetail({ report, onClose, onSaved }: { report: FeedbackReport; 
           <p><span className="font-medium text-slate-600">Submitted:</span> {new Date(report.createdAt).toLocaleString()}</p>
         </div>
 
-        {/* Triage */}
-        <div>
-          <label className="block text-sm text-slate-700 mb-1.5">Status</label>
-          <SelectMenu value={status} onChange={(v) => setStatus(v as FeedbackStatus)} options={STATUS_OPTS} ariaLabel="Set status" className="w-56" />
-        </div>
-        <div>
-          <label className="block text-sm text-slate-700 mb-1.5">Reply to the reporter <span className="text-slate-400">(shown to them, sent by email)</span></label>
-          <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3}
-            placeholder="e.g. Fixed in the latest release — thanks for the report!"
-            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
-        </div>
+        {/* Triage, or the record of somebody else's */}
+        {readOnly ? (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <p className="text-sm font-medium text-slate-700">
+              The Pathment team owns this one
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              It is a {report.typeLabel.toLowerCase()} about the software, so it went to the people who
+              can change it. You will see the status here, and {report.reporter?.name || 'the reporter'} is
+              told directly whenever it moves.
+            </p>
+            <p className="mt-2 text-xs">
+              <span className="font-medium text-slate-600">Status:</span>{' '}
+              <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${STATUS_CLS[report.status] || ''}`}>
+                {report.statusLabel}
+              </span>
+            </p>
+            {report.resolutionNote && (
+              <p className="mt-2 text-xs text-slate-600">
+                <span className="font-medium">Their reply:</span> {report.resolutionNote}
+              </p>
+            )}
+          </div>
+        ) : (
+          <>
+            <div>
+              <label className="block text-sm text-slate-700 mb-1.5">Status</label>
+              <SelectMenu value={status} onChange={(v) => setStatus(v as FeedbackStatus)} options={WORKSPACE_STATUS_OPTS} ariaLabel="Set status" className="w-56" />
+            </div>
+            <div>
+              <label className="block text-sm text-slate-700 mb-1.5">Reply to the reporter <span className="text-slate-400">(shown to them, sent by email)</span></label>
+              <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3}
+                placeholder="e.g. Moved you into the right clan — sorry about that!"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+            </div>
+          </>
+        )}
       </div>
     </Drawer>
   );

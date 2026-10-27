@@ -14,17 +14,18 @@ import { usePermissions } from '@/lib/hooks/usePermissions';
  */
 export default function AdminIndexPage() {
   const router = useRouter();
-  const { can, loading } = usePermissions();
+  const { can, canAny, loading } = usePermissions();
 
   useEffect(() => {
     if (loading) return;
     const flat = navigationConfig.admin.flatMap((l) => (l.children ? l.children : [l]));
     const landing =
-      flat.find((it) => it.permission && can(it.permission))     // a section they explicitly can use
-      || flat.find((it) => !it.permission && it.path.startsWith('/admin')) // else any always-on admin page
+      // a section they explicitly can use (one permission, or any of a set)
+      flat.find((it) => (it.permission && can(it.permission)) || (it.anyOf && canAny(it.anyOf)))
+      || flat.find((it) => !it.permission && !it.anyOf && it.path.startsWith('/admin')) // else any always-on admin page
       || { path: '/admin/dashboard' };
     router.replace(landing.path);
-  }, [loading, can, router]);
+  }, [loading, can, canAny, router]);
 
   return (
     <div className="flex min-h-[60vh] items-center justify-center">

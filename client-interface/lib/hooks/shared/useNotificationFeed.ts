@@ -70,13 +70,22 @@ export function useNotificationFeed(userId: string | undefined) {
     if (!socket) return;
 
     const invalidate = () => client.invalidateQueries({ queryKey: key });
-    const onNew = (payload: { type?: string; title?: string; clanId?: string | null }) => {
+    const onNew = (payload: { id?: string; type?: string; title?: string; message?: string; clanId?: string | null; silent?: boolean }) => {
       if ((payload?.type || 'message') === 'message') return;
       const portal = typeof window !== 'undefined' ? roleFromPathname(window.location.pathname) : null;
       const active = portal === 'mentee' ? menteeActiveClanId : (portal === 'mentor' ? activeClanId : null);
       const scoped = Boolean(payload?.clanId);
       const isActiveClan = !scoped || payload.clanId === active;
-      if (isActiveClan && payload?.title) toast.message(payload.title);
+      // The navigation mounts a bell for the desktop sidebar AND one for the
+      // mobile header (CSS hides one, both stay mounted), so every instance of
+      // this hook hears the same event. A stable toast id makes the second call
+      // update the first rather than stack another snackbar.
+      // `silent` = the server knows this person caused it and was already told.
+      if (isActiveClan && payload?.title && !payload.silent) {
+        toast.message(payload.title, {
+          id: `notification:${payload.id ?? `${payload.type ?? ''}|${payload.title}|${payload.message ?? ''}`}`,
+        });
+      }
       invalidate();
     };
 

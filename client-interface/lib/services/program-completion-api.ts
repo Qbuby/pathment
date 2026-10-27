@@ -26,9 +26,41 @@ export interface FinalResults {
   history: { id: string; closedAt: string; reopenedAt: string | null; reopenReason: string | null }[];
   snapshots: FinalSnapshot[];
 }
+
+export interface ContinuationPreview {
+  roadmaps: Array<{
+    roadmapId: string;
+    name: string;
+    totalSteps: number;
+    completedSteps: number;
+    resumeIndex: number;
+    resumeStep: { stepId: string; title: string; previousStatus: string | null; sourceTaskId: string | null };
+    sourceClanName: string | null;
+    /** The mentor who set this work. Carried automatically only when they are on this clan's team. */
+    sourceMentorId: string | null;
+  }>;
+  customTasks: Array<{
+    sourceTaskId: string;
+    title: string;
+    type: string;
+    status: string;
+    sourceClanName: string | null;
+    sourceMentorId: string | null;
+    supported: boolean;
+    unavailableReason: string | null;
+  }>;
+  sourceClans: Array<{ id: string; name: string }>;
+}
 export interface StandingRequest {
   id: string; name: string; description: string | null; status: 'pending' | 'approved' | 'rejected'; decisionNote: string | null;
   createdClanId: string | null; program: { id: string; name: string }; mentor: { firstName: string; lastName: string };
+  /**
+   * The clan this continuation grew out of. A mentor can run several clans in
+   * one programme, so matching on programme alone showed a request raised from
+   * one clan as pending on all of them. Null only on rows that predate this.
+   */
+  sourceClanId?: string | null;
+  sourceClan?: { id: string; name: string } | null;
 }
 export const completionApi = {
   preview: (id: string) => apiClient.get<{ data: ClosurePreview }>(`/programs/${id}/completion`).then(r => r.data),
@@ -37,8 +69,37 @@ export const completionApi = {
   reopen: (id: string, reason: string) => apiClient.post(`/programs/${id}/reopen`, { reason }),
   results: (id: string) => apiClient.get<{ data: FinalResults }>(`/programs/${id}/results`).then(r => r.data),
   requests: () => apiClient.get<{ data: StandingRequest[] }>('/clan-requests/standing').then(r => r.data),
-  eligiblePrograms: () => apiClient.get<{ data: { id: string; name: string }[] }>('/clan-requests/standing/eligible-programs').then(r => r.data),
-  request: (data: { programId: string; name: string; description: string }) => apiClient.post('/clan-requests/standing', data),
+  /** Per CLAN: `clanId` says which clan each eligible entry is for. */
+  eligiblePrograms: () => apiClient.get<{ data: { id: string; name: string; clanId?: string; clanName?: string }[] }>('/clan-requests/standing/eligible-programs').then(r => r.data),
+  request: (data: { programId: string; sourceClanId: string; name: string; description: string }) => apiClient.post('/clan-requests/standing', data),
   decide: (id: string, decision: 'approved' | 'rejected', note: string) => apiClient.post(`/clan-requests/standing/${id}/decision`, { decision, note }),
   addMentees: (id: string, menteeIds: string[]) => apiClient.post(`/clans/${id}/standing-members`, { menteeIds }),
+
+  /**
+   * What a mentee did before this standing clan. Read-only: their work stays in
+   * the completed programme, where the final report and certificate still
+   * account for it.
+   */
+  priorRecord: (clanId: string) => apiClient.get<{ data: {
+    menteeId: string;
+    certificate: { tier: string; certificateNumber: string | null } | null;
+    priorClans: { clanId: string; clanName: string | null; tasksAssigned: number; tasksCompleted: number; tasksUnfinished: number; openBlockers: number }[];
+  }[] }>(`/clans/${clanId}/prior-record`).then(r => r.data),
+
+  /** The unfinished work a mentor may choose to carry forward. */
+  unfinishedPriorWork: (clanId: string, menteeId: string) => apiClient.get<{ data: {
+    id: string; titleOverride: string | null; status: string; dueDate: string | null;
+  }[] }>(`/clans/${clanId}/mentees/${menteeId}/unfinished-prior-work`).then(r => r.data),
+
+  /** Carry it forward as NEW assignments here; the originals are untouched. */
+  carryForward: (clanId: string, menteeId: string, taskIds: string[]) =>
+    apiClient.post(`/clans/${clanId}/mentees/${menteeId}/carry-forward`, { taskIds }),
+
+  continuationPreview: (clanId: string, menteeId: string) =>
+    apiClient.get<{ data: ContinuationPreview }>(`/clans/${clanId}/mentees/${menteeId}/continuation-preview`).then(r => r.data),
+
+  continueWork: (clanId: string, menteeId: string, input: { roadmapIds?: string[]; taskIds?: string[]; dueDate?: string }) =>
+    apiClient.post<{ data: { continued: Array<{ id: string; kind: 'roadmap' | 'custom'; title: string }>; createdCount: number; reusedCount: number } }>(
+      `/clans/${clanId}/mentees/${menteeId}/continue-work`, input,
+    ).then(r => r.data),
 };

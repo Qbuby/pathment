@@ -32,6 +32,7 @@ import {
   ChevronLeft,
   Trash2,
   Lock,
+  HandHeart,
 } from 'lucide-react';
 import {
   useMenteeDetailPage,
@@ -45,6 +46,7 @@ import { useConfirm } from '@/lib/context/ConfirmContext';
 import { useMenteeActivity } from '@/lib/hooks/mentor/useMenteeActivity';
 import { frictionApi } from '@/lib/services/friction-api';
 import { mentorApi } from '@/lib/services/mentor-api';
+import { PushToPoolDrawer } from '@/components/shared/pool/PushToPoolDrawer';
 import { ActivityCard } from '@/components/shared/ActivityCard';
 import { DualProgress } from '@/components/mentor/DualProgress';
 import { AISummaryPanel } from '@/components/mentor/AISummaryPanel';
@@ -62,7 +64,8 @@ import { CollaboratorsCard } from '@/components/mentor/CollaboratorsCard';
 import { TracksPanel } from '@/components/mentor/TracksPanel';
 import { Drawer } from '@/components/shared/Drawer';
 import { Avatar } from '@/components/shared/Avatar';
-import { MenteeScheduleView } from '@/components/shared/MenteeScheduleView';
+import { MenteeRecordPanel } from '@/components/mentor/MenteeRecordPanel';
+import { DayPlanner } from '@/components/mentee/DayPlanner';
 
 // ── Small presentational helpers (current indigo/slate design system) ────────
 const RISK_PILL: Record<
@@ -314,6 +317,8 @@ export default function MenteeDetail() {
     | { paused?: boolean }
     | undefined; // eslint-disable-line @typescript-eslint/no-explicit-any
   const [pauseBusy, setPauseBusy] = useState(false);
+  // Handing this mentee on to whoever can take them (the handover pool).
+  const [showHandover, setShowHandover] = useState(false);
   const togglePause = async () => {
     setPauseBusy(true);
     const clanId = activeClanId !== ALL_CLANS ? activeClanId : undefined;
@@ -582,10 +587,17 @@ export default function MenteeDetail() {
               <CalendarCheck className="w-4 h-4" />
               Attendance
             </button>
+            {/*
+              * Read-only stops a NEW pause, not the undo of an old one. The
+              * read-only rule exists so a finished programme is not edited
+              * after the fact; a pause left behind in one is a loose end from
+              * before it closed, and the person it is attached to is the one
+              * who most needs it untied.
+              */}
             <button
               onClick={togglePause}
-              disabled={pauseBusy || historical}
-              title={historical ? 'Completed programs are read-only' : undefined}
+              disabled={pauseBusy || (historical && !pauseState?.paused)}
+              title={historical && !pauseState?.paused ? 'Completed programs are read-only' : undefined}
               className={`px-4 py-2 rounded-xl transition-colors flex items-center gap-2 border disabled:opacity-50 ${pauseState?.paused ? 'bg-brand-50 border-brand-200 text-brand-700 hover:bg-brand-100' : 'bg-card border-slate-200 text-slate-700 hover:bg-slate-50'}`}
             >
               {pauseState?.paused ? (
@@ -610,6 +622,21 @@ export default function MenteeDetail() {
               >
                 <CheckCircle2 className="w-4 h-4" />
                 Complete level
+              </button>
+            )}
+            {/*
+              * Not gated on `historical`. A closed programme is the commonest
+              * reason to hand somebody on, and the push itself writes nothing
+              * to the old clan - the mentee stays in it until another mentor
+              * actually takes them.
+              */}
+            {activeClanId !== ALL_CLANS && (
+              <button
+                onClick={() => setShowHandover(true)}
+                className="px-4 py-2 bg-card hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl transition-colors flex items-center gap-2"
+              >
+                <HandHeart className="w-4 h-4" />
+                Hand over
               </button>
             )}
           </div>
@@ -662,7 +689,7 @@ export default function MenteeDetail() {
         aria-label="Mentee profile sections"
         className="flex gap-1 overflow-x-auto rounded-2xl border border-border bg-card p-1.5"
       >
-        {['overview', 'work', 'mentoring', 'activity', 'schedule'].map(
+        {['overview', 'work', 'history', 'mentoring', 'activity', 'schedule'].map(
           (tab) => (
             <button
               key={tab}
@@ -733,7 +760,23 @@ export default function MenteeDetail() {
       )}
 
       {/* ── Weekly schedule (read-only; mentor fills it in Schedules) ─── */}
-      {section === 'schedule' && <MenteeScheduleView menteeId={menteeId} />}
+      {/* Their record across every clan in the org — not just this one. Lazy,
+          so the tab costs nothing until it is opened. */}
+      {section === 'history' && <MenteeRecordPanel menteeId={menteeId} />}
+
+      {/*
+        One schedule surface, not two.
+        
+        This rendered the planner AND the old read-only "Weekly schedule" card
+        underneath it, so the tab showed the same day twice in two different
+        shapes — one editable, one not — with no way to tell which was
+        authoritative. The planner is the live one and does everything the old
+        card did; the roadmap chains it used to show are rendered inside their
+        blocks now.
+      */}
+      {section === 'schedule' && (
+        <DayPlanner menteeId={menteeId} clanId={activeClanId !== ALL_CLANS ? activeClanId : null} />
+      )}
 
       {section === 'work' && (
         <>
@@ -1143,6 +1186,9 @@ export default function MenteeDetail() {
             name:
               `${mentee?.firstName ?? ''} ${mentee?.lastName ?? ''}`.trim() ||
               'Mentee',
+            // Same photo the page header above already renders.
+            avatarUrl: (mentee as { profilePictureUrl?: string | null })
+              ?.profilePictureUrl ?? null,
           }}
           onClose={() => setAssigningTask(false)}
           onAssigned={fetchMenteeDetails}
@@ -1248,6 +1294,15 @@ export default function MenteeDetail() {
 
       {/* ── Tracks (personal lanes) ──────────────────────────────────── */}
       {section === 'work' && <TracksPanel menteeId={menteeId} />}
+
+      {/* ── Hand this mentee over to another clan ───────────────────── */}
+      <PushToPoolDrawer
+        open={showHandover}
+        onClose={() => setShowHandover(false)}
+        clanId={activeClanId !== ALL_CLANS ? activeClanId : ''}
+        clanName={mentee?.clanName || undefined}
+        mentee={mentee ? { id: menteeId, name: `${mentee.firstName || ''} ${mentee.lastName || ''}`.trim() } : null}
+      />
 
       {/* ── Complete level confirmation modal ────────────────────────── */}
       {showCompleteConfirm && (

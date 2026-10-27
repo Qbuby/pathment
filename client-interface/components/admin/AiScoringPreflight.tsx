@@ -112,7 +112,7 @@ export function AiScoringPreflight({
         </div>
 
         {loading ? (
-          <div className="py-16 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-violet-600" /></div>
+          <div className="py-16 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-brand-600" /></div>
         ) : !plan ? (
           <p className="p-6 text-sm text-slate-500">Could not load the plan.</p>
         ) : (

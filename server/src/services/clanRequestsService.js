@@ -11,23 +11,47 @@ const CROSS_KIND_LABEL = { cover: 'cover for', specialist: 'specialist help in',
 
 /** Admin clan operations: change requests, cross-clan assignments, policies. */
 class ClanRequestsService {
-  async overview() {
+  /**
+   * The queue, bounded by what this admin administers.
+   *
+   * It took no scope at all, so a programme admin opened it to every move
+   * request and cover assignment in the workspace — other programmes' people,
+   * clans and mentors, named. The rows already carry the programme (it is how
+   * the screen filters), so the bound is the same fact applied earlier.
+   *
+   * @param {string[]|null} programIds  null = unrestricted (an org-tier admin).
+   */
+  async overview(programIds = null) {
+    const scoped = Array.isArray(programIds);
+    // A request names two clans; it belongs to either. Empty scope → no rows.
+    const inScope = scoped
+      ? { [Op.or]: [
+        { '$fromClan.program_id$': { [Op.in]: programIds } },
+        { '$toClan.program_id$': { [Op.in]: programIds } },
+      ] }
+      : {};
+
     const [requests, crossClan] = await Promise.all([
       models.ClanChangeRequest.findAll({
+        where: inScope,
         order: [['status', 'ASC'], ['created_at', 'DESC']],
         include: [
           { model: models.User, as: 'mentee', attributes: ['firstName', 'lastName'] },
           { model: models.User, as: 'requester', attributes: ['firstName', 'lastName'] },
-          { model: models.Clan, as: 'fromClan', attributes: ['name'] },
-          { model: models.Clan, as: 'toClan', attributes: ['name'] }
+          // The programme each clan belongs to travels with it, so the admin
+          // screen can filter this queue by programme — with forty-odd clans
+          // in a workspace, "which of these are mine" is the first question.
+          { model: models.Clan, as: 'fromClan', attributes: ['name', 'programId'] },
+          { model: models.Clan, as: 'toClan', attributes: ['name', 'programId'] }
         ]
       }),
       models.CrossClanAssignment.findAll({
+        where: inScope,
         order: [['created_at', 'DESC']],
         include: [
           { model: models.User, as: 'user', attributes: ['firstName', 'lastName'] },
-          { model: models.Clan, as: 'fromClan', attributes: ['name'] },
-          { model: models.Clan, as: 'toClan', attributes: ['name'] }
+          { model: models.Clan, as: 'fromClan', attributes: ['name', 'programId'] },
+          { model: models.Clan, as: 'toClan', attributes: ['name', 'programId'] }
         ]
       })
     ]);
@@ -38,6 +62,9 @@ class ClanRequestsService {
         mentee: fullName(r.mentee),
         fromClan: r.fromClan?.name || null,
         toClan: r.toClan?.name || null,
+        fromClanId: r.fromClanId || null,
+        toClanId: r.toClanId || null,
+        programId: r.toClan?.programId || r.fromClan?.programId || null,
         reason: r.reason,
         status: r.status,
         resolutionNote: r.resolutionNote,
@@ -53,6 +80,9 @@ class ClanRequestsService {
         user: fullName(c.user),
         fromClan: c.fromClan?.name || null,
         toClan: c.toClan?.name || null,
+        fromClanId: c.fromClanId || null,
+        toClanId: c.toClanId || null,
+        programId: c.toClan?.programId || c.fromClan?.programId || null,
         note: c.note,
         status: c.status,
         at: c.createdAt

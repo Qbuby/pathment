@@ -26,7 +26,11 @@ function isAsset(pathname: string) {
 export function proxy(request: NextRequest) {
   const host = hostname(request);
   const pathname = request.nextUrl.pathname;
-  if (isAsset(pathname) || pathname === '/api' || pathname.startsWith('/api/') || pathname.startsWith('/_link/')) return NextResponse.next();
+  // `/.well-known/` is served as itself on every host. It is how Android and
+  // iOS decide whether a link may open the app, and both fetch it without a
+  // workspace cookie, so a rewrite or a redirect to the workspace chooser reads
+  // as "this host trusts no app" and every email link opens the browser.
+  if (isAsset(pathname) || pathname === '/api' || pathname.startsWith('/api/') || pathname.startsWith('/_link/') || pathname.startsWith('/.well-known/')) return NextResponse.next();
 
   const legacy = legacyWorkspaceFromHostname(host);
   if (legacy) {
@@ -70,6 +74,10 @@ export function proxy(request: NextRequest) {
     // decides from the signed-in account's real memberships; it must never
     // infer a tenant from a stale cookie or the deployment's demo workspace.
     if (ACCOUNT_ROUTES.has(pathname)) return NextResponse.next();
+    // The platform console and owner activation are account-level too: they
+    // span (or precede) workspaces, so canonicalizing them into /w/<slug>/…
+    // would scope an operator surface to whatever tenant a cookie remembers.
+    if (pathname === '/platform' || pathname.startsWith('/platform/') || pathname === '/activate') return NextResponse.next();
     const remembered = request.cookies.get(WORKSPACE_COOKIE)?.value;
     const target = request.nextUrl.clone();
     // Old short links may reuse a workspace the browser actually visited. With

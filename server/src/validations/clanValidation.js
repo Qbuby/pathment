@@ -10,7 +10,10 @@ module.exports = {
     limit: Joi.number().integer().min(1).max(50).default(20),
     programId: Joi.string().uuid().optional(),
     clanId: Joi.string().uuid().optional(),
-    risk: Joi.string().valid('high', 'watch').optional(),
+    // 'paused' is not a risk level, it is a reason to be in this queue: somebody
+    // who stepped away stops producing the signals risk is computed from, so
+    // they settle at 'low' and would otherwise never appear.
+    risk: Joi.string().valid('high', 'watch', 'paused').optional(),
     search: Joi.string().trim().max(120).allow('').optional(),
   }),
   listQuery: Joi.object({
@@ -23,6 +26,25 @@ module.exports = {
 
   idParams: Joi.object({
     id: Joi.string().uuid().required()
+  }),
+
+  continuationParams: Joi.object({
+    id: Joi.string().uuid().required(),
+    menteeId: Joi.string().uuid().required(),
+  }),
+
+  continueWorkBody: Joi.object({
+    // Either category may be present as an empty array. The drawer submits two
+    // independent selection groups, so selecting only roadmaps naturally means
+    // `taskIds: []` (and vice versa).
+    roadmapIds: Joi.array().items(Joi.string().uuid()).max(20).optional(),
+    taskIds: Joi.array().items(Joi.string().uuid()).max(50).optional(),
+    dueDate: Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).optional().allow('', null),
+  }).custom((value, helpers) => {
+    if ((value.roadmapIds?.length || 0) + (value.taskIds?.length || 0) === 0) {
+      return helpers.message({ custom: 'Select at least one roadmap or custom task' });
+    }
+    return value;
   }),
 
   // Admin only toggles permission — join window is set by the lead on generate/regenerate.

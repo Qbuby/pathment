@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Check, X, Minus, HelpCircle } from 'lucide-react';
 import { getInitials } from '@/lib/utils/formatting';
+import { Avatar } from '@/components/shared/Avatar';
 
 type Attendance = 'present' | 'absent' | 'excused' | null;
 
@@ -48,12 +49,6 @@ export function MenteeAttendanceCard({ mentee, attendance, isActive, onClick }: 
   const initials = mentee.avatar || getInitials(mentee.name);
   const firstName = mentee.name.split(' ')[0];
 
-  // A broken / unreachable photo URL otherwise renders as an empty black circle
-  // — fall back to the initials so the chip is always legible.
-  const [imgFailed, setImgFailed] = useState(false);
-  useEffect(() => { setImgFailed(false); }, [mentee.profilePictureUrl]);
-  const showPhoto = !!mentee.profilePictureUrl && !imgFailed;
-
   // When this becomes the active mentee (e.g. via the Prev/Next/Skip buttons),
   // bring the chip into view so the mentor can see where they are in the rail.
   const ref = useRef<HTMLButtonElement>(null);
@@ -67,29 +62,35 @@ export function MenteeAttendanceCard({ mentee, attendance, isActive, onClick }: 
       onClick={onClick}
       title={`${mentee.name} — ${attendance ?? 'not marked'}`}
       aria-pressed={isActive}
-      className="group/card flex flex-col items-center gap-2 shrink-0 w-[84px] snap-start outline-none"
+      className={`group/card relative flex shrink-0 snap-start flex-col items-center gap-2 rounded-2xl px-1.5 pb-1.5 pt-2 outline-none transition-colors ${
+        isActive ? 'w-[92px] bg-brand-50/80 dark:bg-brand-500/10' : 'w-[84px]'
+      }`}
     >
+      {/* The one being reviewed is lifted out of the row entirely: its own
+          tinted tile, a bigger avatar, and a marker pointing at the card below
+          it. A thin ring on a row of fourteen faces was not findable. */}
+      {isActive && (
+        <span
+          aria-hidden
+          className="absolute -bottom-1.5 left-1/2 h-3 w-3 -translate-x-1/2 rotate-45 rounded-[2px] bg-brand-500"
+        />
+      )}
       <div className="relative">
-        {/* Status ring — a coloured halo around the avatar. */}
+        {/* Status ring — a coloured halo around the avatar. The person being
+            reviewed right now carries the running light, so "where am I" is
+            answerable from the rail without reading a single name. */}
         <div
-          className={`rounded-full p-[3px] transition-transform duration-200 group-hover/card:-translate-y-0.5 ${ring} ${
-            isActive ? 'ring-2 ring-brand-500 ring-offset-2 ring-offset-card' : ''
+          className={`rounded-full transition-transform duration-200 group-hover/card:-translate-y-0.5 ${ring} ${
+            isActive ? 'pm-snake pm-snake-ring scale-110 p-[3px] shadow-lg shadow-brand-500/25' : 'p-[3px]'
           }`}
         >
           <div className="rounded-full bg-card p-[2px]">
-            {showPhoto ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={mentee.profilePictureUrl as string}
-                alt={mentee.name}
-                onError={() => setImgFailed(true)}
-                className="w-14 h-14 rounded-full object-cover bg-brand-50"
-              />
-            ) : (
-              <div className="w-14 h-14 rounded-full bg-brand-50 flex items-center justify-center text-brand-700 font-semibold text-base">
-                {initials}
-              </div>
-            )}
+            <Avatar
+              name={mentee.name}
+              src={mentee.profilePictureUrl}
+              initials={initials}
+              size="lg"
+            />
           </div>
         </div>
 
@@ -102,8 +103,10 @@ export function MenteeAttendanceCard({ mentee, attendance, isActive, onClick }: 
       </div>
 
       <span
-        className={`max-w-full truncate text-xs font-medium ${
-          isActive ? 'text-brand-700' : 'text-slate-700 group-hover/card:text-slate-900'
+        className={`max-w-full truncate text-xs ${
+          isActive
+            ? 'rounded-full bg-brand-600 px-2 py-0.5 font-semibold text-white'
+            : 'font-medium text-slate-700 group-hover/card:text-slate-900'
         }`}
       >
         {firstName}

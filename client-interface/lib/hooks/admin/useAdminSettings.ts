@@ -18,6 +18,8 @@ export interface ProfileData {
   bio: string;
   city: string;
   country: string;
+  countryCode: string;
+  region: string;
   languages: string[];
   timezone: string;
 }
@@ -37,7 +39,7 @@ export interface UserManagementSettings {
   minMentorExperience: number;
 }
 
-const DEFAULT_PROFILE: ProfileData = { firstName: '', lastName: '', email: '', phone: '', bio: '', city: '', country: '', languages: [], timezone: '' };
+const DEFAULT_PROFILE: ProfileData = { firstName: '', lastName: '', email: '', phone: '', bio: '', city: '', country: '', countryCode: '', region: '', languages: [], timezone: '' };
 
 const DEFAULT_SYSTEM: SystemSettings = {
   autoApproveEnrollments: false,
@@ -101,6 +103,8 @@ export function useAdminSettings(): UseAdminSettingsReturn {
           bio: d.bio || '',
           city: d.city || '',
           country: d.country || '',
+          countryCode: d.countryCode || '',
+          region: d.region || '',
           languages: Array.isArray(d.languages) ? d.languages : [],
           timezone: d.settings?.timezone || '',
         },

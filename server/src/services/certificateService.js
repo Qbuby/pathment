@@ -202,7 +202,7 @@ class CertificateService {
         }
         const menteeMembers = await models.ClanMembership.findAll({
           where: { clanId, role: 'mentee', status: { [Op.in]: ['active', 'paused'] } },
-          include: [{ model: models.User, as: 'user', attributes: ['id', 'firstName', 'lastName', 'email', 'status'] }],
+          include: [{ model: models.User, as: 'user', attributes: ['id', 'firstName', 'lastName', 'email', 'status', 'profilePictureUrl'] }],
         });
         for (const mem of menteeMembers) {
           if (!mem.user) continue;
@@ -212,6 +212,7 @@ class CertificateService {
             firstName: u.firstName,
             lastName: u.lastName,
             email: u.email,
+            profilePictureUrl: u.profilePictureUrl ?? null,
             clanId: picked.id,
             clanName: picked.name,
           };
@@ -270,14 +271,14 @@ class CertificateService {
       if (clanIds.length > 0) {
         const menteeMembers = await models.ClanMembership.findAll({
           where: { clanId: { [Op.in]: clanIds }, role: 'mentee', status: { [Op.in]: ['active', 'paused'] } },
-          include: [{ model: models.User, as: 'user', attributes: ['id', 'firstName', 'lastName', 'email', 'status'] }]
+          include: [{ model: models.User, as: 'user', attributes: ['id', 'firstName', 'lastName', 'email', 'status', 'profilePictureUrl'] }]
         });
         const seenMentees = new Set();
         for (const mem of menteeMembers) {
           if (!mem.user || seenMentees.has(mem.user.id)) continue;
           seenMentees.add(mem.user.id);
           const u = mem.user;
-          const row = withClan({ id: u.id, firstName: u.firstName, lastName: u.lastName, email: u.email });
+          const row = withClan({ id: u.id, firstName: u.firstName, lastName: u.lastName, email: u.email, profilePictureUrl: u.profilePictureUrl ?? null });
           (mem.status === 'paused' || u.status === 'suspended' || pausedMenteeIdsSet.has(u.id))
             ? pausedMentees.push(row)
             : activeMentees.push(row);
@@ -286,11 +287,11 @@ class CertificateService {
     } else {
       const enrollments = await models.Enrollment.findAll({
         where: { programId },
-        include: [{ model: models.User, as: 'mentee', attributes: ['id', 'firstName', 'lastName', 'email', 'status'] }]
+        include: [{ model: models.User, as: 'mentee', attributes: ['id', 'firstName', 'lastName', 'email', 'status', 'profilePictureUrl'] }]
       });
       for (const e of enrollments) {
         if (!e.mentee) continue;
-        const row = withClan({ id: e.mentee.id, firstName: e.mentee.firstName, lastName: e.mentee.lastName, email: e.mentee.email });
+        const row = withClan({ id: e.mentee.id, firstName: e.mentee.firstName, lastName: e.mentee.lastName, email: e.mentee.email, profilePictureUrl: e.mentee.profilePictureUrl ?? null });
         (e.status === 'paused' || e.mentee.status === 'suspended' || pausedMenteeIdsSet.has(e.mentee.id))
           ? pausedMentees.push(row)
           : activeMentees.push(row);
@@ -389,7 +390,7 @@ class CertificateService {
         where: { role: { [Op.in]: ['lead_mentor', 'co_mentor'] }, status: 'active' },
         include: [
           { model: models.Clan, as: 'clan', where: { programId }, attributes: [] },
-          { model: models.User, as: 'user', attributes: ['id', 'firstName', 'lastName', 'email', 'status'] }
+          { model: models.User, as: 'user', attributes: ['id', 'firstName', 'lastName', 'email', 'status', 'profilePictureUrl'] }
         ]
       });
       const uniqueMentors = [];
@@ -402,6 +403,7 @@ class CertificateService {
             firstName: mem.user.firstName,
             lastName: mem.user.lastName,
             email: mem.user.email,
+            profilePictureUrl: mem.user.profilePictureUrl ?? null,
             assignedTier: null,
             tierMatches: {},
             criteriaMatch: null,
@@ -1436,12 +1438,31 @@ class CertificateService {
       whereClause.programId = queryProgramId;
     }
 
+    /**
+     * An admin of some programmes sees those programmes' templates.
+     *
+     * The admin branch below returned everything, so a programme admin was
+     * shown another programme's certificate collections — designs they
+     * cannot issue and should not be redesigning. The bound is the same
+     * programme scope every other admin list uses; an org-tier admin has
+     * none and keeps seeing all of them.
+     */
+    const adminScope = (await authzService.actsAsAdmin(user))
+      ? await authzService.adminProgramScope(user)
+      : undefined;
+    if (Array.isArray(adminScope)) {
+      const allowed = queryProgramId
+        ? (adminScope.includes(queryProgramId) ? [queryProgramId] : [])
+        : adminScope;
+      whereClause.programId = { [Op.in]: allowed };
+    }
+
     // Non-admins see the templates of programmes they mentor in, plus any
     // shared directly with them. Keyed on what they mentor rather than on
     // `user.role`, which says only what their account was created as — a
     // co-mentor promoted from a mentee account was falling past this branch
     // and listing every template in the org.
-    if (!(await authzService.actsAsAdmin(user))) {
+    if (adminScope === undefined) {
       const mentoredClanIds = await authzService.clansWhereCan(user, PERMISSIONS.MENTEE_VIEW);
       const mentoredClans = mentoredClanIds.length
         ? await models.Clan.findAll({

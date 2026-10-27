@@ -421,6 +421,9 @@ class CohortService {
       phone: mentee.phone || null,
       profilePictureUrl: mentee.profilePictureUrl || null,
       program: enrollment?.program?.name || '-',
+      // The id as well as the name: a name cannot be filtered on reliably
+      // once two programmes share one, and admin lists filter by programme.
+      programId: enrollment?.program?.id || enrollment?.programId || null,
       level: '-',
       week,
       totalWeeks,
@@ -480,7 +483,10 @@ class CohortService {
       models.User.findByPk(menteeId, {
         attributes: ['id', 'firstName', 'lastName', 'email', 'profilePictureUrl'],
         include: [
-          { model: models.MenteeProfile, as: 'menteeProfile', attributes: ['lastActivityDate', 'currentOccupation', 'personality'] },
+          // The streak comes with the profile because showing up is the one
+          // progress signal a standing clan HAS — it has no enrollment, so no
+          // week number, no programme length and no overall percentage.
+          { model: models.MenteeProfile, as: 'menteeProfile', attributes: ['lastActivityDate', 'currentOccupation', 'personality', 'currentStreakDays', 'longestStreakDays'] },
           {
             model: models.Enrollment,
             as: 'enrollments',
@@ -637,6 +643,41 @@ class CohortService {
       // to the profile the review page already loads rather than a second
       // request, so walking 20 mentees does not become 20 extra round trips.
       taskProgress,
+      /**
+       * Showing up, counted from the daily log itself.
+       *
+       * The mentee's own progress page had nothing true to say to somebody in
+       * a standing clan: week, programme length and overall percentage all
+       * come off an enrollment, and a standing clan has none, so a mentee
+       * three days into a streak with five tasks in flight was shown four
+       * zeroes and "Not started". The log is the thing that actually measures
+       * them, and it was the one thing the page never read.
+       *
+       * `loggedLast7` counts DAYS, not rows: one row per mentee per day is
+       * the table's unique key, but the window is what makes the number mean
+       * "five of the last seven".
+       */
+      consistency: (() => {
+        const today = new Date();
+        const keyOf = (offset) => {
+          const d = new Date(today);
+          d.setUTCDate(d.getUTCDate() - offset);
+          return d.toISOString().split('T')[0];
+        };
+        const last7 = new Set(Array.from({ length: 7 }, (_, i) => keyOf(i)));
+        const keys = new Set(dailyLogs.map((l) => l.dateKey));
+        return {
+          currentStreakDays: Number(mentee.menteeProfile?.currentStreakDays || 0),
+          longestStreakDays: Number(mentee.menteeProfile?.longestStreakDays || 0),
+          loggedLast7: [...keys].filter((k) => last7.has(k)).length,
+          lastLoggedOn: dailyLogs.length ? dailyLogs[0].dateKey : null,
+          // In flight right now, which is what a standing-clan mentee is doing
+          // even when nothing is finished and the percentage reads zero.
+          inFlight: allTasks.filter((t) => ['assigned', 'in_progress', 'revision_needed'].includes(t.status)).length,
+          taskCount: allTasks.length,
+          completedCount: completed,
+        };
+      })(),
       dailyLogs: dailyLogs.map((l) => ({
         dateKey: l.dateKey,
         tasksDone: (l.tasksDone || []).length,
@@ -884,10 +925,13 @@ class CohortService {
   taskSql({ programId = null, clanId = null, standing = false } = {}, alias = '') {
     const p = alias ? `${alias}.` : '';
     const org = sequelize.escape(requireWorkspaceId());
+    // System Pool qualifying work has clan_id NULL like legacy rows, so without
+    // this it would fall into the legacy branch below and count towards scores.
+    const notPoolWork = `${p}pool_member_id IS NULL AND `;
     if (standing && clanId) {
-      return `${p}clan_id = ${sequelize.escape(clanId)}`;
+      return `${notPoolWork}${p}clan_id = ${sequelize.escape(clanId)}`;
     }
-    return `${clanId ? `${p}clan_id = ${sequelize.escape(clanId)} AND ` : ''}
+    return `${notPoolWork}${clanId ? `${p}clan_id = ${sequelize.escape(clanId)} AND ` : ''}
     (${p}clan_id IS NULL OR ${p}clan_id IN (SELECT id FROM clans WHERE organization_id = ${org} AND kind = 'cohort'))
     ${programId ? `AND ${p}enrollment_id IN (SELECT id FROM enrollments WHERE organization_id = ${org} AND program_id = ${sequelize.escape(programId)})` : ''}`;
   }
@@ -1028,6 +1072,15 @@ class CohortService {
     };
   }
 
+  /**
+   * The mentor's roster: the people who are active in these clans.
+   *
+   * Paused mentees are deliberately not here. Pausing takes somebody out of
+   * reports, reminders and reviews — that is the whole point of it — and the
+   * place to bring one back is the paused list on My Mentees, which exists
+   * for exactly that. A review screen that still listed them would be asking
+   * the mentor to step past the same greyed-out row every week.
+   */
   async getCohort(mentorId, { clanId = null } = {}) {
     const menteeIds = await this.resolveMenteeIds(mentorId, clanId ? { clanIds: [clanId] } : {});
     if (!menteeIds.length) return { cohort: [], totals: { mentees: 0, pendingApprovals: 0, openBlockers: 0, atRisk: 0, onTimeRate: 0 } };
@@ -1041,7 +1094,11 @@ class CohortService {
         let menteeMemberships = [];
         if (scopedClanIds.length) {
           menteeMemberships = await models.ClanMembership.findAll({
-            where: { clanId: { [Op.in]: scopedClanIds }, status: 'active', role: 'mentee' },
+            where: {
+              clanId: { [Op.in]: scopedClanIds },
+              role: 'mentee',
+              status: 'active',
+            },
             attributes: ['userId', 'clanId'],
           });
         }
@@ -1088,6 +1145,8 @@ class CohortService {
       r.daysSinceJoined = joined ? Math.floor((Date.now() - new Date(joined).getTime()) / 86400000) : null;
     });
 
+    // Everyone on this roster is taking part — a paused mentee never reaches
+    // it — so the totals are simply the roster.
     const totals = {
       mentees: cohort.length,
       pendingApprovals: cohort.reduce((n, m) => n + m.pendingApprovals, 0),
@@ -1095,7 +1154,7 @@ class CohortService {
       atRisk: cohort.filter((m) => m.risk !== 'low').length,
       onTimeRate: cohort.length
         ? Math.round(cohort.reduce((n, m) => n + m.onTimeRate, 0) / cohort.length)
-        : 0
+        : 0,
     };
 
     return { cohort, totals };

@@ -286,6 +286,22 @@ async function cleanupDemo() {
         if (models.ClanChangeRequest) {
           await models.ClanChangeRequest.destroy({ where: { [Op.or]: [{ toClanId: inClans }, { fromClanId: inClans }] }, force: true });
         }
+        // A standing-clan request remembers both the clan it came FROM and the
+        // one it created, so an approved request pins two clans in place. One
+        // such request, made by hand on staging, is what stopped a re-seed
+        // dead: the wipe deleted every task and then hit the foreign key.
+        if (models.StandingClanRequest) {
+          await models.StandingClanRequest.destroy({
+            where: { [Op.or]: [{ programId: inPrograms }, { sourceClanId: inClans }, { createdClanId: inClans }] },
+            force: true,
+          });
+        }
+        // A review lock names its scope by id, clan or programme alike.
+        if (models.CohortReviewLock) {
+          await models.CohortReviewLock.destroy({
+            where: { [Op.or]: [{ scopeId: inClans }, { scopeId: inPrograms }] }, force: true,
+          });
+        }
       }
     }
     await models.Clan.destroy({ where: { programId: inPrograms }, force: true });
@@ -770,6 +786,10 @@ async function seedData() {
         menteeId: m.id,
         mentorId: mentor.id,
         enrollmentId: enrollment.id,
+        // Every clan-scoped read in the product filters on this. Seeding work
+        // without it is what made the demo org's work history read 0 of 0
+        // against profiles listing twenty-odd tasks (migration 132).
+        clanId: clan.id,
         status: t.status,
         assignedAt: daysAgo(Math.max(2, 62 - t.idx * 2)),
         dueDate,
@@ -838,6 +858,7 @@ async function seedData() {
         menteeId: m.id,
         mentorId: mentor.id,
         enrollmentId: enrollment.id,
+        clanId: clan.id,
         status: "revision_needed",
         assignedAt: daysAgo(9),
         dueDate: daysAhead(3),
@@ -879,6 +900,7 @@ async function seedData() {
         menteeId: m.id,
         mentorId: mentor.id,
         enrollmentId: enrollment.id,
+        clanId: clan.id,
         status: "in_progress",
         assignedAt: daysAgo(11),
         dueDate: daysAhead(1),
@@ -970,15 +992,15 @@ async function seedData() {
   const sara = mentees["mentee.sara"].user;
 
   await models.Blocker.create({
-    menteeId: noor.id, createdBy: noor.id, title: "Stuck on JWT refresh-token flow",
+    menteeId: noor.id, createdBy: noor.id, clanId: feClan.id, title: "Stuck on JWT refresh-token flow",
     category: "technical", severity: "medium", status: "open", openedAt: daysAgo(3),
   });
   await models.Blocker.create({
-    menteeId: ivan.id, createdBy: ivan.id, title: "Exam week — limited availability",
+    menteeId: ivan.id, createdBy: ivan.id, clanId: feClan.id, title: "Exam week — limited availability",
     category: "personal", severity: "medium", status: "open", openedAt: daysAgo(5),
   });
   await models.Blocker.create({
-    menteeId: sara.id, createdBy: aisha.id, title: "No response — needs outreach",
+    menteeId: sara.id, createdBy: aisha.id, clanId: feClan.id, title: "No response — needs outreach",
     category: "personal", severity: "high", status: "open", openedAt: daysAgo(6),
   });
 
@@ -1500,41 +1522,19 @@ async function seedData() {
     console.log("✅ Daily activity logs created (per-mentee streaks)\n");
   }
 
-  // ── Gamification — badges, points history & leaderboard ───────────────────────
-  if (models.Badge && models.UserBadge && models.PointsHistory) {
-    console.log("🏅 Seeding badges, points history & leaderboard…");
-    const BADGES = [
-      { name: "First Steps", description: "Completed your first task.", category: "milestone", criteriaType: "tasks_completed", criteriaValue: { count: 1 }, pointsReward: 20 },
-      { name: "On Fire", description: "Reached a 7-day streak.", category: "streak", criteriaType: "streak_days", criteriaValue: { days: 7 }, pointsReward: 50 },
-      { name: "Halfway Hero", description: "Crossed 50% program progress.", category: "progress", criteriaType: "progress_pct", criteriaValue: { pct: 50 }, pointsReward: 75 },
-      { name: "Peer Helper", description: "Helped peers in the community.", category: "community", criteriaType: "community_kudos", criteriaValue: { count: 1 }, pointsReward: 40 },
-    ];
-    const badgeByName = {};
-    for (const b of BADGES) {
-      const [row] = await models.Badge.findOrCreate({ where: { name: b.name }, defaults: b });
-      badgeByName[b.name] = row;
-    }
-    const award = async (user, names) => {
-      for (const n of names) {
-        const b = badgeByName[n];
-        if (b) await models.UserBadge.create({ userId: user.id, badgeId: b.id, unlockedAt: daysAgo(3) });
-      }
-    };
-    // Award by archetype, and lay down a couple of points-history rows each.
+  // ── Gamification — points history & leaderboard ────────────────────────────────
+  // Badge catalogs are intentionally organization-owned. Demo/bootstrap scripts
+  // must not create or award badges on an organization's behalf.
+  if (models.PointsHistory) {
+    console.log("🏅 Seeding points history & leaderboard…");
     for (const m of menteeList) {
       const st = MENTEE_STATS[m.spec.archetype] || MENTEE_STATS.average;
-      const earned = [];
-      if (st.tasks >= 1) earned.push("First Steps");
-      if (st.streak >= 7) earned.push("On Fire");
-      if ((m.spec.archetype === "star") || (m.spec.archetype === "on_track")) earned.push("Halfway Hero");
-      if (m.spec.archetype === "star") earned.push("Peer Helper");
-      await award(m.user, earned);
       // Points history — a small ledger so the points page isn't blank.
       let running = 0;
       const events = [];
       if (st.tasks >= 1) events.push({ change: 10, reason: "Completed “Semantic HTML & accessible layout”", ago: 30 });
       if (st.tasks >= 2) events.push({ change: 12, reason: "Completed “Modern CSS & responsive design”", ago: 16 });
-      if (st.streak >= 7) events.push({ change: 50, reason: "Earned the On Fire badge", ago: 5 });
+      if (st.streak >= 7) events.push({ change: 50, reason: "Maintained a 7-day learning streak", ago: 5 });
       for (const e of events) {
         const before = running; running += e.change;
         await models.PointsHistory.create({
@@ -1555,7 +1555,7 @@ async function seedData() {
         });
       }
     }
-    console.log("✅ Badges, points history & leaderboard created\n");
+    console.log("✅ Points history & leaderboard created\n");
   }
 
   // ── Roadmap chaining — a follow-on roadmap linked after the core one ──────────
@@ -1819,7 +1819,7 @@ async function seedData() {
       async function assignQuiz(target, { taken }) {
         const task = await models.AssignedTask.create({
           roadmapTaskId: quizStep.id, menteeId: target.user.id, mentorId: target.mentor.id,
-          enrollmentId: target.enrollmentId, isCustomTask: true,
+          enrollmentId: target.enrollmentId, clanId: target.clan.id, isCustomTask: true,
           status: taken ? "completed" : "assigned",
           assignedAt: daysAgo(6), dueDate: daysAhead(taken ? -1 : 4),
           startedAt: taken ? daysAgo(2) : null,
@@ -2074,7 +2074,7 @@ async function seedData() {
       async function assignInterview(target, { sat }) {
         const task = await models.AssignedTask.create({
           roadmapTaskId: interviewStep.id, menteeId: target.user.id, mentorId: target.mentor.id,
-          enrollmentId: target.enrollmentId, isCustomTask: true,
+          enrollmentId: target.enrollmentId, clanId: target.clan.id, isCustomTask: true,
           status: sat ? "submitted" : "assigned",
           assignedAt: daysAgo(5), dueDate: daysAhead(sat ? -1 : 6),
           startedAt: sat ? daysAgo(1) : null,

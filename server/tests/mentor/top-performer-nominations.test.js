@@ -97,7 +97,7 @@ describe('top performer nominations', () => {
 
   describe('the ranking the system offers', () => {
     it('ranks the clan on the progress score, best first', async () => {
-      const board = await service.ranking({ programId: program.id, clanId: clan.id });
+      const board = await service.ranking({ user: lead, programId: program.id, clanId: clan.id });
 
       expect(board.ranked[0].menteeId).toBe(strong.id);
       expect(board.ranked[0].rank).toBe(1);
@@ -107,7 +107,7 @@ describe('top performer nominations', () => {
     });
 
     it('carries the numbers behind the placing, not just a score', async () => {
-      const board = await service.ranking({ programId: program.id, clanId: clan.id });
+      const board = await service.ranking({ user: lead, programId: program.id, clanId: clan.id });
       expect(board.ranked[0].signals).toEqual(expect.objectContaining({
         tasksCompleted: expect.any(Number),
         onTimeRate: expect.any(Number)
@@ -120,7 +120,7 @@ describe('top performer nominations', () => {
      * with no rank and the reason, never with an invented position.
      */
     it('returns the unranked too, with why they are unranked', async () => {
-      const board = await service.ranking({ programId: program.id, clanId: clan.id });
+      const board = await service.ranking({ user: lead, programId: program.id, clanId: clan.id });
 
       const waiting = board.notRanked.find((r) => r.menteeId === weak.id);
       expect(waiting).toBeTruthy();
@@ -194,6 +194,42 @@ describe('top performer nominations', () => {
     it('shows a mentor only their own clans', async () => {
       expect(await service.list({ user: lead, programId: program.id })).toHaveLength(1);
       expect(await service.list({ user: outsider, programId: program.id })).toHaveLength(0);
+    });
+
+    /**
+     * The mentor portal has a clan picker, and this list ignored it: a mentor
+     * standing in one clan read the nominations of every clan they mentor.
+     * Narrowing is SUBTRACTIVE — naming a clan can only ever remove rows.
+     */
+    it('narrows to the clan the caller named', async () => {
+      expect(await service.list({ user: lead, programId: program.id, clanId: clan.id })).toHaveLength(1);
+      expect(await service.list({ user: lead, programId: program.id, clanId: otherClan.id })).toHaveLength(0);
+    });
+
+    it('cannot be widened by naming a clan the caller does not mentor', async () => {
+      expect(await service.list({ user: outsider, programId: program.id, clanId: clan.id })).toHaveLength(0);
+    });
+  });
+
+  describe('reading another clan\'s ranking', () => {
+    /**
+     * `ranking` took a bare clan id and no caller, so any signed-in mentor
+     * could ask for any clan in the organisation and read every mentee in it
+     * by name, with their scores and signals.
+     */
+    it('is refused for a clan the mentor does not run', async () => {
+      await expect(service.ranking({ user: outsider, programId: program.id, clanId: clan.id }))
+        .rejects.toThrow(/do not mentor/i);
+    });
+
+    it('is allowed for their own clan', async () => {
+      const board = await service.ranking({ user: lead, programId: program.id, clanId: clan.id });
+      expect(board.ranked.length + board.notRanked.length).toBeGreaterThan(0);
+    });
+
+    it('is allowed anywhere for an admin', async () => {
+      const board = await service.ranking({ user: admin, programId: program.id, clanId: clan.id });
+      expect(board.ranked.length + board.notRanked.length).toBeGreaterThan(0);
     });
   });
 

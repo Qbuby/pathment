@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useClan, ALL_CLANS, isHistoricalCohortClan } from '@/lib/context/ClanContext';
-import { Check, ChevronDown, ChevronUp, Crown, HeartHandshake, Inbox, Link2, Loader2, Search, Shield, SlidersHorizontal, Trash2, UserPlus, Users2, X, Copy, RefreshCw } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, Crown, HandHeart, HeartHandshake, Inbox, Link2, Loader2, Search, Shield, SlidersHorizontal, Trash2, UserPlus, Users2, X, Copy, RefreshCw, History } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { apiClient } from '@/lib/services/api-client';
@@ -19,6 +19,7 @@ import { ClanAvatarEditor } from '@/components/shared/ClanAvatarEditor';
 import { CoMentorPermissionsDrawer } from '@/components/shared/CoMentorPermissionsDrawer';
 import { SelectMenu } from '@/components/shared/SelectMenu';
 import { IncomingTransfers, OutgoingTransfers } from '@/components/mentor/IncomingTransfers';
+import { PushToPoolDrawer } from '@/components/shared/pool/PushToPoolDrawer';
 import { useConfirm } from '@/lib/context/ConfirmContext';
 import { publicJoinBlockedMessage, publicJoinRequestLabel, publicJoinRequesterLocation, useClanPublicJoin } from '@/lib/hooks/mentor';
 import { todayInZone } from '@/lib/utils/datetime';
@@ -126,6 +127,9 @@ function ClanTeamCard({ clanId, myRole }: { clanId: string; myRole: string }) {
   const [permMember, setPermMember] = useState<Member | null>(null);
   const [canManageTeam, setCanManageTeam] = useState(myRole === 'lead_mentor');
   const [canAddMentees, setCanAddMentees] = useState(myRole === 'lead_mentor');
+  // Handing the clan on survives a frozen cohort, so it is tracked separately
+  // from canManageTeam, which does not.
+  const [canHandOver, setCanHandOver] = useState(myRole === 'lead_mentor');
   const [canEditAvatar, setCanEditAvatar] = useState(myRole === 'lead_mentor' || myRole === 'co_mentor');
   const confirm = useConfirm();
 
@@ -147,10 +151,12 @@ function ClanTeamCard({ clanId, myRole }: { clanId: string; myRole: string }) {
         if (access) {
           setCanManageTeam(Boolean(access.canManageTeam));
           setCanAddMentees(Boolean(access.canAddMentees));
+          setCanHandOver(Boolean(access.canHandOver));
           setCanEditAvatar(Boolean(access.canEditAvatar));
         } else {
           setCanManageTeam(myRole === 'lead_mentor');
           setCanAddMentees(myRole === 'lead_mentor');
+          setCanHandOver(myRole === 'lead_mentor');
           setCanEditAvatar(myRole === 'lead_mentor' || myRole === 'co_mentor');
         }
       })
@@ -178,6 +184,32 @@ function ClanTeamCard({ clanId, myRole }: { clanId: string; myRole: string }) {
   };
 
   const members = clan?.memberships || [];
+
+  /**
+   * What each mentee did BEFORE this standing clan.
+   *
+   * Their work is not moved here — it stays in the clan where it happened, so
+   * the completed programme's report and their certificate still account for
+   * it. This is the read-only view of it, so a mentor continuing with somebody
+   * can see what they already did without any of it counting as activity here.
+   */
+  const [priorByMentee, setPriorByMentee] = useState<Record<string, {
+    certificate: { tier: string } | null;
+    priorClans: { clanName: string | null; tasksAssigned: number; tasksCompleted: number; tasksUnfinished: number; openBlockers: number }[];
+  }>>({});
+
+  useEffect(() => {
+    if (!clan || clan.kind !== 'standing') { setPriorByMentee({}); return; }
+    let cancelled = false;
+    completionApi.priorRecord(clan.id)
+      .then((rows) => {
+        if (cancelled) return;
+        setPriorByMentee(Object.fromEntries(rows.map((r) => [r.menteeId, r])));
+      })
+      // Context is a bonus on this screen; never let it blank the roster.
+      .catch(() => { if (!cancelled) setPriorByMentee({}); });
+    return () => { cancelled = true; };
+  }, [clan]);
   // People holding a mentor role here AND still learning here as a mentee. They
   // appear in two sections on purpose.
   const dualRole = new Set(
@@ -189,6 +221,9 @@ function ClanTeamCard({ clanId, myRole }: { clanId: string; myRole: string }) {
 
   // Scoped to the role of the row you clicked: someone who is both a mentee and a
   // co-mentor here keeps the other role.
+  // Offering this whole clan to the pool - the closing-cohort case.
+  const [handingOverClan, setHandingOverClan] = useState(false);
+
   const remove = async (m: Member) => {
     const label = name(m.user);
     const asRole = ROLE_LABEL[m.role];
@@ -231,6 +266,9 @@ function ClanTeamCard({ clanId, myRole }: { clanId: string; myRole: string }) {
             )}
           </p>
           <p className="text-xs text-slate-500 truncate">{m.user.email}</p>
+          {m.role === 'mentee' && priorByMentee[m.user.id] && (
+            <PriorRecordLine record={priorByMentee[m.user.id]} />
+          )}
         </div>
       </>
     );
@@ -275,23 +313,49 @@ function ClanTeamCard({ clanId, myRole }: { clanId: string; myRole: string }) {
             <p className="text-sm text-slate-500">{clan.program?.name} · {menteeCount} mentee{menteeCount === 1 ? '' : 's'}</p>
           </div>
         </div>
-        {canManageTeam ? (
-          <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
+          {canManageTeam && (
+            <>
+              <button onClick={() => setAddingMentees(true)} disabled={historical} title={historical ? HISTORICAL_TITLE : undefined} className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 dark:bg-brand-500/15 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-100 disabled:opacity-50">
+                <Users2 className="w-4 h-4" /> Add mentees
+              </button>
+              <button onClick={() => setAdding(true)} disabled={historical} title={historical ? HISTORICAL_TITLE : undefined} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
+                <UserPlus className="w-4 h-4" /> Add to team
+              </button>
+            </>
+          )}
+          {!canManageTeam && canAddMentees && (
             <button onClick={() => setAddingMentees(true)} disabled={historical} title={historical ? HISTORICAL_TITLE : undefined} className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 dark:bg-brand-500/15 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-100 disabled:opacity-50">
               <Users2 className="w-4 h-4" /> Add mentees
             </button>
-            <button onClick={() => setAdding(true)} disabled={historical} title={historical ? HISTORICAL_TITLE : undefined} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
-              <UserPlus className="w-4 h-4" /> Add to team
+          )}
+          {/*
+            * Deliberately outside the manage-team branch, and never disabled
+            * for a historical clan. A closed cohort is precisely when a mentor
+            * needs this - the programme has ended and somebody else should
+            * pick these people up - and it writes nothing to the clan: the
+            * mentees stay in it, with their work, until another mentor takes
+            * them. Riding on canManageTeam hid it on every frozen clan, which
+            * is the only place it was ever meant to matter.
+            */}
+          {canHandOver && menteeCount > 0 && (
+            <button onClick={() => setHandingOverClan(true)} title="Offer these mentees to another clan" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-card px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+              <HandHeart className="w-4 h-4" /> Hand over clan
             </button>
-          </div>
-        ) : canAddMentees ? (
-          <button onClick={() => setAddingMentees(true)} disabled={historical} title={historical ? HISTORICAL_TITLE : undefined} className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 dark:bg-brand-500/15 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-100 shrink-0 disabled:opacity-50">
-            <Users2 className="w-4 h-4" /> Add mentees
-          </button>
-        ) : (
-          <span className="text-xs text-slate-400 shrink-0">View only (co-mentor)</span>
-        )}
+          )}
+          {!canManageTeam && !canAddMentees && !canHandOver && (
+            <span className="text-xs text-slate-400">View only (co-mentor)</span>
+          )}
+        </div>
       </div>
+
+      <PushToPoolDrawer
+        open={handingOverClan}
+        onClose={() => setHandingOverClan(false)}
+        clanId={clan.id}
+        clanName={clan.name}
+        menteeCount={menteeCount}
+      />
 
       {canEditAvatar && !historical && (
         <div className="mt-4">
@@ -999,7 +1063,24 @@ function AddCoverDrawer({ clanId, clanName, onClose, onAdded }: { clanId: string
 function AddMenteesDrawer({ clanId, clanName, standing = false, onClose, onChanged }: { clanId: string; clanName: string; standing?: boolean; onClose: () => void; onChanged: () => void }) {
   const { clans } = useClan();
   const [query, setQuery] = useState('');
-  const [people, setPeople] = useState<{ id: string; name: string; email: string; role?: string; placedClanId?: string | null; placedClanName?: string | null }[]>([]);
+  const [people, setPeople] = useState<{ id: string; name: string; email: string; role?: string; avatarUrl?: string | null; status?: string; placedClanId?: string | null; placedClanName?: string | null }[]>([]);
+  /**
+   * Whether to show only people who are still active in the organisation.
+   *
+   * Carrying somebody forward is the mentor's call, and a mentee who went quiet
+   * during the programme is often exactly who a continuation is for — so they
+   * are listed. Defaulting to active keeps the common case short, and the
+   * toggle says plainly how many are being hidden.
+   */
+  const [onlyActive, setOnlyActive] = useState(true);
+  /**
+   * Unfinished work from the completed programme, offered after adding.
+   *
+   * Their history is NOT moved here — it stays in the clan where it happened,
+   * so the final report and the certificate still account for it. The only
+   * thing worth bringing across is work that never got finished, and that is
+   * created as NEW assignments the mentor chooses.
+   */
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [inviteEmail, setInviteEmail] = useState('');
@@ -1048,6 +1129,8 @@ function AddMenteesDrawer({ clanId, clanName, standing = false, onClose, onChang
               name: name(m.user),
               email: m.user.email,
               role: m.user.role,
+              avatarUrl: (m.user as { profilePictureUrl?: string | null }).profilePictureUrl ?? null,
+              status: (m.user as { status?: string }).status,
             }));
           setPeople(mentees);
         })
@@ -1062,9 +1145,21 @@ function AddMenteesDrawer({ clanId, clanName, standing = false, onClose, onChang
   const visiblePeople = useMemo(() => {
     if (!fromCompletedClan) return people;
     const q = query.trim().toLowerCase();
-    if (!q) return people;
-    return people.filter((p) => p.name.toLowerCase().includes(q) || p.email.toLowerCase().includes(q));
-  }, [people, query, fromCompletedClan]);
+    // `status` is absent when talking to an API that has not been deployed yet;
+    // treat unknown as active rather than hiding somebody who is fine.
+    const pool = onlyActive
+      ? people.filter((p) => (p.status ?? 'active') === 'active')
+      : people;
+    if (!q) return pool;
+    return pool.filter((p) => p.name.toLowerCase().includes(q) || p.email.toLowerCase().includes(q));
+  }, [people, query, fromCompletedClan, onlyActive]);
+
+  /** How many the active-only filter is holding back, for an honest label. */
+  const hiddenInactiveCount = useMemo(() => (
+    fromCompletedClan && onlyActive
+      ? people.filter((p) => (p.status ?? 'active') !== 'active').length
+      : 0
+  ), [people, fromCompletedClan, onlyActive]);
 
   const add = async (p: { id: string; name: string }) => {
     setBusy(p.id);
@@ -1087,6 +1182,12 @@ function AddMenteesDrawer({ clanId, clanName, standing = false, onClose, onChang
     try {
       await completionApi.addMentees(clanId, ids);
       toast.success(`${ids.length} mentee${ids.length === 1 ? '' : 's'} added to ${clanName}`);
+      // Their work follows them automatically now — adding somebody to a
+      // standing clan continues their in-flight roadmaps and custom tasks,
+      // resumed where they left off. The old "bring unfinished work across?"
+      // prompt here is gone: it asked a question that always had the same
+      // answer. Clans approved before that shipped are opted out and still
+      // have the manual Continue work launcher.
       setPeople((prev) => prev.filter((p) => !ids.includes(p.id)));
       setSelected(new Set());
       setAlreadyHere((prev) => {
@@ -1195,11 +1296,25 @@ function AddMenteesDrawer({ clanId, clanName, standing = false, onClose, onChang
               <label className="block text-sm font-medium text-slate-700">
                 {fromCompletedClan ? 'Mentees from that clan' : <>Available people <span className="text-slate-400 font-normal">(including mentees of other clans)</span></>}
               </label>
-              {fromCompletedClan && visiblePeople.length > 0 && (
-                <button type="button" onClick={toggleAll} className="text-xs font-medium text-brand-600 hover:text-brand-700">
-                  {allVisibleSelected ? 'Clear all' : 'Select all'}
-                </button>
-              )}
+              <div className="flex items-center gap-3">
+                {fromCompletedClan && (
+                  <button
+                    type="button"
+                    onClick={() => setOnlyActive((v) => !v)}
+                    className="text-xs font-medium text-slate-500 hover:text-slate-700"
+                    title="Whether to bring somebody forward is your call — inactive mentees can be added too"
+                  >
+                    {onlyActive
+                      ? `Active only${hiddenInactiveCount ? ` · show ${hiddenInactiveCount} more` : ''}`
+                      : 'Showing everyone · active only'}
+                  </button>
+                )}
+                {fromCompletedClan && visiblePeople.length > 0 && (
+                  <button type="button" onClick={toggleAll} className="text-xs font-medium text-brand-600 hover:text-brand-700">
+                    {allVisibleSelected ? 'Clear all' : 'Select all'}
+                  </button>
+                )}
+              </div>
             </div>
             <div className="relative">
               <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
@@ -1222,14 +1337,25 @@ function AddMenteesDrawer({ clanId, clanName, standing = false, onClose, onChang
                       onChange={() => toggle(p.id)}
                       className="w-4 h-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 shrink-0"
                     />
+                    <Avatar src={p.avatarUrl ?? undefined} name={p.name} size="sm" />
                     <div className="min-w-0">
-                      <p className="text-sm font-medium text-slate-900 truncate">{p.name}</p>
+                      <p className="text-sm font-medium text-slate-900 truncate">
+                        {p.name}
+                        {p.status && p.status !== 'active' && (
+                          // Shown rather than hidden: the mentor decides, but
+                          // they should know what they are picking.
+                          <span className="ml-2 align-middle rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 capitalize">
+                            {p.status}
+                          </span>
+                        )}
+                      </p>
                       <p className="text-xs text-slate-500 truncate">{p.email}</p>
                     </div>
                   </label>
                 ) : (
                   <>
-                    <div className="min-w-0">
+                    <Avatar src={p.avatarUrl ?? undefined} name={p.name} size="sm" />
+                    <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-slate-900 truncate">
                         {p.name}
                         {p.role === 'mentor' && (
@@ -1249,9 +1375,52 @@ function AddMenteesDrawer({ clanId, clanName, standing = false, onClose, onChang
               </div>
             ))}
           </div>
+
+          {/* ── Unfinished work, offered after adding ─────────────────── */}
         </div>
       </div>
     </Drawer>
+  );
+}
+
+/**
+ * One line of "what they did before this clan".
+ *
+ * Deliberately terse and deliberately separate from everything else on the row:
+ * this is history from the completed programme, and none of it counts toward
+ * what this clan measures. Saying where it came from is what keeps that clear.
+ */
+function PriorRecordLine({ record }: {
+  record: {
+    certificate: { tier: string } | null;
+    priorClans: { clanName: string | null; tasksAssigned: number; tasksCompleted: number; tasksUnfinished: number; openBlockers: number }[];
+  };
+}) {
+  const prior = record.priorClans[0];
+  if (!prior && !record.certificate) return null;
+
+  const bits: string[] = [];
+  if (prior) {
+    bits.push(`${prior.tasksCompleted}/${prior.tasksAssigned} done`);
+    if (prior.tasksUnfinished > 0) bits.push(`${prior.tasksUnfinished} unfinished`);
+    if (prior.openBlockers > 0) bits.push(`${prior.openBlockers} open blocker${prior.openBlockers === 1 ? '' : 's'}`);
+  }
+
+  return (
+    <div className="mt-1.5 rounded-lg border border-slate-100 bg-slate-50/80 px-2 py-1.5 text-[10px] dark:border-slate-800 dark:bg-slate-900/50">
+      <div className="flex flex-wrap items-center gap-1.5 text-slate-500 dark:text-slate-400">
+        <History className="h-3 w-3 shrink-0 text-slate-400" aria-hidden />
+        <span className="font-semibold text-slate-700 dark:text-slate-300">Previous program</span>
+        <span className="rounded-full border border-slate-200 bg-card px-1.5 py-px text-[9px] font-medium uppercase tracking-wide text-slate-400 dark:border-slate-700">Read only</span>
+        {prior?.clanName && <span className="truncate">{prior.clanName}</span>}
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-slate-500 dark:text-slate-400">
+        {bits.map((bit) => <span key={bit}>{bit}</span>)}
+        {record.certificate && (
+          <span className="font-medium capitalize text-brand-700 dark:text-brand-300">Certificate · {record.certificate.tier}</span>
+        )}
+      </div>
+    </div>
   );
 }
 

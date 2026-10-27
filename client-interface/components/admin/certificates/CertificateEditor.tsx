@@ -1001,7 +1001,7 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
   if (fetching) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[450px] gap-3">
-        <Loader2 className="animate-spin h-8 w-8 text-brand-500" />
+        <Loader2 className="animate-spin h-8 w-8 text-brand-600" />
         <span className="text-xs text-muted-foreground font-semibold">Loading certificate builder...</span>
       </div>
     );
@@ -2156,7 +2156,7 @@ export default function CertificateEditor({ templateId }: CertificateEditorProps
                   >
                     <div className="w-full aspect-[1.414] rounded-xl border border-dashed border-border/60 bg-muted/20 flex flex-col items-center justify-center gap-1.5 p-4 text-center">
                       {uploadingBg ? (
-                        <Loader2 className="animate-spin w-5 h-5 text-brand-500" />
+                        <Loader2 className="animate-spin w-5 h-5 text-brand-600" />
                       ) : (
                         <ImageIcon className="w-5 h-5 text-brand-500 group-hover:scale-115 transition-transform" />
                       )}

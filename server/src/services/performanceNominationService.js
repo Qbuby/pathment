@@ -40,10 +40,34 @@ class PerformanceNominationService {
    * ranking beside a live nomination would be its own kind of lie, and this is
    * cheap enough that freezing it buys nothing.
    */
-  async ranking({ programId = null, clanId = null, limit = 50 }) {
+  /**
+   * The data's own ranking.
+   *
+   * `user` is required. This took a bare clanId and ranked it, so any
+   * authenticated mentor could ask for any clan in the organisation and read
+   * every one of its mentees by name with their scores and signals. The clan
+   * is now checked against the caller's own scope before anything is read.
+   */
+  async ranking({ user = null, programId = null, clanId = null, limit = 50 }) {
+    if (clanId && !(await authzService.actsAsAdmin(user))) {
+      const mine = await certificateService.getMentorScopedMenteeClans(user, programId, { clanId });
+      if (!mine.includes(clanId)) throw new ForbiddenError('You do not mentor this clan');
+    }
     const resolved = await this._resolveProgram(programId, clanId);
     const menteeIds = await this._menteeIdsFor(resolved, clanId);
-    if (!menteeIds.length) return [];
+    /**
+     * The same shape as every other return from here, including when there is
+     * nobody to rank.
+     *
+     * This returned a bare `[]`, so a clan with no rankable mentees answered
+     * with an array where the caller was promised an object. The page reads
+     * `board.ranked.length` to decide whether to show the empty state, which
+     * on an array is `undefined.length` — so the screen that exists to say
+     * "nobody here yet" was the one screen that could not say it, and the
+     * whole tab fell into the error boundary instead. `nominate` below reads
+     * `board.ranked.find` and would have broken the same way.
+     */
+    if (!menteeIds.length) return { ranked: [], notRanked: [], rankedCount: 0 };
 
     // The SAME score the mentor portal shows under Teaching and the mentee
     // leaderboard ranks by. A third definition of "doing well" is how a mentor
@@ -136,7 +160,9 @@ class PerformanceNominationService {
       throw new ValidationError('This mentee has already been nominated for this award.');
     }
 
-    const board = await this.ranking({ programId, clanId, limit: 500 });
+    // `_assertCanNominate` above has already cleared this caller for this clan;
+    // the user still travels with the read, because the read checks it too.
+    const board = await this.ranking({ user, programId, clanId, limit: 500 });
     const placed = board.ranked.find((row) => row.menteeId === menteeId)
       ?? board.notRanked.find((row) => row.menteeId === menteeId);
 
@@ -196,14 +222,34 @@ class PerformanceNominationService {
   }
 
   /** What this user may see: admins everything, mentors their own clans. */
-  async list({ user, programId = null, status = null }) {
+  /**
+   * Nominations the caller may read.
+   *
+   * Two things were wrong here, and the mentor portal showed both at once:
+   * every nomination in the organisation, in every clan.
+   *
+   * `hasAdminAccess` asks whether somebody HOLDS admin. A mentor who also
+   * administers the workspace does — so on their own mentor screen the clan
+   * filter below was skipped entirely and they were handed the whole org.
+   * `actsAsAdmin` asks which portal they have open, which is the question this
+   * read is really making, and is the same correction issue 3 needed.
+   *
+   * And nothing narrowed by clan. The sidebar clan picker governs every other
+   * mentor screen; this one ignored it, so a mentor standing in their standing
+   * clan read the nominations of clans they were not looking at. The narrowing
+   * is SUBTRACTIVE — a clan the caller cannot already see is never added by
+   * asking for it.
+   */
+  async list({ user, programId = null, status = null, clanId = null }) {
     const where = {};
     if (programId) where.programId = programId;
     if (status) where.status = status;
 
-    const isAdmin = await authzService.hasAdminAccess(user);
-    if (!isAdmin) {
-      const clanIds = await certificateService.getMentorScopedMenteeClans(user, programId);
+    const isAdmin = await authzService.actsAsAdmin(user);
+    if (isAdmin) {
+      if (clanId) where.clanId = clanId;
+    } else {
+      const clanIds = await certificateService.getMentorScopedMenteeClans(user, programId, { clanId });
       if (!clanIds.length) return [];
       where.clanId = { [Op.in]: clanIds };
     }
@@ -252,7 +298,7 @@ class PerformanceNominationService {
     programId = await this._resolveProgram(programId, clanId);
     await this._assertCanNominate(user, menteeId, programId, clanId);
 
-    const board = await this.ranking({ programId, clanId, limit: 500 });
+    const board = await this.ranking({ user, programId, clanId, limit: 500 });
     const placed = board.ranked.find((row) => row.menteeId === menteeId)
       ?? board.notRanked.find((row) => row.menteeId === menteeId);
     if (!placed) throw new NotFoundError('No record for this mentee yet');

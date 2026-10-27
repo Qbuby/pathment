@@ -108,6 +108,8 @@ export interface LeaderboardEntry {
     firstName?: string;
     lastName?: string;
     email: string;
+    /** The server has always sent this; the type did not say so. */
+    profilePictureUrl?: string | null;
   };
 }
 

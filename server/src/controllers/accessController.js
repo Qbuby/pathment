@@ -73,11 +73,13 @@ const inviteWithRole = catchAsync(async (req, res) => {
 
 /** The current user's permission union (any scope) + admin-area flag - UI gating. */
 const myPermissions = catchAsync(async (req, res) => {
-  const [permissions, canAccessAdmin] = await Promise.all([
+  const [permissions, canAccessAdmin, canAccessPools] = await Promise.all([
     authzService.getPermissionUnion(req.user),
-    authzService.hasAdminAccess(req.user)
+    authzService.hasAdminAccess(req.user),
+    // Selection pools only — a pool reviewer is not an admin of anything else.
+    authzService.hasPoolAccess(req.user)
   ]);
-  res.status(200).json(successResponse('My permissions', { permissions, canAccessAdmin }));
+  res.status(200).json(successResponse('My permissions', { permissions, canAccessAdmin, canAccessPools }));
 });
 
 const getAuditLogs = catchAsync(async (req, res) => {

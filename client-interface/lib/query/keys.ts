@@ -47,6 +47,13 @@ export const qk = {
     mentorDocuments: ['messaging', 'mentor-documents'] as const,
   },
 
+  // External courses (Buildment): connection status, assignable list, per-task enrollment.
+  courses: {
+    all: ['courses'] as const,
+    status: ['courses', 'status'] as const,
+    list: ['courses', 'list'] as const,
+    enrollment: (taskId: string) => ['courses', 'enrollment', taskId] as const,
+  },
   mentor: {
     all: ['mentor'] as const,
     cohort: ['mentor', 'cohort'] as const,
@@ -57,7 +64,10 @@ export const qk = {
     programDetail: (programId: string) => ['mentor', 'program', programId] as const,
     roadmaps: ['mentor', 'roadmaps'] as const,
     tracks: (menteeId: string) => ['mentor', 'tracks', menteeId] as const,
+    taskProgress: (taskId: string) => ['mentor', 'task-progress', taskId] as const,
     library: ['mentor', 'library'] as const,
+    talks: (search?: string, categoryId?: string) => ['mentor', 'talks', search || '', categoryId || ''] as const,
+    talkCategories: ['mentor', 'talk-categories'] as const,
     rewards: ['mentor', 'rewards'] as const,
     scheduleTemplates: ['mentor', 'schedule-templates'] as const,
     feedbackSnippets: ['mentor', 'feedback-snippets'] as const,
@@ -81,6 +91,34 @@ export const qk = {
     enrollments: (menteeId: string) => ['mentee', 'enrollments', menteeId] as const,
     matches: (mentorId: string, menteeId: string) => ['mentee', 'matches', mentorId, menteeId] as const,
     schedule: (menteeId: string, clanId?: string | null) => ['mentee', 'schedule', menteeId, clanId ?? ''] as const,
+    /** Today's blocks and their counts — the compact read for clan review. */
+    planStrip: (menteeId: string, clanId?: string | null) => ['mentee', 'plan-strip', menteeId, clanId ?? ''] as const,
+  },
+
+  /** Selection pools: the pre-clan qualifying round. */
+  pool: {
+    all: ['pools'] as const,
+    list: (status?: string | null, programId?: string | null) => ['pools', 'list', status ?? '', programId ?? ''] as const,
+    detail: (id: string) => ['pools', id] as const,
+    options: (programId?: string | null) => ['pools', 'options', programId ?? ''] as const,
+    assignments: (id: string) => ['pools', id, 'assignments'] as const,
+    scores: (id: string) => ['pools', id, 'scores'] as const,
+  },
+
+  /** What a candidate sees of their own selection round. */
+  candidate: {
+    all: ['candidate'] as const,
+    pools: ['candidate', 'pools'] as const,
+    tasks: ['candidate', 'tasks'] as const,
+    task: (taskId: string) => ['candidate', 'tasks', taskId] as const,
+  },
+
+  /** The handover pool: mentees offered out of one clan and taken into another. */
+  handoverPool: {
+    all: ['handover-pool'] as const,
+    list: (status: string) => ['handover-pool', 'list', status] as const,
+    overview: (programId?: string | null) => ['handover-pool', 'overview', programId ?? ''] as const,
+    claimableClans: ['handover-pool', 'claimable-clans'] as const,
   },
 
   me: {
@@ -97,6 +135,8 @@ export const qk = {
     bookable: ['me', 'bookable'] as const,
     enrollments: (menteeId: string) => ['me', 'enrollments', menteeId] as const,
     publicPrograms: ['me', 'public-programs'] as const,
+    /** Which clans the signed-in mentee is paused in. Read on every mentee page. */
+    pauseState: ['me', 'pause-state'] as const,
     program: (programId: string) => ['me', 'program', programId] as const,
     programEnrollment: (programId: string, menteeId: string) =>
       ['me', 'program-enrollment', programId, menteeId] as const,
@@ -109,7 +149,9 @@ export const qk = {
     programs: ['admin', 'programs'] as const,
     mentors: ['admin', 'mentors'] as const,
     mentees: ['admin', 'mentees'] as const,
-    activity: (days: number) => ['admin', 'activity', days] as const,
+    activity: (days: number, programId?: string | null) =>
+      ['admin', 'activity', days, programId ?? ''] as const,
+    storage: ['admin', 'storage'] as const,
     moderation: (status: string) => ['admin', 'moderation', status] as const,
     clanRequests: ['admin', 'clan-requests'] as const,
     cohorts: (programId?: string) => ['admin', 'cohorts', programId ?? 'all'] as const,
@@ -117,6 +159,7 @@ export const qk = {
     orgRoadmaps: ['admin', 'org-roadmaps'] as const,
     clanHealth: ['admin', 'clan-health'] as const,
     aiConnections: ['admin', 'ai-connections'] as const,
+    apps: ['admin', 'apps'] as const,
     clanList: (page: number, limit: number, search: string, programId: string) =>
       ['admin', 'clans', page, limit, search, programId] as const,
     menteeList: (page: number, limit: number, search: string) =>
@@ -145,7 +188,7 @@ export const qk = {
     spaces: ['community', 'spaces'] as const,
     feed: (params: Record<string, unknown>) => ['community', 'feed', params] as const,
     people: (type: string, id: string) => ['community', 'people', type, id] as const,
-    members: (type: string, id: string) => ['community', 'members', type, id] as const,
+    members: (type: string, id: string, page = '') => ['community', 'members', type, id, page] as const,
     leaderboard: (type: string, id: string, period: string) =>
       ['community', 'leaderboard', type, id, period] as const,
   },
@@ -156,4 +199,37 @@ export const qk = {
   },
 
   announcements: ['announcements'] as const,
+
+  /** Reference geography — the same for every viewer, so it caches hard. */
+  geo: {
+    countries: ['geo', 'countries'] as const,
+    states: (country: string) => ['geo', 'states', country] as const,
+    cities: (country: string, state: string, q: string) => ['geo', 'cities', country, state, q] as const,
+  },
+
+  // Platform console (operator surface) - all cross-workspace.
+  platform: {
+    all: ['platform'] as const,
+    me: ['platform', 'me'] as const,
+    metrics: ['platform', 'metrics'] as const,
+    admins: (includeRevoked: boolean) => ['platform', 'admins', includeRevoked] as const,
+    audit: (params: Record<string, unknown>) => ['platform', 'audit', params] as const,
+    auditActions: ['platform', 'audit-actions'] as const,
+    organizations: (params: Record<string, unknown>) => ['platform', 'organizations', params] as const,
+    organization: (id: string) => ['platform', 'organization', id] as const,
+    organizationMembers: (id: string, params: Record<string, unknown>) => ['platform', 'organization', id, 'members', params] as const,
+    organizationAudit: (id: string, page: number) => ['platform', 'organization', id, 'audit', page] as const,
+    plans: ['platform', 'plans'] as const,
+    billingRequests: ['platform', 'billing-requests'] as const,
+    overridesReport: ['platform', 'overrides-report'] as const,
+    leads: (params: Record<string, unknown>) => ['platform', 'leads', params] as const,
+    feedback: (params: Record<string, unknown>) => ['platform', 'feedback', params] as const,
+    users: (q: string) => ['platform', 'users', q] as const,
+    user: (id: string) => ['platform', 'user', id] as const,
+    ops: ['platform', 'ops'] as const,
+    apps: ['platform', 'apps'] as const,
+    storage: ['platform', 'storage'] as const,
+    featureUsage: (id: string, days: number) => ['platform', 'organization', id, 'feature-usage', days] as const,
+    slugCheck: (slug: string) => ['platform', 'slug-check', slug] as const,
+  },
 } as const;

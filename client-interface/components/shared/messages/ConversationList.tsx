@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import Image from 'next/image';
+import { Avatar } from '@/components/shared/Avatar';
 import { Archive, ArchiveRestore, Filter, MessageSquare, MoreVertical, RefreshCw, Search, Trash2, Check, CheckCheck } from 'lucide-react';
 
 import type { ConversationSummary, SearchableUser } from '@/lib/types/messaging';
@@ -248,19 +248,15 @@ export default function ConversationList({
                 )}
 
                 {/* Avatar */}
-                {participant?.profilePictureUrl ? (
-                  <Image
-                    src={participant.profilePictureUrl}
-                    alt={title}
-                    width={40}
-                    height={40}
-                    className="w-10 h-10 rounded-full object-cover shrink-0 border border-border mt-0.5"
-                  />
-                ) : (
-                  <div className="w-10 h-10 rounded-full bg-brand-500/15 text-brand-600 dark:text-brand-400 flex items-center justify-center font-bold text-sm shrink-0 border border-brand-500/30 mt-0.5">
-                    {(participant?.firstName?.[0] || title[0] || 'C').toUpperCase()}
-                  </div>
-                )}
+                {/* Shared Avatar — see ChatWindow: next/image throws in
+                    render for an unconfigured host and takes the page with it. */}
+                <Avatar
+                  name={title}
+                  src={participant?.profilePictureUrl}
+                  initials={(participant?.firstName?.[0] || title[0] || 'C').toUpperCase()}
+                  size="md"
+                  className="shrink-0 border border-border mt-0.5"
+                />
 
                 {/* Participant + Message detail */}
                 <div className="flex-1 min-w-0">

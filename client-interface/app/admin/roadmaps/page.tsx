@@ -11,7 +11,7 @@ import { useConfirm } from '@/lib/context/ConfirmContext';
 
 import { OpenSourceOrgAvatar } from '@/components/shared/OpenSourceOrgAvatar';
 
-const TYPE_LABEL: Record<string, string> = { assignment: 'Assignment', project: 'Project', quiz: 'Quiz', reading: 'Reading', video: 'Video', discussion: 'Discussion', custom: 'Custom', practical: 'Practical', assessment: 'Assessment', open_source: 'Open Source' };
+const TYPE_LABEL: Record<string, string> = { assignment: 'Assignment', project: 'Project', quiz: 'Quiz', reading: 'Reading', video: 'Video', discussion: 'Discussion', custom: 'Custom', practical: 'Practical', assessment: 'Assessment', open_source: 'Open Source', talk: 'Talk' };
 
 interface ProgramOpt { id: string; name: string }
 
@@ -30,6 +30,13 @@ function StepLine({ step, n }: { step: OrgRoadmapStep; n: number }) {
           title={org.name}>
           <OpenSourceOrgAvatar name={org.name} url={org.url} className="w-3.5 h-3.5 rounded-full object-cover shrink-0 border border-teal-300" />
           <span className="truncate">{org.name}</span>
+        </a>
+      ))}
+      {step.type === 'talk' && Array.isArray((step as any).talks) && (step as any).talks.map((talk: any) => (
+        <a key={talk.id} href={talk.url} target="_blank" rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200 shrink-0 hover:text-purple-900 truncate max-w-[130px]"
+          title={talk.title}>
+          <span className="truncate">{talk.title}</span>
         </a>
       ))}
     </div>

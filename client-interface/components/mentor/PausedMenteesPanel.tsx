@@ -193,8 +193,14 @@ export function PausedMenteesPanel({ menteeBasePath = '/mentor/mentees' }: { men
                     {p.reengageCount ? ` · ${p.reengageCount} reminder${p.reengageCount === 1 ? '' : 's'} sent` : ''}
                   </p>
                 </button>
-                <button onClick={() => resume(p)} disabled={busy === p.menteeId || !!clanHistorical.get(p.clanId)}
-                  title={clanHistorical.get(p.clanId) ? HISTORICAL_TITLE : undefined}
+                {/*
+                  * Resume stays available in a historical clan, unlike pause and
+                  * dismiss above. Those two act on a clan that is still running;
+                  * this one undoes a state that outlived its programme, and the
+                  * list it sits in deliberately still shows those rows. Greying
+                  * it out left the people hardest to recover with no way out.
+                  */}
+                <button onClick={() => resume(p)} disabled={busy === p.menteeId}
                   className="px-2.5 py-1.5 rounded-lg text-xs font-semibold text-brand-700 bg-brand-50 hover:bg-brand-100 inline-flex items-center gap-1 disabled:opacity-50 shrink-0">
                   {busy === p.menteeId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />}Resume
                 </button>

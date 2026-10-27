@@ -5,7 +5,6 @@ import Link from 'next/link';
 import {
   ArrowLeft,
   Users,
-  Users2,
   UserCheck,
   Clock,
   CheckCircle2,
@@ -15,6 +14,7 @@ import {
   Loader2,
   ChevronDown,
   Pencil,
+  ArrowUpRight,
 } from 'lucide-react';
 import { ResourceError } from '@/components/shared/ResourceError';
 import { useProgramDetail } from '@/lib/hooks/admin';
@@ -168,22 +168,17 @@ function StatusSelector({
 
 export default function ProgramDetails() {
   const {
-    id, program, loading, enrollments, loadingEnrollments,
+    id, program, loading,
     shareOpen, shareRef, setShareOpen, copyToClipboard,
-    handleApproveEnrollment, handleRejectEnrollment,
     handleStatusUpdate, handleVisibilityUpdate, updatingStatus,
-    fetchEnrollments, refetch,
+    refetch,
     errorStatus,
   } = useProgramDetail();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'enrollments'>('overview');
   const [editOpen, setEditOpen] = useState(false);
 
-  useEffect(() => {
-    if (activeTab === 'enrollments') {
-      fetchEnrollments();
-    }
-  }, [activeTab, fetchEnrollments]);
+  /** The enrolments screen, already narrowed to this programme. */
+  const enrollmentsHref = `/admin/enrollment/overview?programId=${encodeURIComponent(id ?? '')}`;
 
   if (loading) {
     return (
@@ -318,15 +313,16 @@ export default function ProgramDetails() {
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <div className="bg-card rounded-2xl p-6 border border-slate-200">
+        <Link href={enrollmentsHref} className="group bg-card rounded-2xl p-6 border border-slate-200 transition-colors hover:border-brand-300">
           <div className="flex items-center gap-3 mb-2">
             <div className="w-10 h-10 bg-brand-100 rounded-xl flex items-center justify-center">
               <Users className="w-5 h-5 text-brand-600" />
             </div>
             <span className="text-slate-600 text-sm">Enrollments</span>
+            <ArrowUpRight className="ml-auto h-4 w-4 text-slate-300 transition-colors group-hover:text-brand-600" aria-hidden />
           </div>
           <div className="text-slate-900 text-2xl">{program._count?.enrollments ?? 0}</div>
-        </div>
+        </Link>
 
         <div className="bg-card rounded-2xl p-6 border border-slate-200">
           <div className="flex items-center gap-3 mb-2">
@@ -359,32 +355,36 @@ export default function ProgramDetails() {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="mb-6">
-        <div className="border-b border-slate-200">
-          <div className="flex gap-6">
-            {[
-              { id: 'overview', label: 'Overview' },
-              { id: 'enrollments', label: 'Enrollments' }
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as 'overview' | 'enrollments')}
-                className={`pb-3 border-b-2 transition-colors ${
-                  activeTab === tab.id
-                    ? 'border-brand-600 text-brand-600'
-                    : 'border-transparent text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
+      {/*
+          Enrollments is a link, not a tab.
+
+          It used to render its own list here — the first twenty rows of a
+          programme with 1,088 enrolments, under a heading that called them
+          "All Enrollments (20)". No search, no status filter, no paging, no
+          export, and no way to act on anybody: a worse copy of a screen that
+          already exists and does all of that. So it hands over to that screen
+          with this programme already chosen.
+      */}
+      <div className="mb-6 border-b border-slate-200">
+        <div className="flex items-center gap-6">
+          <span className="border-b-2 border-brand-600 pb-3 text-brand-600">Overview</span>
+          <Link
+            href={enrollmentsHref}
+            className="group inline-flex items-center gap-1.5 border-b-2 border-transparent pb-3 text-slate-600 transition-colors hover:text-slate-900"
+          >
+            Enrollments
+            {typeof program._count?.enrollments === 'number' && (
+              <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs tabular-nums text-slate-500">
+                {program._count.enrollments.toLocaleString()}
+              </span>
+            )}
+            <ArrowUpRight className="h-3.5 w-3.5 text-slate-400 transition-transform group-hover:translate-x-0.5 group-hover:text-brand-600" aria-hidden />
+          </Link>
         </div>
       </div>
 
       {/* Tab Content */}
-      {activeTab === 'overview' && (
+      {(
         <div className="grid lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
             <div className="bg-card rounded-2xl p-6 border border-slate-200">
@@ -437,108 +437,6 @@ export default function ProgramDetails() {
               </p>
             </div>
           </div>
-        </div>
-      )}
-
-      {activeTab === 'enrollments' && (
-        <div className="space-y-6">
-          {loadingEnrollments ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="w-8 h-8 animate-spin text-brand-600" />
-            </div>
-          ) : enrollments.length === 0 ? (
-            <div className="bg-card rounded-2xl border border-slate-200 p-12 text-center">
-              <Users className="w-16 h-16 text-slate-300 mx-auto mb-4" />
-              <h3 className="text-slate-900 mb-2">No Enrollments Yet</h3>
-              <p className="text-slate-600">
-                Mentees haven&apos;t enrolled in this program yet.
-              </p>
-            </div>
-          ) : (
-            <>
-              {/* Pending Approvals */}
-              {enrollments.filter((e) => e.status === 'pending_approval').length > 0 && (
-                <div className="bg-card rounded-2xl border border-slate-200 p-6">
-                  <div className="flex items-center gap-2 mb-4">
-                    <Clock className="w-5 h-5 text-amber-600" />
-                    <h3 className="text-slate-900">Pending Approvals ({enrollments.filter((e) => e.status === 'pending_approval').length})</h3>
-                  </div>
-                  <div className="space-y-3">
-                    {enrollments
-                      .filter((e) => e.status === 'pending_approval')
-                      .map((enrollment) => (
-                        <div key={enrollment.id} className="p-4 border border-amber-200 bg-amber-50 rounded-xl">
-                          <div className="flex items-start justify-between">
-                            <div className="flex-1">
-                              <div className="text-slate-900 mb-1">
-                                {enrollment.mentee?.firstName} {enrollment.mentee?.lastName}
-                              </div>
-                              <div className="text-slate-600 text-sm">{enrollment.mentee?.email}</div>
-                              <div className="text-slate-500 text-xs mt-1">
-                                Requested {new Date(enrollment.enrolledAt).toLocaleDateString()}
-                              </div>
-                            </div>
-                            <div className="flex gap-2">
-                              <button
-                                onClick={() => handleApproveEnrollment(enrollment.id)}
-                                className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm transition-colors"
-                              >
-                                Approve
-                              </button>
-                              <button
-                                onClick={() => handleRejectEnrollment(enrollment.id)}
-                                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm transition-colors"
-                              >
-                                Reject
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                </div>
-              )}
-
-              {/* All Enrollments */}
-              <div className="bg-card rounded-2xl border border-slate-200 p-6">
-                <h3 className="text-slate-900 mb-4">All Enrollments ({enrollments.length})</h3>
-                <div className="space-y-2">
-                  {enrollments.map((enrollment) => (
-                    <div key={enrollment.id} className="p-4 border border-slate-200 rounded-xl hover:border-brand-300 transition-colors">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3">
-                            <div className="text-slate-900">
-                              {enrollment.mentee?.firstName} {enrollment.mentee?.lastName}
-                            </div>
-                            <span className={`px-2 py-1 rounded text-xs ${
-                              enrollment.status === 'pending_approval' ? 'bg-amber-100 text-amber-700' :
-                              enrollment.status === 'approved' ? 'bg-blue-100 text-blue-700' :
-                              enrollment.status === 'pending_match' ? 'bg-purple-100 text-purple-700' :
-                              enrollment.status === 'matched' ? 'bg-green-100 text-green-700' :
-                              enrollment.status === 'active' ? 'bg-brand-100 text-brand-700' :
-                              enrollment.status === 'rejected' ? 'bg-red-100 text-red-700' :
-                              'bg-slate-100 text-slate-700'
-                            }`}>
-                              {enrollment.status.replace(/_/g, ' ')}
-                            </span>
-                          </div>
-                          <div className="text-slate-600 text-sm mt-1">{enrollment.mentee?.email}</div>
-                        </div>
-                        {enrollment.clan?.name ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-brand-50 text-brand-700 text-xs font-medium shrink-0">
-                            <Users2 className="w-3.5 h-3.5" />{enrollment.clan.name}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-slate-400 shrink-0">No clan</span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
         </div>
       )}
 

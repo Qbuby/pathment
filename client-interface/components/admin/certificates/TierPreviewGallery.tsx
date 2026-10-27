@@ -5,6 +5,7 @@ import { AlertTriangle, X } from 'lucide-react';
 import { CertificatePreview } from '@/components/certificates/shared';
 import type { CertificateRenderData, RenderableTemplate } from '@/lib/utils/certificate-renderer';
 import type { TierCriteria } from './certificate-constants';
+import { useScrollLock } from '@/lib/hooks/useScrollLock';
 
 /**
  * Stand-in values for a certificate nobody has earned yet.
@@ -60,16 +61,13 @@ export function TierPreviewGallery({
   open, onClose, template, criteria, programName, onEditTier,
 }: TierPreviewGalleryProps) {
   // Escape closes, and the page behind does not scroll while it is open.
+  useScrollLock(open);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = previousOverflow;
-    };
+    return () => { document.removeEventListener('keydown', onKey); };
   }, [open, onClose]);
 
   if (!open) return null;

@@ -10,21 +10,33 @@ class EnrollmentService {
    * Return overall enrollment counts by status group.
    * Runs COUNT queries across the full table - never paginated.
    */
-  async getEnrollmentStats() {
+  /**
+   * The counters above the enrolments table.
+   *
+   * `getEnrollments` below has been programme-scoped for a while; these tiles
+   * were not, so an admin granted one programme read its own list under six
+   * totals counted across the whole workspace — the one number on the screen
+   * that was nobody's business but the org's.
+   *
+   * @param {string[]|null} programIds  null = every programme (org-tier admin).
+   */
+  async getEnrollmentStats(programIds = null) {
+    const scope = Array.isArray(programIds) ? { programId: { [Op.in]: programIds } } : {};
+    const countWhere = (where = {}) => models.Enrollment.count({ where: { ...scope, ...where } });
     const [total, active, pendingMatch, pendingCompletion, completed, dropped] = await Promise.all([
-      models.Enrollment.count(),
-      models.Enrollment.count({ where: { status: ['active', 'matched'] } }),
-      models.Enrollment.count({ where: { status: ['pending_match', 'approved'] } }),
-      models.Enrollment.count({ where: { status: 'pending_completion' } }),
-      models.Enrollment.count({ where: { status: ['program_completed', 'level_completed'] } }),
-      models.Enrollment.count({ where: { status: ['dropped', 'rejected'] } }),
+      countWhere(),
+      countWhere({ status: ['active', 'matched'] }),
+      countWhere({ status: ['pending_match', 'approved'] }),
+      countWhere({ status: 'pending_completion' }),
+      countWhere({ status: ['program_completed', 'level_completed'] }),
+      countWhere({ status: ['dropped', 'rejected'] }),
     ]);
 
     return { total, active, pendingMatch, pendingCompletion, completed, dropped };
   }
 
   async getEnrollments(filters, pagination) {
-    const { status, programId, programIds, menteeId, search } = filters;
+    const { status, programId, programIds, menteeId, search, clanId } = filters;
     const { page, limit } = pagination;
     const offset = (page - 1) * limit;
 
@@ -39,6 +51,23 @@ class EnrollmentService {
       where.programId = programId;
     }
     if (menteeId) where.menteeId = menteeId;
+
+    /**
+     * One clan's enrolments.
+     *
+     * A clan membership carries the enrolment it was created for, so the
+     * honest answer is "the enrolments those memberships point at" — not
+     * "everyone in the clan", which would also catch a member placed without
+     * one. Narrows only: it intersects with the programme scope above.
+     */
+    if (clanId) {
+      const memberships = await models.ClanMembership.findAll({
+        where: { clanId, role: 'mentee', enrollmentId: { [Op.ne]: null } },
+        attributes: ['enrollmentId'], raw: true,
+      });
+      const ids = [...new Set(memberships.map((m) => m.enrollmentId).filter(Boolean))];
+      where.id = { [Op.in]: ids.length ? ids : ['00000000-0000-0000-0000-000000000000'] };
+    }
 
     // Server-side search across mentee name, email and program name.
     // Uses $association.column$ syntax so Sequelize can push the filter

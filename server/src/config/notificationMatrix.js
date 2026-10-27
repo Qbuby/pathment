@@ -45,6 +45,11 @@ EXTENSION_HANDLED: 'extension_handled',
   MENTEE_PAUSED: 'mentee_paused',
   MENTEE_REENGAGE: 'mentee_reengage',
   MENTEE_RETURNED: 'mentee_returned',
+  // A mentee was offered to the handover pool; the programme's other mentors
+  // are the people who can give them a clan.
+  HANDOVER_POOL_PUSHED: 'handover_pool_pushed',
+  // Somebody took them. The mentee hears, and so does whoever pushed them.
+  HANDOVER_POOL_CLAIMED: 'handover_pool_claimed',
   FEEDBACK_SUBMITTED: 'feedback_submitted',
   FEEDBACK_STATUS_UPDATED: 'feedback_status_updated',
   // Admissions intake (admin-facing)
@@ -62,7 +67,16 @@ EXTENSION_HANDLED: 'extension_handled',
   CERTIFICATE_VERIFICATION_REQUESTED: 'certificate_verification_requested',
   CERTIFICATE_VERIFICATION_COMPLETED: 'certificate_verification_completed',
   // The admin has released a clan: its mentors may now send.
-  CERTIFICATE_CLAN_APPROVED: 'certificate_clan_approved'
+  CERTIFICATE_CLAN_APPROVED: 'certificate_clan_approved',
+  // System Pool (pre-clan selection). Candidate-facing events are audience
+  // 'any': a candidate is in no portal of the three, and their bell must show
+  // them. Operator/reviewer events land in the admin area (Selection pools).
+  POOL_WORK_ASSIGNED: 'pool_work_assigned',
+  POOL_REMINDER: 'pool_reminder',
+  POOL_WORK_SUBMITTED: 'pool_work_submitted',
+  POOL_WORK_REVIEWED: 'pool_work_reviewed',
+  POOL_ATTENTION: 'pool_attention',
+  POOL_OUTCOME: 'pool_outcome'
 };
 
 // Which role's "hat" a notification concerns, so the bell + list can scope to the
@@ -267,6 +281,52 @@ const NOTIFICATION_MATRIX = {
     preferenceKey: 'certificate_clan_approved',
     channels: { inApp: true, email: true, chat: false }
   },
+  // ── System Pool ────────────────────────────────────────────────────────────
+  // Candidate: qualifying work was given to them. Same preference as any task.
+  [NOTIFICATION_EVENTS.POOL_WORK_ASSIGNED]: {
+    type: 'task',
+    audience: 'any',
+    preferenceKey: 'task_assigned',
+    channels: { inApp: true, email: true, chat: false }
+  },
+  // Candidate: invitation not accepted / work due soon / gone quiet.
+  [NOTIFICATION_EVENTS.POOL_REMINDER]: {
+    type: 'task',
+    audience: 'any',
+    preferenceKey: 'deadline_approaching',
+    channels: { inApp: true, email: true, chat: false }
+  },
+  // Pool reviewers: work is waiting. In-app only — a pool of hundreds would
+  // otherwise mail every reviewer hundreds of times.
+  [NOTIFICATION_EVENTS.POOL_WORK_SUBMITTED]: {
+    type: 'task',
+    audience: 'admin',
+    preferenceKey: 'pool_work_submitted',
+    channels: { inApp: true, email: false, chat: false }
+  },
+  // Candidate: their qualifying work was approved or needs changes.
+  [NOTIFICATION_EVENTS.POOL_WORK_REVIEWED]: {
+    type: 'feedback',
+    audience: 'any',
+    preferenceKey: 'submission_reviewed',
+    channels: { inApp: true, email: true, chat: false }
+  },
+  // Pool operators: something needs a human — shortlist ready, a tie at the
+  // cutoff, reviews outstanding, a placement that failed.
+  [NOTIFICATION_EVENTS.POOL_ATTENTION]: {
+    type: 'system',
+    audience: 'admin',
+    preferenceKey: 'pool_attention',
+    channels: { inApp: true, email: true, chat: false }
+  },
+  // Candidate: the final outcome (selected and placed / waitlisted / not
+  // selected). Always worth an email; it is the answer they are waiting for.
+  [NOTIFICATION_EVENTS.POOL_OUTCOME]: {
+    type: 'milestone',
+    audience: 'any',
+    preferenceKey: 'pool_outcome',
+    channels: { inApp: true, email: true, chat: false }
+  },
   // "That clan has signed off." Tells the admin a clan is clear to issue.
   [NOTIFICATION_EVENTS.CERTIFICATE_VERIFICATION_COMPLETED]: {
     type: 'milestone',
@@ -404,6 +464,27 @@ const NOTIFICATION_MATRIX = {
     preferenceKey: 'mentee_returned',
     channels: { inApp: true, email: true, chat: false }
   },
+  /*
+   * Somebody in the handover pool needs a clan. Goes to every mentor in the
+   * programme, which is the point - the pool only works if the people who
+   * could take them find out without being asked one by one. In-app only: it
+   * is an opportunity, not an obligation, and a cohort closing would otherwise
+   * email every mentor once per mentee.
+   */
+  [NOTIFICATION_EVENTS.HANDOVER_POOL_PUSHED]: {
+    type: 'system',
+    audience: 'mentor',
+    preferenceKey: 'handover_pool_pushed',
+    channels: { inApp: true, email: false, chat: false }
+  },
+  // They have actually moved now, so this one does reach them by email: it
+  // changes who their mentor is and where their work lives.
+  [NOTIFICATION_EVENTS.HANDOVER_POOL_CLAIMED]: {
+    type: 'system',
+    audience: 'mentee',
+    preferenceKey: 'handover_pool_claimed',
+    channels: { inApp: true, email: true, chat: false }
+  },
   // A new feedback/bug report was submitted (to admins, in-app only).
   [NOTIFICATION_EVENTS.FEEDBACK_SUBMITTED]: {
     type: 'system',
@@ -506,7 +587,9 @@ const EMAIL_PREFERENCE_CATEGORIES = [
   { group: 'Digests', key: 'weekly_progress_report', label: 'Weekly progress report' },
   { group: 'Program', key: 'mentee_returned', label: 'A paused mentee returns to my clan' },
   { group: 'Program', key: 'mentee_reengage', label: 'Reminders to come back when I\'m paused' },
-  { group: 'Program', key: 'feedback_status_updated', label: 'Updates on my feedback / bug reports' }
+  { group: 'Program', key: 'feedback_status_updated', label: 'Updates on my feedback / bug reports' },
+  { group: 'Selection pools', key: 'pool_attention', label: 'A selection pool needs my decision (pool operators)' },
+  { group: 'Selection pools', key: 'pool_outcome', label: 'The outcome of a selection pool I am in' }
 ];
 
 module.exports = {

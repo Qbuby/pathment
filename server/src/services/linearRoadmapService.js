@@ -84,7 +84,7 @@ class LinearRoadmapService {
     const rows = await models.RoadmapTask.findAll({
       where: { roadmapId },
       order: [['taskOrder', 'ASC']],
-      attributes: ['id', 'title', 'description', 'type', 'difficulty', 'taskOrder', 'deliverable', 'acceptanceCriteria', 'estimatedHours', 'pointsBase', 'effort', 'dueOffsetDays', 'openSourceOrgIds'],
+      attributes: ['id', 'title', 'description', 'type', 'difficulty', 'taskOrder', 'deliverable', 'acceptanceCriteria', 'estimatedHours', 'pointsBase', 'effort', 'dueOffsetDays', 'openSourceOrgIds', 'talkIds'],
       include: [
         {
           model: models.TaskResource, as: 'resources',
@@ -106,6 +106,21 @@ class LinearRoadmapService {
         const orgMap = new Map(orgRows.map((o) => [o.id, o.toJSON ? o.toJSON() : o]));
         for (const s of steps) {
           s.openSourceOrgs = (s.openSourceOrgIds || []).map((id) => orgMap.get(id)).filter(Boolean);
+        }
+      }
+    }
+
+    // Hydrate talks in a single batch query.
+    if (models.Talk) {
+      const allTalkIds = [...new Set(steps.flatMap((s) => s.talkIds || []))];
+      if (allTalkIds.length > 0) {
+        const talkRows = await models.Talk.findAll({
+          where: { id: allTalkIds },
+          attributes: ['id', 'title', 'speaker', 'url', 'thumbnailUrl', 'durationMins', 'rating', 'ratingsCount']
+        });
+        const talkMap = new Map(talkRows.map((t) => [t.id, t.toJSON ? t.toJSON() : t]));
+        for (const s of steps) {
+          s.talks = (s.talkIds || []).map((id) => talkMap.get(id)).filter(Boolean);
         }
       }
     }
@@ -219,6 +234,7 @@ class LinearRoadmapService {
       pointsBase: pointsForDifficulty(step.difficulty),
       // Only persist orgs on open_source steps; clear it for any other type.
       openSourceOrgIds: step.type === 'open_source' ? (Array.isArray(step.openSourceOrgIds) ? step.openSourceOrgIds : []) : [],
+      talkIds: step.type === 'talk' ? (Array.isArray(step.talkIds) ? step.talkIds : []) : [],
     };
   }
 
@@ -747,6 +763,7 @@ class LinearRoadmapService {
       // Copy the template-level orgs onto the assigned task so the mentee's
       // task card and submission page show the correct open source orgs.
       openSourceOrgIds: step.type === 'open_source' && Array.isArray(step.openSourceOrgIds) ? step.openSourceOrgIds : [],
+      talkIds: step.type === 'talk' && Array.isArray(step.talkIds) ? step.talkIds : [],
       ...(ov || {})
     });
 
@@ -832,6 +849,19 @@ class LinearRoadmapService {
     }
 
     const resolvedClanId = await resolveMenteeClanId(menteeId, clanId, { actorId: mentorId });
+    /**
+     * Refuse rather than write work that belongs to no clan.
+     *
+     * `resolveMenteeClanId` returns null when the mentee has no clan at all,
+     * and this used to go on and create the task with `clan_id = null`. Every
+     * clan-scoped read then filtered it out while the mentee's own profile
+     * still counted it, so the work existed in one place and not the other —
+     * the cause migration 132 had to clean up after. `createCustomTask` has
+     * refused this for the same reason; roadmap assignment now matches it.
+     */
+    if (!resolvedClanId) {
+      throw new ValidationError('Place this mentee in a clan before assigning roadmap work to them');
+    }
     await clanLifecycleService.assertClanWritable(resolvedClanId);
 
     const actualClan = resolvedClanId && await models.Clan.findByPk(resolvedClanId);
@@ -958,12 +988,53 @@ class LinearRoadmapService {
       if (!cur || (RANK[a.status] || 0) > (RANK[cur] || 0)) statusByTitle.set(title, a.status);
     });
 
+    /**
+     * ADVISORY ONLY — what this mentee did with the same step in ANOTHER clan.
+     *
+     * The scoping above stays exactly as it is: a completed cohort's
+     * assignments must not mark a standing clan's steps as already given. But a
+     * mentor choosing the next task should not have to guess whether they
+     * already covered this somewhere else. So this is a separate read that
+     * labels the step and never locks it — `status`, `activeCount` and
+     * `assignedCount` keep their exact meanings, so the drawer's
+     * `disabled={isActive}` is provably unaffected.
+     */
+    const otherByTitle = new Map();
+    if (clanId && lineageTaskIds.length) {
+      const elsewhere = await models.AssignedTask.findAll({
+        where: {
+          roadmapTaskId: { [Op.in]: lineageTaskIds },
+          menteeId,
+          status: { [Op.ne]: 'cancelled' },
+          // `<>` also excludes NULL, which is correct: legacy null-clan rows
+          // belong to the in-clan read above, not to "somewhere else".
+          clanId: { [Op.ne]: clanId },
+        },
+        attributes: ['roadmapTaskId', 'status', 'clanId'],
+        include: [{ model: models.Clan, as: 'clan', attributes: ['id', 'name'], required: false }],
+      });
+      elsewhere.forEach((a) => {
+        const title = titleByTaskId.get(a.roadmapTaskId);
+        if (!title) return;
+        const cur = otherByTitle.get(title);
+        // Most-advanced wins, same RANK as the in-clan read.
+        if (!cur || (RANK[a.status] || 0) > (RANK[cur.status] || 0)) {
+          otherByTitle.set(title, { status: a.status, clanId: a.clanId, clanName: a.clan?.name || null });
+        }
+      });
+    }
+
     const ACTIVE = ['assigned', 'not_started', 'in_progress', 'revision_needed', 'submitted'];
-    const steps2 = steps.map((s, i) => ({ index: i, stepId: s.id, title: s.title, type: s.type, status: statusByTitle.get(norm(s.title)) || null }));
+    const steps2 = steps.map((s, i) => ({
+      index: i, stepId: s.id, title: s.title, type: s.type,
+      status: statusByTitle.get(norm(s.title)) || null,
+      otherClanStatus: otherByTitle.get(norm(s.title)) || null,
+    }));
     return {
       steps: steps2,
       activeCount: steps2.filter((s) => s.status && ACTIVE.includes(s.status)).length,
       assignedCount: steps2.filter((s) => s.status).length,
+      otherClanCount: steps2.filter((s) => s.otherClanStatus).length,
     };
   }
 

@@ -77,11 +77,19 @@ describe('paused mentee remains visible to their mentor', () => {
       expect(resource.programId).toBeTruthy();
     });
 
-    it('prefers an ACTIVE placement when the mentee holds both', async () => {
-      // clanService.addMember refuses a second mentee placement (one clan at a
-      // time), so this row is written directly — which is exactly how it occurs
-      // in practice: legacy data and migrations, not the happy path. Without the
-      // explicit order, findOne would return either row at the database's whim.
+    it('names NO clan when the mentee holds two and the caller named none', async () => {
+      /**
+       * This used to assert that an active placement was preferred over a
+       * paused one. `scopeOfMentee` deliberately stopped choosing: picking for
+       * the caller means authorising against a clan they did not ask about,
+       * and a standing clan and a cohort clan grant different things. The same
+       * rule `resolveMenteeClanId` follows — refuse rather than guess — and
+       * `preferredClanId` is how a caller who knows says so.
+       *
+       * clanService.addMember refuses a second mentee placement (one clan at a
+       * time), so this row is written directly — which is how it occurs in
+       * practice: legacy data and migrations, not the happy path.
+       */
       const program = await createProgram({ createdBy: lead.id });
       const second = await models.Clan.create({
         programId: program.id, name: 'Second', leadMentorId: lead.id, createdBy: lead.id,
@@ -91,8 +99,10 @@ describe('paused mentee remains visible to their mentor', () => {
       });
       await setStatus(mentee.id, clan.id, 'paused');
 
-      const resource = await authzService.scopeOfMentee(mentee.id);
-      expect(resource.clanId).toBe(second.id);
+      expect((await authzService.scopeOfMentee(mentee.id)).clanId).toBeUndefined();
+      // Naming one resolves it, paused or not.
+      expect((await authzService.scopeOfMentee(mentee.id, second.id)).clanId).toBe(second.id);
+      expect((await authzService.scopeOfMentee(mentee.id, clan.id)).clanId).toBe(clan.id);
     });
 
     it('drops the clan for invited/removed', async () => {
@@ -235,6 +245,155 @@ describe('paused mentee remains visible to their mentor', () => {
         .get(`/api/activity/mentee/${solo.id}/summary?days=7`)
         .set('Authorization', authHeader(lead));
       expect(res.status).not.toBe(403);
+    });
+  });
+
+  describe('a paused mentee is off the review roster, and stays off it', () => {
+    const cohortService = require('../../src/services/cohortService');
+
+    /**
+     * Pausing takes somebody out of reports, reminders and reviews. That is
+     * the whole point of it, and clan review is not an exception — a mentor
+     * stepping through their people one at a time should not be stepping past
+     * the same greyed-out row every week. Bringing somebody back belongs to
+     * the paused list on My Mentees, which exists for exactly that.
+     *
+     * This is the issue's actual ask read correctly the second time: what
+     * belongs on the review card is the SUGGESTION to pause somebody who is
+     * still active and has stopped turning up — not the people already paused.
+     */
+    it('is left out of the roster', async () => {
+      await mentorshipPauseService.pause(lead, mentee.id, clan.id, 'exams', 'mentor');
+
+      const { cohort, totals } = await cohortService.getCohort(lead.id, { clanId: clan.id });
+
+      expect(cohort.map((r) => r.id)).not.toContain(mentee.id);
+      expect(totals.mentees).toBe(0);
+    });
+
+    it('has no opt-in that can put them back on it', async () => {
+      await mentorshipPauseService.pause(lead, mentee.id, clan.id, 'exams', 'mentor');
+
+      // An unknown option must not quietly widen the roster. The flag that
+      // used to do this is gone; anything passing it now is a caller that was
+      // never updated, and it must still get the active roster.
+      const { cohort } = await cohortService.getCohort(lead.id, {
+        clanId: clan.id, includePaused: true,
+      });
+
+      expect(cohort.map((r) => r.id)).not.toContain(mentee.id);
+    });
+
+    it('is still listed where they can be brought back from', async () => {
+      await mentorshipPauseService.pause(lead, mentee.id, clan.id, 'exams', 'mentor');
+
+      // Off the review screen must not mean out of reach.
+      const paused = await mentorshipPauseService.listPaused(lead, clan.id);
+
+      expect(paused.map((p) => p.menteeId)).toContain(mentee.id);
+    });
+
+    it('stays on the roster when they are active in another clan', async () => {
+      const program = await createProgram({ createdBy: lead.id });
+      const second = await models.Clan.create({
+        programId: program.id, name: 'Second', leadMentorId: lead.id, createdBy: lead.id,
+      });
+      await clanService.addMember(second.id, { userId: lead.id, role: 'lead_mentor' });
+      await clanService.addMember(second.id, { userId: mentee.id, role: 'mentee' });
+      await mentorshipPauseService.pause(lead, mentee.id, clan.id, 'exams', 'mentor');
+
+      const { cohort } = await cohortService.getCohort(lead.id);
+
+      // Paused in one clan is not paused everywhere.
+      expect(cohort.filter((r) => r.id === mentee.id)).toHaveLength(1);
+    });
+  });
+
+  describe('pause reads on a clan whose programme has finished', () => {
+    /**
+     * Authority and applicability are different questions, and conflating them
+     * told a mentor "You do not oversee this clan" about a clan they lead, for
+     * the sole reason that it had finished. Clan review asks for suggestions on
+     * every load, so the page logged a 403 each time it opened.
+     */
+    const freeze = () => models.Clan.update({ frozenAt: new Date() }, { where: { id: clan.id } });
+
+    it('returns no suggestions rather than refusing the read', async () => {
+      await freeze();
+      await expect(mentorshipPauseService.listSuggestions(lead, clan.id)).resolves.toEqual([]);
+    });
+
+    it('still refuses a clan the mentor does not run', async () => {
+      const program = await createProgram({ createdBy: outsider.id });
+      const theirs = await models.Clan.create({
+        programId: program.id, name: 'Not mine', leadMentorId: outsider.id, createdBy: outsider.id,
+      });
+      await clanService.addMember(theirs.id, { userId: outsider.id, role: 'lead_mentor' });
+
+      await expect(mentorshipPauseService.listSuggestions(lead, theirs.id)).rejects.toThrow(/oversee/i);
+    });
+
+    it('still shows who is paused there — they are still paused', async () => {
+      await mentorshipPauseService.pause(lead, mentee.id, clan.id, 'exams', 'mentor');
+      await freeze();
+
+      const paused = await mentorshipPauseService.listPaused(lead, clan.id);
+
+      expect(paused.map((p) => p.menteeId)).toEqual([mentee.id]);
+    });
+
+    /**
+     * The other half of the same question, and the bug that was reported: the
+     * list above hands the mentor a Resume button, so the resume has to resolve
+     * against the same clans the list does. It did not — it used the narrower
+     * "still running" scope — so everybody paused in a finished cohort was
+     * shown with an action that could only ever answer "You do not mentor this
+     * clan". Listing something you cannot act on is worse than hiding it.
+     */
+    it('can be RESUMED there, because that is what the list offers', async () => {
+      await mentorshipPauseService.pause(lead, mentee.id, clan.id, 'exams', 'mentor');
+      await freeze();
+
+      await expect(mentorshipPauseService.resume(lead, mentee.id, clan.id)).resolves.toMatchObject({
+        status: 'active',
+      });
+
+      const m = await models.ClanMembership.findOne({ where: { clanId: clan.id, userId: mentee.id } });
+      expect(m.status).toBe('active');
+      expect(m.pausedAt).toBeNull();
+    });
+
+    it('resolves the clan on its own when the mentee is paused in only one', async () => {
+      await mentorshipPauseService.pause(lead, mentee.id, clan.id, 'exams', 'mentor');
+      await freeze();
+
+      await expect(mentorshipPauseService.resume(lead, mentee.id, null)).resolves.toMatchObject({
+        clanId: clan.id, status: 'active',
+      });
+    });
+
+    /** Widening the resume scope must not widen WHOSE pauses it can undo. */
+    it('still refuses to resume in a clan the mentor does not run', async () => {
+      const program = await createProgram({ createdBy: outsider.id });
+      const theirs = await models.Clan.create({
+        programId: program.id, name: 'Not mine', leadMentorId: outsider.id, createdBy: outsider.id,
+      });
+      await clanService.addMember(theirs.id, { userId: outsider.id, role: 'lead_mentor' });
+      await clanService.addMember(theirs.id, { userId: mentee.id, role: 'mentee' });
+      await mentorshipPauseService.pause(outsider, mentee.id, theirs.id, 'exams', 'mentor');
+      await models.Clan.update({ frozenAt: new Date() }, { where: { id: theirs.id } });
+
+      await expect(mentorshipPauseService.resume(lead, mentee.id, theirs.id)).rejects.toThrow(/do not mentor/i);
+    });
+
+    /**
+     * Pause keeps the narrow scope on purpose: there is nothing left to miss in
+     * a cohort that has ended, so starting a win-back cadence there is noise.
+     */
+    it('does not let a NEW pause be started in a finished clan', async () => {
+      await freeze();
+      await expect(mentorshipPauseService.pause(lead, mentee.id, clan.id, 'exams', 'mentor'))
+        .rejects.toThrow(/do not mentor/i);
     });
   });
 });

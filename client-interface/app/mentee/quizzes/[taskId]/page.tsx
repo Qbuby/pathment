@@ -2,6 +2,7 @@
 
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useMenteeScope } from '@/lib/hooks/mentee';
 import { toast } from 'sonner';
 import {
   Loader2, ArrowRight, ArrowLeft, CheckCircle2, AlertTriangle, Play, RotateCcw,
@@ -60,7 +61,18 @@ export default function QuizRunnerPage({ params }: { params: Promise<{ taskId: s
   const q: CandidateQuizQuestion | undefined = questions[idx];
   const opts = data?.options;
 
-  const backToTask = () => router.push(`/mentee/tasks/${taskId}`);
+  /*
+   * One runner, two kinds of work.
+   *
+   * It used to tell them apart by the URL it was mounted at — `/candidate/…`
+   * versus `/mentee/…` — which stopped working when the candidate area moved
+   * into the learner workspace. The scope answers it properly now, and the
+   * `?pool=1` the task screen needs comes with it, so "back to task" lands on
+   * the right screen instead of a 404 for work a clan query cannot see.
+   */
+  const { inPool } = useMenteeScope();
+  const taskHref = `/mentee/tasks/${taskId}${inPool ? '?pool=1' : ''}`;
+  const backToTask = () => router.push(taskHref);
 
   const isAnswered = useCallback((question: CandidateQuizQuestion): boolean => {
     const a = answersRef.current[question.id];
@@ -210,7 +222,7 @@ export default function QuizRunnerPage({ params }: { params: Promise<{ taskId: s
 
   // ── Loading / submitting / error ─────────────────────────────────────────────
   if (phase === 'loading') {
-    return <Stage><Loader2 className="w-7 h-7 animate-spin text-slate-400" /></Stage>;
+    return <Stage><Loader2 className="w-7 h-7 animate-spin text-brand-600" /></Stage>;
   }
 
   if (phase === 'submitting') {
@@ -456,7 +468,7 @@ export default function QuizRunnerPage({ params }: { params: Promise<{ taskId: s
     );
   }
 
-  return <Stage><Loader2 className="w-7 h-7 animate-spin text-slate-400" /></Stage>;
+  return <Stage><Loader2 className="w-7 h-7 animate-spin text-brand-600" /></Stage>;
 }
 
 // ── Result screen ─────────────────────────────────────────────────────────────
